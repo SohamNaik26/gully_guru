@@ -1,0 +1,53 @@
+---
+description: General principles for code organization and structure
+globs: ["**/*.py"]
+---
+
+# General Principles
+
+## Functional Programming Approach
+
+- **Prefer Functions Over Classes**: Use plain functions for business logic and route handlers. Reserve classes for:
+  - Pydantic models
+  - SQLModel ORM models
+  - Complex stateful components
+
+- **Pure Functions**: Design functions to avoid side effects when possible:
+  ```python
+  # ✅ Good: Pure function
+  def calculate_fantasy_points(runs: int, wickets: int, economy: float) -> float:
+      points = runs * 1.0 + wickets * 25.0
+      if economy < 6.0:
+          points += 5.0
+      return points
+  
+  # ❌ Bad: Function with side effects
+  def calculate_and_update_points(player_id: int, runs: int, wickets: int):
+      points = runs * 1.0 + wickets * 25.0
+      db.update_player_points(player_id, points)  # Side effect
+  ```
+
+## Modularity
+
+- **Single Responsibility**: Each module, function, and class should have a single responsibility.
+- **Encapsulation**: Keep implementation details hidden behind well-defined interfaces.
+- **Loose Coupling**: Minimize dependencies between components.
+
+## Type Annotations
+
+- **Always Use Type Hints**: Add type annotations to all function signatures and variable declarations.
+  ```python
+  # ✅ Good: With type hints
+  def get_player_by_id(player_id: int) -> Optional[Player]:
+      return db.query(Player).filter(Player.id == player_id).first()
+  
+  # ❌ Bad: Without type hints
+  def get_player_by_id(player_id):
+      return db.query(Player).filter(Player.id == player_id).first()
+  ```
+
+## Code Organization
+
+- **Logical Grouping**: Group related functionality in the same module.
+- **Separation of Concerns**: Separate business logic, data access, and API endpoints.
+- **Consistent Structure**: Follow a consistent structure across similar components. 

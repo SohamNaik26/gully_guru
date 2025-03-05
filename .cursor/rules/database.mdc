@@ -1,0 +1,193 @@
+---
+description: Database ORM, session management, migrations best practices
+globs: ["**/*.py", "**/*.sql"]
+---
+
+# Database Best Practices
+
+## SQLModel Usage
+
+- **Define Clear Models**: Create well-defined SQLModel classes for database tables
+  ```python
+  # ✅ Good: Clear model definition
+  from typing import Optional
+  from sqlmodel import Field, SQLModel
+  
+  class Player(SQLModel, table=True):
+      id: Optional[int] = Field(default=None, primary_key=True)
+      name: str = Field(index=True)
+      team: str
+      type: str  # BAT, BOWL, ALL
+      base_price: float
+      sold_price: float
+  ```
+
+- **Use Relationships**: Define relationships between models
+  ```python
+  # ✅ Good: Model relationships
+  class User(SQLModel, table=True):
+      id: Optional[int] = Field(default=None, primary_key=True)
+      name: str
+      email: str = Field(unique=True)
+      
+  class UserSquad(SQLModel, table=True):
+      id: Optional[int] = Field(default=None, primary_key=True)
+      user_id: int = Field(foreign_key="user.id")
+      player_id: int = Field(foreign_key="player.id")
+      is_captain: bool = False
+      is_vice_captain: bool = False
+  ```
+
+## Session Management
+
+- **Use Context Managers for Sessions**: Ensure proper session cleanup
+  ```python
+  # ✅ Good: Session context manager
+  def get_player_by_id(player_id: int) -> Optional[Player]:
+      with Session(engine) as session:
+          return session.get(Player, player_id)
+  ```
+
+- **Async Session Management**: Use async sessions for non-blocking operations
+  ```python
+  # ✅ Good: Async session management
+  async def get_player_by_id(player_id: int) -> Optional[Player]:
+      async with AsyncSession(async_engine) as session:
+          result = await session.execute(select(Player).where(Player.id == player_id))
+          return result.scalar_one_or_none()
+  ```
+
+## Query Optimization
+
+- **Use Select Statements**: Prefer SQLModel's select statements
+  ```python
+  # ✅ Good: Using select statements
+  from sqlmodel import select
+  
+  def get_players_by_team(team: str) -> List[Player]:
+      with Session(engine) as session:
+          statement = select(Player).where(Player.team == team)
+          results = session.exec(statement)
+          return results.all()
+  ```
+
+- **Limit Query Results**: Use limit and offset for pagination
+  ```python
+  # ✅ Good: Pagination with limit and offset
+  def get_paginated_players(skip: int = 0, limit: int = 100) -> List[Player]:
+      with Session(engine) as session:
+          statement = select(Player).offset(skip).limit(limit)
+          results = session.exec(statement)
+          return results.all()
+  ```
+
+- **Use Joins Efficiently**: Optimize queries with joins
+  ```python
+  # ✅ Good: Efficient joins
+  def get_user_with_squad(user_id: int):
+      with Session(engine) as session:
+          statement = (
+              select(User, UserSquad, Player)
+              .join(UserSquad, User.id == UserSquad.user_id)
+              .join(Player, UserSquad.player_id == Player.id)
+              .where(User.id == user_id)
+          )
+          results = session.exec(statement)
+          return results.all()
+  ```
+
+## Bulk Operations
+
+- **Use Bulk Insert**: For inserting multiple records efficiently
+  ```python
+  # ✅ Good: Bulk insert
+  def bulk_insert_players(players: List[Player]):
+      with Session(engine) as session:
+          session.add_all(players)
+          session.commit()
+  ```
+
+- **Use Bulk Update**: For updating multiple records efficiently
+  ```python
+  # ✅ Good: Bulk update
+  from sqlalchemy import update
+  
+  def update_player_team(player_ids: List[int], new_team: str):
+      with Session(engine) as session:
+          stmt = update(Player).where(Player.id.in_(player_ids)).values(team=new_team)
+          session.execute(stmt)
+          session.commit()
+  ```
+
+## Migrations
+
+- **Use Alembic for Migrations**: Manage database schema changes with Alembic
+  ```python
+  # ✅ Good: Alembic configuration
+  # alembic/env.py
+  from sqlmodel import SQLModel
+  from alembic import context
+  
+  # Import all models here
+  from src.models import Player, User, UserSquad
+  
+  target_metadata = SQLModel.metadata
+  ```
+
+- **Version Control Migrations**: Keep migrations in version control
+  ```bash
+  # Generate a new migration
+  alembic revision --autogenerate -m "Add player statistics table"
+  
+  # Apply migrations
+  alembic upgrade head
+  ```
+
+## Indexing
+
+- **Create Appropriate Indexes**: Add indexes for frequently queried columns
+  ```python
+  # ✅ Good: Adding indexes to models
+  class Player(SQLModel, table=True):
+      id: Optional[int] = Field(default=None, primary_key=True)
+      name: str = Field(index=True)  # Add index for player name
+      team: str = Field(index=True)  # Add index for team
+  ```
+
+- **Composite Indexes**: Use composite indexes for multi-column queries
+  ```sql
+  -- ✅ Good: Composite index
+  CREATE INDEX idx_user_squads_user_player ON user_squads (user_id, player_id);
+  ```
+
+## Transaction Management
+
+- **Use Transactions for Related Operations**: Ensure atomicity for related operations
+  ```python
+  # ✅ Good: Transaction management
+  def transfer_player(from_user_id: int, to_user_id: int, player_id: int, amount: float):
+      with Session(engine) as session:
+          try:
+              # Start transaction
+              from_user = session.get(User, from_user_id)
+              to_user = session.get(User, to_user_id)
+              
+              # Update user balances
+              from_user.balance -= amount
+              to_user.balance += amount
+              
+              # Update player ownership
+              player_squad = session.exec(
+                  select(UserSquad)
+                  .where(UserSquad.user_id == from_user_id)
+                  .where(UserSquad.player_id == player_id)
+              ).one()
+              player_squad.user_id = to_user_id
+              
+              # Commit transaction
+              session.commit()
+              return True
+          except Exception as e:
+              session.rollback()
+              raise e
+  ``` 

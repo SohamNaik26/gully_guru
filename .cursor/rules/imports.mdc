@@ -1,0 +1,119 @@
+---
+description: Import guidelines for clean and maintainable code
+globs: ["**/*.py"]
+---
+
+# Import Guidelines
+
+## General Import Rules
+
+- **Explicit Imports**: Import only what you need, avoid wildcard imports
+  ```python
+  # ✅ Good: Explicit imports
+  from fastapi import Depends, HTTPException, status
+  
+  # ❌ Bad: Wildcard imports
+  from fastapi import *
+  ```
+
+- **Import Organization**: Group imports in the following order:
+  1. Standard library imports
+  2. Third-party imports
+  3. Local application imports
+  4. Separate each group with a blank line
+
+  ```python
+  # ✅ Good: Organized imports
+  import os
+  import json
+  from datetime import datetime
+  
+  from fastapi import FastAPI, Depends
+  from sqlmodel import Session, select
+  
+  from src.models.player import Player
+  from src.db.database import get_session
+  ```
+
+- **Import Aliases**: Use aliases when necessary to avoid name conflicts or improve readability
+  ```python
+  # ✅ Good: Meaningful aliases
+  import pandas as pd
+  import numpy as np
+  from src.models.player import Player as PlayerModel
+  ```
+
+## Absolute vs Relative Imports
+
+- **Prefer Absolute Imports**: Use absolute imports for clarity and to avoid confusion
+  ```python
+  # ✅ Good: Absolute imports
+  from src.models.player import Player
+  from src.db.database import get_session
+  
+  # ❌ Bad: Relative imports (especially deep ones)
+  from ...models.player import Player
+  from ..database import get_session
+  ```
+
+- **Limited Relative Imports**: Only use relative imports for closely related modules within the same package
+  ```python
+  # ✅ Acceptable: Simple relative import
+  from . import utils
+  from .constants import MAX_PLAYERS
+  ```
+
+## Circular Imports
+
+- **Avoid Circular Imports**: Restructure your code to prevent circular dependencies
+  ```python
+  # ❌ Bad: Circular imports
+  # file1.py
+  from file2 import function_b
+  
+  def function_a():
+      return function_b()
+  
+  # file2.py
+  from file1 import function_a
+  
+  def function_b():
+      return function_a()
+  ```
+
+- **Type Hints with Forward References**: Use string literals for forward references in type hints
+  ```python
+  # ✅ Good: Forward reference
+  from typing import List, Optional
+  
+  class Team:
+      players: List["Player"]  # Forward reference
+  
+  class Player:
+      team: Optional[Team]
+  ```
+
+## Import Performance
+
+- **Lazy Imports**: For expensive imports that aren't always needed, use lazy importing
+  ```python
+  # ✅ Good: Lazy import
+  def process_data_with_pandas():
+      import pandas as pd  # Only imported when function is called
+      return pd.read_csv("data.csv")
+  ```
+
+- **Avoid Import Side Effects**: Imports should not have side effects
+  ```python
+  # ❌ Bad: Import with side effects
+  # my_module.py
+  print("Module loaded!")  # Side effect on import
+  
+  # ✅ Good: No side effects
+  # my_module.py
+  def main():
+      print("Function called!")
+  
+  if __name__ == "__main__":
+      main()
+  ``` 

@@ -1,0 +1,6 @@
+data/
+target/
+creds/
+.vscode/
+.github/
+.git/
