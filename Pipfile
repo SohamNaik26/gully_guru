@@ -32,6 +32,9 @@ asyncpg = "*"
 databases = "*"
 psycopg2-binary = "*"
 kagglehub = "*"
+pydantic-settings = "*"
+greenlet = "*"
+alembic = "*"
 
 [dev-packages]
 black="*"

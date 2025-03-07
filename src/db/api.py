@@ -1,10 +1,16 @@
 import os
 from fastapi import FastAPI, HTTPException, Depends
 from sqlmodel import SQLModel, Session, select, create_engine
-from typing import List
-from src.db.models import User, IPLSchedule, PlayerStats
+from typing import List, Optional
+from src.db.models.user import User
+from src.db.models.player import Player, PlayerStats
+from src.db.models.schedule import IPLSchedule
+from src.db.models.user_player import UserPlayer
+from src.db.models.gully import Gully
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
+from sqlalchemy.ext.asyncio import AsyncSession
+from src.models.api import PlayerCreate, UserPlayerCreate
 
 
 load_dotenv()
@@ -124,3 +130,106 @@ async def read_player_stat(stat_id: int, session: Session = Depends(get_session)
     if not stat:
         raise HTTPException(status_code=404, detail="PlayerStat not found")
     return stat
+
+
+async def get_player(session: AsyncSession, player_id: int) -> Optional[Player]:
+    """Get a player by ID."""
+    result = await session.execute(select(Player).where(Player.id == player_id))
+    return result.scalar_one_or_none()
+
+
+async def get_players(
+    session: AsyncSession,
+    skip: int = 0,
+    limit: int = 100,
+    team: Optional[str] = None,
+    player_type: Optional[str] = None,
+    season: Optional[int] = None,
+) -> List[Player]:
+    """Get players with optional filtering."""
+    query = select(Player)
+
+    if team:
+        query = query.where(Player.team == team)
+    if player_type:
+        query = query.where(Player.player_type == player_type)
+    if season:
+        query = query.where(Player.season == season)
+
+    query = query.offset(skip).limit(limit)
+    result = await session.execute(query)
+    return result.scalars().all()
+
+
+async def create_player(session: AsyncSession, player: PlayerCreate) -> Player:
+    """Create a new player."""
+    db_player = Player(**player.dict())
+    session.add(db_player)
+    await session.commit()
+    await session.refresh(db_player)
+    return db_player
+
+
+async def get_user_player(
+    session: AsyncSession, user_player_id: int
+) -> Optional[UserPlayer]:
+    """Get a user-player link by ID."""
+    result = await session.execute(
+        select(UserPlayer).where(UserPlayer.id == user_player_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_user_players(
+    session: AsyncSession,
+    user_id: Optional[int] = None,
+    gully_id: Optional[int] = None,
+    skip: int = 0,
+    limit: int = 100,
+) -> List[UserPlayer]:
+    """Get user-player links with optional filtering."""
+    query = select(UserPlayer)
+
+    if user_id:
+        query = query.where(UserPlayer.user_id == user_id)
+    if gully_id:
+        query = query.where(UserPlayer.gully_id == gully_id)
+
+    query = query.offset(skip).limit(limit)
+    result = await session.execute(query)
+    return result.scalars().all()
+
+
+async def create_user_player(
+    session: AsyncSession, user_player: UserPlayerCreate
+) -> UserPlayer:
+    """Create a new user-player link."""
+    # Check if player is already assigned
+    result = await session.execute(
+        select(UserPlayer).where(UserPlayer.player_id == user_player.player_id)
+    )
+    existing = result.scalar_one_or_none()
+
+    if existing:
+        raise ValueError(
+            f"Player ID {user_player.player_id} is already assigned to user ID {existing.user_id}"
+        )
+
+    db_user_player = UserPlayer(**user_player.dict())
+    session.add(db_user_player)
+    await session.commit()
+    await session.refresh(db_user_player)
+    return db_user_player
+
+
+async def get_user_team(
+    session: AsyncSession, user_id: int, gully_id: Optional[int] = None
+) -> List[Player]:
+    """Get all players owned by a user."""
+    query = select(Player).join(UserPlayer).where(UserPlayer.user_id == user_id)
+
+    if gully_id:
+        query = query.where(UserPlayer.gully_id == gully_id)
+
+    result = await session.execute(query)
+    return result.scalars().all()

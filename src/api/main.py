@@ -39,6 +39,7 @@ app.include_router(auctions.router, prefix="/api/auctions", tags=["Auctions"])
 app.include_router(fantasy.router, prefix="/api/fantasy", tags=["Fantasy"])
 app.include_router(stats.router, prefix="/api/stats", tags=["Statistics"])
 
+
 # Exception handler
 @app.exception_handler(GullyGuruException)
 async def gullyguru_exception_handler(request, exc):
@@ -47,10 +48,12 @@ async def gullyguru_exception_handler(request, exc):
         content={"detail": exc.detail},
     )
 
+
 # Health check endpoint
 @app.get("/health", tags=["Health"])
 async def health_check():
     return {"status": "healthy"}
+
 
 # Startup event
 @app.on_event("startup")
@@ -60,11 +63,14 @@ async def startup_event():
         create_db_and_tables()
     logger.info("API started successfully")
 
+
 # Shutdown event
 @app.on_event("shutdown")
 async def shutdown_event():
     logger.info("API shutting down")
 
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("src.api.main:app", host="0.0.0.0", port=8000, reload=True) 
+
+    uvicorn.run("src.api.main:app", host="0.0.0.0", port=8000, reload=True)

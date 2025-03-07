@@ -1,6 +1,7 @@
 ---
-description: Database ORM, session management, migrations best practices
+description: Database ORM, session management, migrations best practices# ✅ Good: Validation script to check for unexpected columns from sqlmodel import inspect from sqlalchemy import create_engine  engine = create_engine("sqlite:///database.db") inspector = inspect(engine)  defined_columns = set(Player.model_fields.keys())  # Extract fields from SQLModel db_columns = set([col["name"] for col in inspector.get_columns("player")])  unexpected_columns = db_columns - defined_columns if unexpected_columns:     raise ValueError(f"Unexpected columns found in database: {unexpected_columns}")
 globs: ["**/*.py", "**/*.sql"]
+alwaysApply: false
 ---
 
 # Database Best Practices
@@ -143,6 +144,21 @@ globs: ["**/*.py", "**/*.sql"]
   alembic upgrade head
   ```
 
+- Only Add Explicitly Defined Columns
+  # ✅ Good: Validation script to check for unexpected columns
+from sqlmodel import inspect
+from sqlalchemy import create_engine
+
+engine = create_engine("sqlite:///database.db")
+inspector = inspect(engine)
+
+defined_columns = set(Player.model_fields.keys())  # Extract fields from SQLModel
+db_columns = set([col["name"] for col in inspector.get_columns("player")])
+
+unexpected_columns = db_columns - defined_columns
+if unexpected_columns:
+    raise ValueError(f"Unexpected columns found in database: {unexpected_columns}")
+
 ## Indexing
 
 - **Create Appropriate Indexes**: Add indexes for frequently queried columns
@@ -191,3 +207,6 @@ globs: ["**/*.py", "**/*.sql"]
               session.rollback()
               raise e
   ``` 
+
+
+

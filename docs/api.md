@@ -131,4 +131,55 @@ The API includes background tasks for:
 - Updating player statistics
 - Processing auction rounds
 - Calculating match points
-- Updating leaderboards 
+- Updating leaderboards
+
+## API Models
+
+The API uses Pydantic models for request validation and response serialization. These models are organized in the `src/api/schemas/` directory by domain:
+
+### Schema Organization
+
+- **User Schemas** (`src/api/schemas/user.py`): Models for user data, authentication, and profiles
+- **Player Schemas** (`src/api/schemas/player.py`): Models for player data and statistics
+- **Match Schemas** (`src/api/schemas/match.py`): Models for match data and performance
+- **Game Schemas** (`src/api/schemas/game.py`): Models for game mechanics like auctions, bids, and leaderboards
+
+For detailed documentation on API schemas, see [API Schema Documentation](api_schemas.md).
+
+### Importing Schemas
+
+All schemas can be imported from the central `schemas` module:
+
+```python
+from src.api.schemas import UserResponse, PlayerResponse, MatchResponse
+```
+
+### Schema Inheritance
+
+Schemas follow a consistent inheritance pattern:
+
+1. **Base Models**: Define common fields (e.g., `UserBase`, `PlayerBase`)
+2. **Create Models**: Extend base models for creation requests (e.g., `UserCreate`, `PlayerCreate`)
+3. **Response Models**: Extend base models with additional fields for responses (e.g., `UserResponse`, `PlayerResponse`)
+
+Example:
+```python
+# Base model with common fields
+class PlayerBase(BaseModel):
+    name: str
+    team: str
+    player_type: str
+
+# Create model for requests
+class PlayerCreate(PlayerBase):
+    pass
+
+# Response model with additional fields
+class PlayerResponse(PlayerBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+``` 
