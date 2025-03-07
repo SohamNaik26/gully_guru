@@ -2,11 +2,12 @@ from typing import Dict, Any
 from fastapi import APIRouter, Depends, status, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import select
+from src.api.dependencies import get_current_user
 from src.bot.utils.auction import validate_team_composition
-from src.models.user import User
-from src.models.player import Player
-from src.models.user_player_link import UserPlayerLink
-from src.database.session import get_session
+from src.db.models.models import User
+from src.db.models.models import Player
+from src.db.models.models import UserPlayer
+from src.db.session import get_session
 
 router = APIRouter()
 
@@ -28,7 +29,7 @@ async def validate_user_team(
 
     # Get user's team
     user_players = session.exec(
-        select(Player).join(UserPlayerLink).where(UserPlayerLink.user_id == user_id)
+        select(Player).join(UserPlayer).where(UserPlayer.user_id == user_id)
     ).all()
 
     # Convert to list of dicts for validation

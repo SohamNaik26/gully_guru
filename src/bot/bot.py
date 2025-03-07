@@ -1,37 +1,48 @@
+#!/usr/bin/env python
+"""
+Main bot module for GullyGuru.
+"""
+
 import logging
-import asyncio
-from typing import Dict, Any, Optional, List
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+import os
+from dotenv import load_dotenv
+from telegram import BotCommand, Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
-    filters,
 )
 from decimal import Decimal
+from sqlmodel import select
 
 from src.db.session import get_session
-from src.db.models import User, Player, PlayerStats, UserPlayerLink
-from src.utils.config import settings
-from src.services.auth import create_token
-from src.bot.client import APIClient
-from src.bot.handlers import (
-    start,
-    profile,
-    players,
-    team,
-    auction,
-    matches,
-    leaderboard,
-    admin,
-)
+from src.db.models import User, Player, PlayerStats, UserPlayer
+from src.config import settings
+from src.bot.api_client_instance import api_client
+from src.bot.handlers import start, players, team, auction
+from src.bot.handlers.game_guide import game_guide_command, handle_term_callback
 from src.bot.callbacks import (
     navigation,
     players as player_callbacks,
     auction as auction_callbacks,
 )
 from src.bot.handlers.games import register_handlers as register_game_handlers
+from src.bot.handlers.start import start_command, register_command
+from src.bot.handlers.help import help_command
+from src.bot.handlers.game_guide import game_guide_command
+from src.bot.handlers.profile import profile_command, budget_command
+from src.bot.handlers import players, team, auction, navigation, player_callbacks
+from src.bot.handlers.admin import (
+    admin_panel_command,
+    add_admin_command,
+    remove_admin_command,
+    nominate_admin_command,
+    gully_settings_command,
+    invite_link_command,
+    setup_wizard_command,
+    admin_roles_command,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -39,9 +50,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 # Create global API client
-api_client = APIClient()
+# api_client = APIClient()
 
 
 # Command handlers
@@ -487,9 +497,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
             # Check if user already has this player
             existing_link = session.exec(
-                select(UserPlayerLink).where(
-                    UserPlayerLink.user_id == db_user.id,
-                    UserPlayerLink.player_id == player_id,
+                select(UserPlayer).where(
+                    UserPlayer.user_id == db_user.id,
+                    UserPlayer.player_id == player_id,
                 )
             ).first()
 
@@ -510,7 +520,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
             # Buy player
             db_user.budget -= price
-            link = UserPlayerLink(user_id=db_user.id, player_id=player_id, price=price)
+            link = UserPlayer(user_id=db_user.id, player_id=player_id, price=price)
             session.add(link)
             session.commit()
 
@@ -531,22 +541,23 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     """Handle errors."""
     logger.error(f"Update {update} caused error {context.error}")
 
-    # Send message to user
-    if update.effective_message:
+    # Send message to user if update is not None
+    if update and update.effective_message:
         await update.effective_message.reply_text(
             "Sorry, an error occurred. Please try again later."
         )
 
 
-async def create_application():
-    """Create and configure the bot application."""
-    # Create application
+def main():
+    """Main function to run the bot."""
+    # Create the application
     application = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
 
     # Register command handlers
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("register", start.register_command))
+    application.add_handler(CommandHandler("game_guide", game_guide_command))
 
     # Profile commands
     application.add_handler(CommandHandler("profile", profile_command))
@@ -563,31 +574,28 @@ async def create_application():
 
     # Auction commands
     application.add_handler(CommandHandler("auction", auction.auction_status_command))
-    application.add_handler(CommandHandler("bid", auction.place_bid_command))
-
-    # Match commands
-    application.add_handler(CommandHandler("matches", matches.list_matches_command))
-    application.add_handler(CommandHandler("predict", matches.predict_match_command))
-    application.add_handler(CommandHandler("live", matches.live_match_command))
-
-    # Leaderboard commands
-    application.add_handler(CommandHandler("leaderboard", leaderboard_command))
-    application.add_handler(CommandHandler("points", leaderboard.my_points_command))
-
-    # Admin commands (private chat only)
     application.add_handler(
-        CommandHandler(
-            "admin", admin.admin_menu_command, filters=filters.ChatType.PRIVATE
-        )
+        CommandHandler("submit_squad", auction.submit_squad_command)
     )
     application.add_handler(
-        CommandHandler(
-            "broadcast", admin.broadcast_command, filters=filters.ChatType.PRIVATE
-        )
+        CommandHandler("round_zero_status", auction.round_zero_status_command)
     )
     application.add_handler(
-        CommandHandler("stats", admin.stats_command, filters=filters.ChatType.PRIVATE)
+        CommandHandler("vote_time_slot", auction.vote_time_slot_command)
     )
+    application.add_handler(
+        CommandHandler("time_slot_results", auction.time_slot_results_command)
+    )
+
+    # Admin commands
+    application.add_handler(CommandHandler("admin_panel", admin_panel_command))
+    application.add_handler(CommandHandler("add_admin", add_admin_command))
+    application.add_handler(CommandHandler("remove_admin", remove_admin_command))
+    application.add_handler(CommandHandler("nominate_admin", nominate_admin_command))
+    application.add_handler(CommandHandler("gully_settings", gully_settings_command))
+    application.add_handler(CommandHandler("invite_link", invite_link_command))
+    application.add_handler(CommandHandler("setup_wizard", setup_wizard_command))
+    application.add_handler(CommandHandler("admin_roles", admin_roles_command))
 
     # Register callback query handlers
     application.add_handler(
@@ -603,6 +611,16 @@ async def create_application():
             auction_callbacks.handle_auction_callback, pattern="^auction_"
         )
     )
+    application.add_handler(
+        CallbackQueryHandler(handle_term_callback, pattern="^(term_|category_)")
+    )
+
+    # Admin callback handler
+    from src.bot.callbacks.admin import handle_admin_callback
+
+    application.add_handler(
+        CallbackQueryHandler(handle_admin_callback, pattern="^admin_")
+    )
 
     # Register game handlers
     register_game_handlers(application)
@@ -610,12 +628,14 @@ async def create_application():
     # Error handler
     application.add_error_handler(error_handler)
 
-    # Initialize the application
-    await application.initialize()
-    await application.start_polling()
+    # Set up command scopes (this will be done asynchronously when the bot starts)
 
-    return application
+    # Log startup
+    logger.info("Bot is running. Press Ctrl+C to stop.")
+
+    # Start the bot
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
-    asyncio.run(create_application())
+    main()

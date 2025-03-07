@@ -35,6 +35,7 @@ kagglehub = "*"
 pydantic-settings = "*"
 greenlet = "*"
 alembic = "*"
+pyjwt = "*"
 
 [dev-packages]
 black="*"

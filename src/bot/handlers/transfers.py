@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timedelta
 import pytz
 
-from src.bot.bot import api_client
+from src.bot.api_client_instance import api_client
 from src.bot.keyboards.transfers import (
     get_transfer_menu_keyboard,
     get_player_listing_keyboard,

@@ -1,8 +1,9 @@
-from telegram import Update
-from telegram.ext import ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes, ConversationHandler
 from decimal import Decimal
+import logging
 
-from src.bot.bot import api_client
+from src.bot.api_client_instance import api_client
 from src.bot.keyboards.common import get_help_keyboard
 
 

@@ -525,3 +525,132 @@ class APIClient:
         except Exception as e:
             logger.error(f"Error setting active game: {e}")
             return {"success": False, "error": str(e)}
+
+    async def get_round_zero_status(self) -> Optional[Dict[str, Any]]:
+        """Get the status of Round 0 submissions."""
+        try:
+            response = await self.client.get(
+                f"{self.base_url}/api/auctions/round-zero-status"
+            )
+            if response.status_code == 200:
+                return response.json()
+            return None
+        except Exception as e:
+            logger.error(f"Error getting Round 0 status: {str(e)}")
+            return None
+
+    async def get_user_squad_submission(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """Get a user's squad submission for Round 0."""
+        try:
+            response = await self.client.get(
+                f"{self.base_url}/api/auctions/users/{user_id}/squad-submission"
+            )
+            if response.status_code == 200:
+                return response.json()
+            return None
+        except Exception as e:
+            logger.error(f"Error getting user squad submission: {str(e)}")
+            return None
+
+    async def submit_squad(self, user_id: int, player_ids: List[int]) -> bool:
+        """Submit a squad for Round 0."""
+        try:
+            data = {"player_ids": player_ids}
+            response = await self.client.post(
+                f"{self.base_url}/api/auctions/users/{user_id}/submit-squad", json=data
+            )
+            return response.status_code == 200
+        except Exception as e:
+            logger.error(f"Error submitting squad: {str(e)}")
+            return False
+
+    async def get_time_slot_poll(self) -> Optional[Dict[str, Any]]:
+        """Get the time slot poll for auction scheduling."""
+        try:
+            response = await self.client.get(f"{self.base_url}/api/auctions/time-slots")
+            if response.status_code == 200:
+                return response.json()
+            return None
+        except Exception as e:
+            logger.error(f"Error getting time slot poll: {str(e)}")
+            return None
+
+    async def vote_time_slot(self, user_id: int, slot_id: str) -> bool:
+        """Vote for a time slot."""
+        try:
+            data = {"slot_id": slot_id}
+            response = await self.client.post(
+                f"{self.base_url}/api/auctions/users/{user_id}/vote-time-slot",
+                json=data,
+            )
+            return response.status_code == 200
+        except Exception as e:
+            logger.error(f"Error voting for time slot: {str(e)}")
+            return False
+
+    async def get_time_slot_results(self) -> Optional[Dict[str, Any]]:
+        """Get the results of the time slot voting."""
+        try:
+            response = await self.client.get(
+                f"{self.base_url}/api/auctions/time-slot-results"
+            )
+            if response.status_code == 200:
+                return response.json()
+            return None
+        except Exception as e:
+            logger.error(f"Error getting time slot results: {str(e)}")
+            return None
+
+    # Admin methods
+    async def get_user_permissions(
+        self, user_id: int, gully_id: int
+    ) -> List[Dict[str, Any]]:
+        """Get user permissions in a gully."""
+        url = f"{self.base_url}/admin/permissions/{gully_id}/{user_id}"
+        return await self._make_request("GET", url)
+
+    async def get_gully_admins(self, gully_id: int) -> List[Dict[str, Any]]:
+        """Get all admins for a gully."""
+        url = f"{self.base_url}/admin/admins/{gully_id}"
+        return await self._make_request("GET", url)
+
+    async def assign_admin_role(self, user_id: int, gully_id: int) -> Dict[str, Any]:
+        """Assign admin role to a user in a gully."""
+        url = f"{self.base_url}/admin/roles/{gully_id}/{user_id}"
+        return await self._make_request("POST", url)
+
+    async def remove_admin_role(self, user_id: int, gully_id: int) -> Dict[str, Any]:
+        """Remove admin role from a user in a gully."""
+        url = f"{self.base_url}/admin/roles/{gully_id}/{user_id}"
+        return await self._make_request("DELETE", url)
+
+    async def assign_admin_permission(
+        self, user_id: int, gully_id: int, permission_type: str
+    ) -> Dict[str, Any]:
+        """Assign a specific admin permission to a user."""
+        url = (
+            f"{self.base_url}/admin/permissions/{gully_id}/{user_id}/{permission_type}"
+        )
+        return await self._make_request("POST", url)
+
+    async def remove_admin_permission(
+        self, user_id: int, gully_id: int, permission_type: str
+    ) -> Dict[str, Any]:
+        """Remove a specific admin permission from a user."""
+        url = (
+            f"{self.base_url}/admin/permissions/{gully_id}/{user_id}/{permission_type}"
+        )
+        return await self._make_request("DELETE", url)
+
+    async def nominate_admin(self, nominee_id: int, gully_id: int) -> Dict[str, Any]:
+        """Nominate a user to become an admin."""
+        url = f"{self.base_url}/admin/nominate/{gully_id}/{nominee_id}"
+        return await self._make_request("POST", url)
+
+    async def generate_invite_link(
+        self, gully_id: int, expiration_hours: int = 24
+    ) -> Dict[str, Any]:
+        """Generate an invite link for a gully."""
+        url = f"{self.base_url}/admin/invite-link/{gully_id}"
+        params = {"expiration_hours": expiration_hours}
+        return await self._make_request("POST", url, params=params)

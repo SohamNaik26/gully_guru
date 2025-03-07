@@ -4,6 +4,18 @@
 
 The GullyGuru API is a FastAPI-based backend service that provides all the data and business logic for the fantasy cricket platform. It handles user management, team management, player data, auctions, match data, and scoring.
 
+This document provides a high-level overview of the API architecture. For detailed information about specific components, please refer to the following documents:
+- [User Management System](user_management.md#api-system) - For user, group, and gully management APIs
+- [Auction Management System](auction_management.md#api-system) - For auction and bidding APIs
+
+## Architecture
+
+The GullyGuru API follows a modular architecture with clear separation of concerns:
+
+1. **API Layer** - FastAPI endpoints for handling HTTP requests
+2. **Service Layer** - Business logic encapsulated in service classes
+3. **Database Layer** - SQLModel-based models with proper relationships
+
 ## Core Components
 
 ### 1. User Management
@@ -11,6 +23,8 @@ The GullyGuru API is a FastAPI-based backend service that provides all the data 
 - **Registration**: Creates new user accounts with initial budget
 - **Authentication**: JWT-based authentication system
 - **Profile Management**: Updates user profiles and tracks budgets
+
+For detailed information, see [User Management API](user_management.md#api-system).
 
 ### 2. Team Management
 
@@ -32,6 +46,8 @@ The GullyGuru API is a FastAPI-based backend service that provides all the data 
 - **Auction Results**: Processes auction outcomes and updates teams
 - **Notifications**: Triggers notifications for auction events
 
+For detailed information, see [Auction Management API](auction_management.md#api-system).
+
 ### 5. Match Management
 
 - **Match Scheduling**: Tracks upcoming and live matches
@@ -45,60 +61,6 @@ The GullyGuru API is a FastAPI-based backend service that provides all the data 
 - **Rankings**: Generates leaderboards
 - **Historical Data**: Maintains historical performance data
 
-## API Endpoints
-
-### User Endpoints
-
-- `POST /users/register`: Register a new user
-- `POST /users/login`: Authenticate a user
-- `GET /users/me`: Get current user profile
-- `PUT /users/me`: Update user profile
-- `GET /users/{user_id}/team`: Get a user's team
-
-### Team Endpoints
-
-- `GET /teams/my`: Get current user's team
-- `POST /teams/players/{player_id}`: Add player to team
-- `DELETE /teams/players/{player_id}`: Remove player from team
-- `PUT /teams/captain/{player_id}`: Set team captain
-
-### Player Endpoints
-
-- `GET /players`: List all players (with filtering)
-- `GET /players/{player_id}`: Get player details
-- `GET /players/search`: Search for players
-
-### Auction Endpoints
-
-- `GET /auctions/current`: Get current auction status
-- `GET /auctions/history`: Get auction history
-- `POST /auctions/bid`: Place a bid
-- `GET /auctions/rounds/{round_id}`: Get auction round details
-
-### Match Endpoints
-
-- `GET /matches/upcoming`: Get upcoming matches
-- `GET /matches/live`: Get live matches
-- `GET /matches/{match_id}`: Get match details
-- `POST /matches/{match_id}/predict`: Make match prediction
-
-### Leaderboard Endpoints
-
-- `GET /leaderboard`: Get global leaderboard
-- `GET /leaderboard/weekly`: Get weekly leaderboard
-
-## Database Models
-
-- **User**: User accounts and budgets
-- **Player**: Player information and statistics
-- **UserPlayerLink**: Many-to-many relationship between users and players
-- **Team**: Team composition and captain
-- **Auction**: Auction rounds and status
-- **AuctionBid**: Bids placed in auctions
-- **Match**: Match details and scores
-- **Prediction**: User predictions for matches
-- **PointsLog**: Record of points earned by users
-
 ## Authentication
 
 The API uses JWT (JSON Web Tokens) for authentication:
@@ -107,6 +69,8 @@ The API uses JWT (JSON Web Tokens) for authentication:
 2. API returns a JWT token
 3. Subsequent requests include the token in the Authorization header
 4. API validates the token and identifies the user
+
+For detailed information, see [User Management Authentication](user_management.md#authentication).
 
 ## Error Handling
 
@@ -117,12 +81,17 @@ The API provides standardized error responses:
 - 403: Forbidden (insufficient permissions)
 - 404: Not Found (resource doesn't exist)
 - 409: Conflict (resource already exists)
+- 422: Unprocessable Entity (invalid data format)
 - 500: Internal Server Error (server-side issue)
 
 Each error response includes:
 - Error code
 - Error message
 - Optional details for debugging
+
+For component-specific error handling, see:
+- [User Management Error Handling](user_management.md#error-handling)
+- [Auction Management Error Handling](auction_management.md#error-handling)
 
 ## Scheduled Tasks
 
@@ -132,6 +101,11 @@ The API includes background tasks for:
 - Processing auction rounds
 - Calculating match points
 - Updating leaderboards
+- Managing user sessions and tokens
+
+For component-specific scheduled tasks, see:
+- [User Management Scheduled Tasks](user_management.md#scheduled-tasks)
+- [Auction Management Scheduled Tasks](auction_management.md#scheduled-tasks)
 
 ## API Models
 
@@ -144,15 +118,9 @@ The API uses Pydantic models for request validation and response serialization. 
 - **Match Schemas** (`src/api/schemas/match.py`): Models for match data and performance
 - **Game Schemas** (`src/api/schemas/game.py`): Models for game mechanics like auctions, bids, and leaderboards
 
-For detailed documentation on API schemas, see [API Schema Documentation](api_schemas.md).
-
-### Importing Schemas
-
-All schemas can be imported from the central `schemas` module:
-
-```python
-from src.api.schemas import UserResponse, PlayerResponse, MatchResponse
-```
+For detailed schema examples, see:
+- [User Management API Schemas](user_management.md#api-schemas)
+- [Auction Management API Schemas](auction_management.md#api-schemas)
 
 ### Schema Inheritance
 
@@ -162,24 +130,14 @@ Schemas follow a consistent inheritance pattern:
 2. **Create Models**: Extend base models for creation requests (e.g., `UserCreate`, `PlayerCreate`)
 3. **Response Models**: Extend base models with additional fields for responses (e.g., `UserResponse`, `PlayerResponse`)
 
-Example:
-```python
-# Base model with common fields
-class PlayerBase(BaseModel):
-    name: str
-    team: str
-    player_type: str
+## API Endpoints
 
-# Create model for requests
-class PlayerCreate(PlayerBase):
-    pass
+For a complete list of API endpoints, see:
+- [User Management API Endpoints](user_management.md#api-endpoints)
+- [Auction Management API Endpoints](auction_management.md#api-endpoints)
 
-# Response model with additional fields
-class PlayerResponse(PlayerBase):
-    id: int
-    created_at: datetime
-    updated_at: datetime
-    
-    class Config:
-        from_attributes = True
-``` 
+## Database Models
+
+For detailed information about database models, see:
+- [User Management Database Models](user_management.md#database-models)
+- [Auction Management Database Models](auction_management.md#database-models) 

@@ -1,14 +1,13 @@
-from typing import List, Dict, Any
+from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import select
-from datetime import datetime, timedelta
 
-from src.models.gully import Gully
-from src.models.gully_participant import GullyParticipant
-from src.models.user import User
-from src.database.session import get_session
-from src.api.schemas.gullies import (
+from src.db.models.models import Gully
+from src.db.models.models import GullyParticipant
+from src.db.models.models import User
+from src.db.session import get_session
+from src.api.schemas.games import (
     GullyCreate,
     GullyResponse,
     GullyParticipantCreate,

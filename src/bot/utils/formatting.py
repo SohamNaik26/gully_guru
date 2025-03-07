@@ -1,4 +1,4 @@
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List
 from decimal import Decimal
 
 
@@ -54,7 +54,7 @@ def format_player_card(player: Dict[str, Any]) -> str:
 
 def format_team_card(team: Dict[str, Any]) -> str:
     """Format a team card for display."""
-    message = f"*Your Fantasy Team*\n\n"
+    message = "*Your Fantasy Team*\n\n"
 
     # Team value
     total_value = sum(
@@ -127,7 +127,7 @@ def format_match_card(match: Dict[str, Any]) -> str:
             message += f"*Player of the Match:* {match['player_of_match']}\n"
 
     elif match.get("status") == "live":
-        message += f"\n*Live Score:*\n"
+        message += "\n*Live Score:*\n"
 
         if match.get("score_team1"):
             message += f"{match['team1']}: {match['score_team1']}\n"
@@ -142,7 +142,7 @@ def format_match_card(match: Dict[str, Any]) -> str:
             message += f"*Current Bowler:* {match['current_bowler']}\n"
 
     else:  # upcoming
-        message += f"\n*Status:* Upcoming\n"
+        message += "\n*Status:* Upcoming\n"
 
     # User prediction if available
     if match.get("user_prediction"):

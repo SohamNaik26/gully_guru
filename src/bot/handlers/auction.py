@@ -7,7 +7,7 @@ import random
 from datetime import datetime
 import pytz
 
-from src.bot.bot import api_client
+from src.bot.api_client_instance import api_client
 from src.bot.keyboards.auction import get_auction_keyboard, get_bid_keyboard
 from src.bot.utils.formatting import format_player_card
 from src.bot.utils.auction import (
@@ -18,6 +18,8 @@ from src.bot.utils.auction import (
 
 # Conversation states
 BID_AMOUNT = 1
+PLAYER_SELECTION = 2
+SQUAD_CONFIRMATION = 3
 
 logger = logging.getLogger(__name__)
 
@@ -878,3 +880,252 @@ async def place_bid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     # Extend auction timer if bid is placed near the end
     await extend_auction_timer(context)
+
+
+async def submit_squad_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """
+    Handle the /submit_squad command.
+    Initiates the process for submitting an initial squad of 18 players (Round 0).
+    """
+    user = update.effective_user
+
+    # Get user from database
+    db_user = await api_client.get_user(user.id)
+
+    if not db_user:
+        await update.message.reply_text(
+            "You need to register first. Use /start to register."
+        )
+        return ConversationHandler.END
+
+    # Check if there's an active Round 0
+    round_zero = await api_client.get_round_zero_status()
+
+    if not round_zero or round_zero.get("status") != "active":
+        await update.message.reply_text(
+            "There is no active Round 0 submission period at the moment. "
+            "Please wait for the admin to start Round 0."
+        )
+        return ConversationHandler.END
+
+    # Check if user has already submitted a squad
+    user_submission = await api_client.get_user_squad_submission(user.id)
+
+    if user_submission and user_submission.get("status") == "submitted":
+        await update.message.reply_text(
+            "You have already submitted your squad for Round 0. "
+            "You cannot modify it at this time."
+        )
+        return ConversationHandler.END
+
+    # Initialize squad in context if not already there
+    if "squad" not in context.user_data:
+        context.user_data["squad"] = []
+
+    # Show player selection interface
+    keyboard = [
+        [InlineKeyboardButton("Browse Players", callback_data="browse_players")],
+        [InlineKeyboardButton("View Current Squad", callback_data="view_squad")],
+        [InlineKeyboardButton("Submit Squad", callback_data="confirm_squad")],
+        [InlineKeyboardButton("Cancel", callback_data="cancel_squad")],
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        "🏏 *Round 0: Initial Squad Submission* 🏏\n\n"
+        "Select 18 players for your initial squad. "
+        "The total base price must not exceed 100 Cr.\n\n"
+        "Use the buttons below to browse players, view your current selection, "
+        "and submit your squad when ready.",
+        reply_markup=reply_markup,
+        parse_mode="Markdown",
+    )
+
+    return PLAYER_SELECTION
+
+
+async def round_zero_status_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    Handle the /round_zero_status command.
+    Shows the current status of Round 0 submissions.
+    """
+    # Check if command is used in a group
+    if update.effective_chat.type not in ["group", "supergroup"]:
+        await update.message.reply_text(
+            "This command is intended for group chats. You can use /submit_squad in private chat to submit your squad."
+        )
+        return
+
+    # Get Round 0 status
+    round_zero = await api_client.get_round_zero_status()
+
+    if not round_zero:
+        await update.message.reply_text("There is no Round 0 configured yet.")
+        return
+
+    status = round_zero.get("status", "not_started")
+    deadline = round_zero.get("deadline")
+    submissions = round_zero.get("submissions", [])
+
+    # Format deadline
+    deadline_str = "Not set"
+    if deadline:
+        deadline_dt = datetime.fromisoformat(deadline)
+        deadline_str = deadline_dt.strftime("%d %b %Y, %H:%M")
+
+    # Format message based on status
+    if status == "not_started":
+        message = "Round 0 has not started yet."
+    elif status == "active":
+        # Calculate time remaining
+        time_remaining = "N/A"
+        if deadline:
+            deadline_dt = datetime.fromisoformat(deadline)
+            now = datetime.now(pytz.UTC)
+            if deadline_dt > now:
+                remaining = deadline_dt - now
+                days = remaining.days
+                hours, remainder = divmod(remaining.seconds, 3600)
+                minutes, _ = divmod(remainder, 60)
+                time_remaining = f"{days}d {hours}h {minutes}m"
+            else:
+                time_remaining = "Expired"
+
+        # Format submissions
+        submitted_users = "\n".join(
+            [f"• {sub.get('username', 'Unknown')}" for sub in submissions]
+        )
+        if not submitted_users:
+            submitted_users = "No submissions yet"
+
+        message = (
+            "🏏 *Round 0 Status* 🏏\n\n"
+            f"Status: *Active*\n"
+            f"Deadline: *{deadline_str}*\n"
+            f"Time Remaining: *{time_remaining}*\n\n"
+            f"Submissions ({len(submissions)}):\n{submitted_users}\n\n"
+            "Use /submit_squad in a private chat with me to submit your squad."
+        )
+    elif status == "completed":
+        message = (
+            "🏏 *Round 0 Status* 🏏\n\n"
+            f"Status: *Completed*\n"
+            f"Total Submissions: *{len(submissions)}*\n\n"
+            "Round 0 has been completed. Contested players will be auctioned in Round 1."
+        )
+    else:
+        message = f"Round 0 status: {status}"
+
+    await update.message.reply_text(message, parse_mode="Markdown")
+
+
+async def vote_time_slot_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    Handle the /vote_time_slot command.
+    Allows users to vote for their preferred auction time slot.
+    """
+    # Check if command is used in a group
+    if update.effective_chat.type not in ["group", "supergroup"]:
+        await update.message.reply_text("This command is intended for group chats.")
+        return
+
+    user = update.effective_user
+
+    # Get time slot poll
+    time_slots = await api_client.get_time_slot_poll()
+
+    if not time_slots or not time_slots.get("slots"):
+        await update.message.reply_text(
+            "There are no time slots available for voting at the moment."
+        )
+        return
+
+    # Create keyboard with time slots
+    keyboard = []
+    for slot in time_slots.get("slots", []):
+        slot_id = slot.get("id")
+        slot_time = slot.get("time")
+
+        # Format time
+        slot_time_str = "Unknown time"
+        if slot_time:
+            slot_time_dt = datetime.fromisoformat(slot_time)
+            slot_time_str = slot_time_dt.strftime("%d %b, %H:%M")
+
+        keyboard.append(
+            [InlineKeyboardButton(slot_time_str, callback_data=f"vote_slot_{slot_id}")]
+        )
+
+    keyboard.append([InlineKeyboardButton("Cancel", callback_data="cancel_vote")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text(
+        "🏏 *Vote for Auction Time Slot* 🏏\n\n"
+        "Please select your preferred time slot for the Round 1 auction:",
+        reply_markup=reply_markup,
+        parse_mode="Markdown",
+    )
+
+
+async def time_slot_results_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    Handle the /time_slot_results command.
+    Shows the results of the time slot voting.
+    """
+    # Check if command is used in a group
+    if update.effective_chat.type not in ["group", "supergroup"]:
+        await update.message.reply_text("This command is intended for group chats.")
+        return
+
+    # Get time slot poll results
+    results = await api_client.get_time_slot_results()
+
+    if not results or not results.get("slots"):
+        await update.message.reply_text(
+            "There are no time slot voting results available."
+        )
+        return
+
+    # Format results
+    slots = results.get("slots", [])
+    winner = results.get("winner")
+
+    # Build message
+    message = "🏏 *Time Slot Voting Results* 🏏\n\n"
+
+    for slot in slots:
+        slot_id = slot.get("id")
+        slot_time = slot.get("time")
+        votes = slot.get("votes", 0)
+
+        # Format time
+        slot_time_str = "Unknown time"
+        if slot_time:
+            slot_time_dt = datetime.fromisoformat(slot_time)
+            slot_time_str = slot_time_dt.strftime("%d %b, %H:%M")
+
+        # Mark winner
+        winner_mark = "🏆 " if winner and winner == slot_id else ""
+
+        message += f"{winner_mark}*{slot_time_str}*: {votes} votes\n"
+
+    # Add winner announcement if available
+    if winner:
+        winning_slot = next((s for s in slots if s.get("id") == winner), None)
+        if winning_slot and winning_slot.get("time"):
+            winning_time = datetime.fromisoformat(winning_slot.get("time"))
+            winning_time_str = winning_time.strftime("%d %b, %H:%M")
+
+            message += f"\n*The auction will be held at {winning_time_str}*"
+
+    await update.message.reply_text(message, parse_mode="Markdown")

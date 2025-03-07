@@ -2,7 +2,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from typing import Callable, Any, Awaitable
 
-from src.bot.bot import api_client
+from src.bot.api_client_instance import api_client
 
 
 async def gully_context_middleware(

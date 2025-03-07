@@ -2,7 +2,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from decimal import Decimal
 
-from src.bot.bot import api_client
+from src.bot.api_client_instance import api_client
 from src.bot.handlers.auction import auction_status_command, quick_bid_callback
 from src.bot.keyboards.auction import get_auction_history_keyboard
 

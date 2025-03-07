@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from src.db.session import get_session
 from src.db.models import Player, PlayerStats
-from src.models.api import PlayerCreate, PlayerResponse, PlayerStatsResponse
+from src.db.models.api import PlayerCreate, PlayerResponse, PlayerStatsResponse
 from src.api.dependencies import get_admin_user
 from src.api.exceptions import NotFoundException
 

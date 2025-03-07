@@ -1,9 +1,8 @@
 ---
-description: Database ORM, session management, migrations best practices# ✅ Good: Validation script to check for unexpected columns from sqlmodel import inspect from sqlalchemy import create_engine  engine = create_engine("sqlite:///database.db") inspector = inspect(engine)  defined_columns = set(Player.model_fields.keys())  # Extract fields from SQLModel db_columns = set([col["name"] for col in inspector.get_columns("player")])  unexpected_columns = db_columns - defined_columns if unexpected_columns:     raise ValueError(f"Unexpected columns found in database: {unexpected_columns}")
-globs: ["**/*.py", "**/*.sql"]
+description: 
+globs: 
 alwaysApply: false
 ---
-
 # Database Best Practices
 
 ## SQLModel Usage
@@ -13,14 +12,33 @@ alwaysApply: false
   # ✅ Good: Clear model definition
   from typing import Optional
   from sqlmodel import Field, SQLModel
+  from decimal import Decimal
   
   class Player(SQLModel, table=True):
       id: Optional[int] = Field(default=None, primary_key=True)
       name: str = Field(index=True)
       team: str
-      type: str  # BAT, BOWL, ALL
-      base_price: float
-      sold_price: float
+      player_type: str  # BAT, BOWL, ALL
+      base_price: Optional[Decimal] = Field(default=None)
+      sold_price: Optional[Decimal] = Field(default=None)
+      season: Optional[int] = Field(default=None, index=True)
+  ```
+
+- **Use Base Models**: Create base models for common fields
+  ```python
+  # ✅ Good: TimeStampedModel base class
+  from datetime import datetime, timezone
+  
+  class TimeStampedModel(SQLModel):
+      created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+      updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+      
+  class KagglePlayer(TimeStampedModel, table=True):
+      __tablename__ = "kaggle_players"
+      
+      id: Optional[int] = Field(default=None, primary_key=True)
+      name: str = Field(index=True)
+      # Other fields...
   ```
 
 - **Use Relationships**: Define relationships between models
@@ -56,6 +74,85 @@ alwaysApply: false
       async with AsyncSession(async_engine) as session:
           result = await session.execute(select(Player).where(Player.id == player_id))
           return result.scalar_one_or_none()
+  ```
+
+## Avoiding Regression Errors with Async SQLAlchemy
+
+- **Don't Mix Sync and Async Operations**: Keep sync and async code separate
+  ```python
+  # ❌ Bad: Mixing sync and async
+  async def process_data():
+      with Session(engine) as session:  # Sync session in async function
+          session.commit()  # Not awaited
+  
+  # ✅ Good: Consistent async usage
+  async def process_data():
+      async with async_session() as session:
+          await session.commit()
+  ```
+
+- **Properly Access ORM Attributes**: Use setattr for setting attributes to avoid lazy loading issues
+  ```python
+  # ❌ Bad: Direct attribute access after async operations
+  async def mark_processed(record):
+      await process_record(record)
+      record.processed = True  # May trigger lazy loading
+  
+  # ✅ Good: Use setattr to avoid lazy loading
+  async def mark_processed(record):
+      await process_record(record)
+      setattr(record, "processed", True)
+  ```
+
+- **Maintain Session Scope**: Keep session open while accessing ORM attributes
+  ```python
+  # ❌ Bad: Accessing attributes after session is closed
+  async def get_player_data():
+      async with async_session() as session:
+          result = await session.execute(select(Player))
+          players = result.scalars().all()
+      
+      # Session is closed here
+      for player in players:
+          print(player.team)  # May trigger lazy loading and fail
+  
+  # ✅ Good: Keep session open while accessing attributes
+  async def get_player_data():
+      async with async_session() as session:
+          result = await session.execute(select(Player))
+          players = result.scalars().all()
+          
+          # Access attributes while session is open
+          for player in players:
+              print(player.team)
+  ```
+
+- **Use Conservative Connection Pool Settings**: Avoid exhausting the connection pool
+  ```python
+  # ✅ Good: Conservative pool settings
+  engine = create_async_engine(
+      "postgresql+asyncpg://user:pass@localhost/db",
+      pool_size=10,           # Moderate pool size
+      max_overflow=5,         # Limited overflow
+      pool_timeout=30,        # Reasonable timeout
+      pool_recycle=1800,      # Recycle connections after 30 minutes
+      pool_pre_ping=True,     # Validate connections before use
+  )
+  ```
+
+- **Ensure Proper Async Context**: All async operations must run in an async context
+  ```python
+  # ❌ Bad: Running async code in a sync context
+  def main():
+      result = asyncio.run(async_function())  # OK at top level
+      result = async_function()  # Error: not awaited
+  
+  # ✅ Good: Proper async context
+  async def main():
+      result = await async_function()
+  
+  if __name__ == "__main__":
+      asyncio.run(main())  # Run the async main at the top level
   ```
 
 ## Query Optimization
@@ -144,8 +241,7 @@ alwaysApply: false
   alembic upgrade head
   ```
 
-- Only Add Explicitly Defined Columns
-  # ✅ Good: Validation script to check for unexpected columns
+- **Only Add Explicitly Defined Columns**: ✅ Good: Validation script to check for unexpected columns
 from sqlmodel import inspect
 from sqlalchemy import create_engine
 
@@ -206,7 +302,33 @@ if unexpected_columns:
           except Exception as e:
               session.rollback()
               raise e
+  ```
+
+## Testing Database Changes
+
+- **Create Test Scripts**: Verify changes don't cause regression
+  ```python
+  # ✅ Good: Test script for database changes
+  async def test_database_changes():
+      async with async_session() as session:
+          # Test basic query
+          result = await session.execute(select(Player).limit(5))
+          players = result.scalars().all()
+          
+          # Test batch processing
+          for player in players:
+              # Test your changes
+              assert player.team is not None
+  ```
+
+- **Backward Compatibility**: Maintain compatibility when updating database code
+  ```python
+  # ✅ Good: Maintain function signatures for backward compatibility
+  # Original function
+  async def process_data(source_model, target_model, processor_func, condition=None):
+      # Implementation
+      
+  # Updated function (same signature, improved implementation)
+  async def process_data(source_model, target_model, processor_func, condition=None):
+      # Improved implementation
   ``` 
-
-
-

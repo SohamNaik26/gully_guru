@@ -2,15 +2,11 @@ import os
 from fastapi import FastAPI, HTTPException, Depends
 from sqlmodel import SQLModel, Session, select, create_engine
 from typing import List, Optional
-from src.db.models.user import User
-from src.db.models.player import Player, PlayerStats
-from src.db.models.schedule import IPLSchedule
-from src.db.models.user_player import UserPlayer
-from src.db.models.gully import Gully
+from src.db.models import User, Player, PlayerStats, UserPlayer
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.models.api import PlayerCreate, UserPlayerCreate
+from src.db.models.api import PlayerCreate, UserPlayerCreate
 
 
 load_dotenv()
@@ -31,11 +27,13 @@ async def app_lifespan(app: FastAPI):
 app = FastAPI(lifespan=app_lifespan)
 
 
+# Define session dependency
 def get_session():
     with Session(engine) as session:
         yield session
 
 
+# Keep original sync endpoints for backward compatibility
 @app.post("/users/", response_model=User)
 async def create_user(user: User, session: Session = Depends(get_session)):
     session.add(user)
@@ -84,30 +82,6 @@ async def update_user(
     return user
 
 
-@app.post("/iplschedule/", response_model=IPLSchedule)
-async def create_ipl_schedule(
-    schedule: IPLSchedule, session: Session = Depends(get_session)
-):
-    session.add(schedule)
-    session.commit()
-    session.refresh(schedule)
-    return schedule
-
-
-@app.get("/iplschedule/", response_model=List[IPLSchedule])
-async def read_ipl_schedules(session: Session = Depends(get_session)):
-    result = session.exec(select(IPLSchedule)).all()
-    return result
-
-
-@app.get("/iplschedule/{schedule_id}", response_model=IPLSchedule)
-async def read_ipl_schedule(schedule_id: int, session: Session = Depends(get_session)):
-    schedule = session.get(IPLSchedule, schedule_id)
-    if not schedule:
-        raise HTTPException(status_code=404, detail="IPLSchedule not found")
-    return schedule
-
-
 @app.post("/playerstats/", response_model=PlayerStats)
 async def create_player_stat(
     stat: PlayerStats, session: Session = Depends(get_session)
@@ -132,6 +106,7 @@ async def read_player_stat(stat_id: int, session: Session = Depends(get_session)
     return stat
 
 
+# Keep the async functions for the async part of the API
 async def get_player(session: AsyncSession, player_id: int) -> Optional[Player]:
     """Get a player by ID."""
     result = await session.execute(select(Player).where(Player.id == player_id))

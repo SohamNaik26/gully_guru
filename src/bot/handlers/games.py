@@ -7,12 +7,11 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 import logging
 import pytz
 
-from src.bot.bot import api_client
+from src.bot.api_client_instance import api_client
 from src.bot.keyboards.gullies import (
     get_gully_management_keyboard,
     get_gully_list_keyboard,
@@ -226,7 +225,7 @@ async def team_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if update.effective_chat.type in ["group", "supergroup"]:
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
-            text=f"�� *{user.username or user.first_name}* has joined the gully with team *{team_name}*!",
+            text=f"🎉 *{user.username or user.first_name}* has joined the gully with team *{team_name}*!",
             parse_mode="Markdown",
         )
 
@@ -408,45 +407,74 @@ async def gully_info_command(
     )
 
 
+async def help_group_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    Handle the /help_group command.
+    Provides help with group-specific commands.
+    """
+    help_text = (
+        "*GullyGuru Group Commands*\n\n"
+        "*Core Group Commands:*\n"
+        "/create_gully - Create a new gully\n"
+        "/join_gully - Join the gully for this group\n"
+        "/gully_info - Show information about the current gully\n"
+        "/help_group - Show this help message\n\n"
+        "*Team Commands:*\n"
+        "/captain - Set your team captain\n"
+        "/transfer - List a player for transfer\n\n"
+        "*Auction Commands:*\n"
+        "/auction - Show current auction status\n"
+        "/bid - Place a bid in the current auction\n"
+        "/submit_squad - Submit your initial squad of 18 players\n"
+        "/round_zero_status - Check Round 0 status\n"
+        "/vote_time_slot - Vote for auction time slots\n"
+        "/time_slot_results - View time slot voting results"
+    )
+
+    await update.message.reply_text(help_text, parse_mode="Markdown")
+
+
 def register_handlers(application):
-    """Register gully management handlers."""
-    # Create gully conversation
-    create_gully_conv = ConversationHandler(
+    """Register all game-related handlers."""
+    # Create gully conversation handler
+    create_gully_conv_handler = ConversationHandler(
         entry_points=[CommandHandler("create_gully", create_gully_command)],
         states={
             GULLY_NAME: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, gully_name_handler)
-            ]
+            ],
         },
         fallbacks=[CommandHandler("cancel", lambda u, c: ConversationHandler.END)],
     )
+    application.add_handler(create_gully_conv_handler)
 
-    # Join gully conversation
-    join_gully_conv = ConversationHandler(
+    # Join gully conversation handler
+    join_gully_conv_handler = ConversationHandler(
         entry_points=[CommandHandler("join_gully", join_gully_command)],
         states={
             TEAM_NAME: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, team_name_handler)
-            ]
+            ],
         },
         fallbacks=[CommandHandler("cancel", lambda u, c: ConversationHandler.END)],
     )
+    application.add_handler(join_gully_conv_handler)
 
-    # Switch gully conversation
-    switch_gully_conv = ConversationHandler(
+    # Switch gully conversation handler
+    switch_gully_conv_handler = ConversationHandler(
         entry_points=[CommandHandler("switch_gully", switch_gully_command)],
         states={
             GULLY_SELECTION: [
-                CallbackQueryHandler(
-                    gully_selection_handler, pattern=r"^switch_gully_\d+$"
-                )
-            ]
+                CallbackQueryHandler(gully_selection_handler, pattern="^gully_"),
+            ],
         },
         fallbacks=[CommandHandler("cancel", lambda u, c: ConversationHandler.END)],
     )
+    application.add_handler(switch_gully_conv_handler)
 
-    application.add_handler(create_gully_conv)
-    application.add_handler(join_gully_conv)
-    application.add_handler(switch_gully_conv)
+    # Other game commands
     application.add_handler(CommandHandler("my_gullies", my_gullies_command))
     application.add_handler(CommandHandler("gully_info", gully_info_command))
+    application.add_handler(CommandHandler("help_group", help_group_command))

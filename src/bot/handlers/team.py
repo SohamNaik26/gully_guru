@@ -2,7 +2,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from typing import Dict, Any, List, Optional
 
-from src.bot.bot import api_client
+from src.bot.api_client_instance import api_client
 from src.bot.utils.formatting import format_team_card
 from src.bot.keyboards.team import (
     get_team_management_keyboard,

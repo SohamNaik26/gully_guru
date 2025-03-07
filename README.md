@@ -12,7 +12,226 @@ A Telegram bot for fantasy cricket with auction, transfers, and live scoring.
 - Multi-group support with separate gully leagues
 - Admin controls for gully management
 
+## Documentation
+
+For detailed documentation, see the [Documentation Index](docs/README.md) which includes:
+
+- [User Management System](docs/user_management.md)
+- [Auction Management System](docs/auction_management.md)
+- [Database Migration](docs/db_migration.md)
+- [API Documentation](docs/api.md)
+- [Group Management](docs/group_management.md)
+
+## System Architecture & Setup
+
+### Architecture Overview
+
+GullyGuru follows a layered architecture pattern:
+
+```mermaid
+graph TD
+    A[Telegram Bot Layer] --> B[API Layer]
+    B --> C[Service Layer]
+    C --> D[Database Layer]
+    E[Background Tasks] --> C
+```
+
+#### Components
+
+1. **Database Layer**
+   - PostgreSQL database with SQLModel ORM
+   - Alembic for migrations
+   - Core models for users, gullies, players, and auctions
+
+2. **Service Layer**
+   - Business logic encapsulation
+   - Transaction management
+   - Data validation and processing
+
+3. **API Layer**
+   - FastAPI endpoints with OpenAPI documentation
+   - JWT authentication
+   - Request/response validation with Pydantic
+
+4. **Telegram Bot Layer**
+   - Python-Telegram-Bot framework
+   - Command handlers and conversation flows
+   - Inline keyboards and callback handlers
+   - Notification system
+
+5. **Background Tasks**
+   - Scheduled jobs for data updates
+   - Asynchronous processing
+   - Notification delivery
+
+### Development Setup
+
+#### Prerequisites
+
+- Python 3.9+
+- PostgreSQL 13+
+- Pipenv
+- Telegram Bot Token (from BotFather)
+
+#### Environment Setup
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/yourusername/GullyGuru.git
+   cd GullyGuru
+   ```
+
+2. **Install dependencies**
+   ```bash
+   pipenv install
+   pipenv install --dev  # For development tools
+   ```
+
+3. **Configure environment variables**
+   Create a `.env` file with:
+   ```
+   DATABASE_URL=postgresql://username:password@localhost:5432/gullyguru
+   TELEGRAM_BOT_TOKEN=your_bot_token
+   JWT_SECRET=your_jwt_secret
+   ENVIRONMENT=development
+   ```
+
+4. **Initialize the database**
+   ```bash
+   pipenv run alembic upgrade head
+   ```
+
+5. **Run the application**
+   ```bash
+   pipenv run python -m src.main
+   ```
+
+### Deployment to Cloud Run
+
+GullyGuru is deployed to Google Cloud Run for scalable, serverless container execution:
+
+1. **Build and tag the Docker image**
+   ```bash
+   docker build -t gcr.io/[PROJECT_ID]/gullyguru:latest .
+   ```
+
+2. **Push the image to Google Container Registry**
+   ```bash
+   docker push gcr.io/[PROJECT_ID]/gullyguru:latest
+   ```
+
+3. **Deploy to Cloud Run**
+   ```bash
+   gcloud run deploy gullyguru \
+     --image gcr.io/[PROJECT_ID]/gullyguru:latest \
+     --platform managed \
+     --region [REGION] \
+     --allow-unauthenticated \
+     --set-env-vars="DATABASE_URL=postgresql://[USER]:[PASSWORD]@[HOST]/[DB_NAME],TELEGRAM_BOT_TOKEN=[TOKEN]"
+   ```
+
+#### Cloud Infrastructure
+
+The application is deployed with the following cloud components:
+
+- **Cloud Run**: Hosts the containerized application with automatic scaling
+- **Cloud SQL**: PostgreSQL database for persistent storage
+- **Secret Manager**: Securely stores sensitive configuration like API tokens
+- **Cloud Storage**: Stores static assets and backup files
+- **Cloud Scheduler**: Triggers scheduled tasks and maintenance jobs
+
+#### Continuous Deployment
+
+The deployment process is automated using Cloud Build:
+
+1. Code is pushed to the main branch
+2. Cloud Build automatically builds the Docker image
+3. The image is pushed to Container Registry
+4. Cloud Run service is updated with the new image
+5. Health checks verify the deployment
+
+#### Environment Configuration
+
+Environment variables are managed through Cloud Run's configuration:
+
+- Production environment variables are set during deployment
+- Secrets are injected from Secret Manager
+- Database connection uses private VPC connector for security
+
+### Development Workflow
+
+1. **Create a feature branch**
+   ```bash
+   git checkout -b feature/your-feature-name
+   ```
+
+2. **Make database changes**
+   - Update models in `src/db/models/`
+   - Generate migration:
+     ```bash
+     pipenv run alembic revision --autogenerate -m "Description of changes"
+     ```
+   - Apply migration:
+     ```bash
+     pipenv run alembic upgrade head
+     ```
+
+3. **Implement services**
+   - Add business logic in `src/services/`
+   - Write unit tests in `src/tests/services/`
+
+4. **Create API endpoints**
+   - Implement endpoints in `src/api/routes/`
+   - Define schemas in `src/api/schemas/`
+
+5. **Develop bot commands**
+   - Add command handlers in `src/bot/handlers/`
+   - Create keyboards in `src/bot/keyboards/`
+   - Implement callbacks in `src/bot/callbacks/`
+
+6. **Run tests**
+   ```bash
+   pipenv run pytest
+   ```
+
+## Basic Usage
+
+### Admin Commands
+- `/start` - Register with the bot
+- `/create_gully` - Create a new gully in a group
+- `/gully_settings` - Configure gully settings
+- `/add_admin` - Add an admin to the current gully
+
+### User Commands
+- `/join_gully` - Join a gully in the current group
+- `/my_gullies` - View all gullies you're participating in
+- `/switch_gully` - Switch between different gullies
+- `/myteam` - View your current team
+- `/players` - Browse available players
+
+For a complete list of commands and detailed usage instructions, see the [User Management Documentation](docs/user_management.md).
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## License
+
+[MIT License](LICENSE)
+
 ## Recent Updates
+
+### Documentation Reorganization
+We've completely restructured our documentation for better clarity:
+- Created comprehensive guides for [User Management](docs/user_management.md) and [Auction System](docs/auction_management.md)
+- Organized documentation by functional areas and technical layers
+- Added detailed implementation plans with clear sequences
+- Improved database schema documentation with relationships
+- See the [Documentation Index](docs/README.md) for a complete overview
 
 ### API Schema Reorganization
 We've improved the organization of our API models:
@@ -48,11 +267,55 @@ For detailed documentation on the gully system, see [Gully Management Documentat
    - Implement captain (2×) and vice-captain (1.5×) point multipliers
    - Create daily and match-wise point summaries
 
+3. **Auction System Implementation**
+   - **Database & Models**
+     - Complete AuctionRound model with proper status tracking
+     - Implement AuctionBid model with validation rules
+     - Create AuctionTimer model for tracking auction timers
+     - Add AuctionLog model for audit trail
+     - Implement PlayerAuctionStatus model to track player auction status
+
+   - **API Endpoints**
+     - Create auction round management endpoints (create, start, end)
+     - Implement bid placement and validation endpoints
+     - Add auction status query endpoints
+     - Create auction history endpoints
+     - Implement auction timer management endpoints
+
+   - **Services**
+     - Develop AuctionService for business logic
+     - Implement BidValidationService for bid rules
+     - Create AuctionTimerService for timer management
+     - Develop PlayerAllocationService for post-auction allocation
+
+   - **Telegram Bot Commands**
+     - Implement `/auction_status` command
+     - Add `/bid <amount>` command
+     - Create `/auction_history` command
+     - Implement admin commands for auction management
+     - Add inline keyboard for quick bidding
+
+   - **Bot Handlers & Callbacks**
+     - Develop auction status handler
+     - Implement bid placement handler
+     - Create auction notification system
+     - Implement auction timer callbacks
+     - Add auction result announcement
+
+   - **User Experience**
+     - Design player cards with auction information
+     - Implement bid confirmation dialogs
+     - Create auction countdown timer display
+     - Add current highest bidder indicators
+     - Implement budget tracking during auction
+
 ### Medium Priority
 1. **Notifications**
    - Add match start/end notifications
    - Create reminders for lineup submission deadlines
    - Implement transfer window opening/closing alerts
+   - Add auction start notifications
+   - Implement outbid notifications during auction
 
 2. **Leaderboards**
    - Develop daily, weekly, and season-long leaderboards
@@ -100,179 +363,31 @@ For detailed documentation on the gully system, see [Gully Management Documentat
 
 A fantasy cricket platform for IPL enthusiasts.
 
-## Overview
+## Auction Implementation Plan
 
-GullyGuru is a comprehensive fantasy cricket platform that allows users to:
-- Create and manage fantasy cricket teams
-- Participate in auctions to acquire players
-- Compete in leagues and tournaments
-- Track player and team performance
+### Phase 1: Database & Models Setup (Week 1)
+1. **Enhance Existing Models**
+   - Update `AuctionRound` model with additional fields for timer settings
+   - Extend `AuctionBid` model with validation rules and bid increment logic
+   - Add relationships between models for efficient querying
 
-## Tech Stack
+2. **Create New Models**
+   - Implement `AuctionTimer` model for tracking auction countdown
+   - Create `AuctionLog` model for comprehensive audit trail
+   - Develop `PlayerAuctionStatus` model to track player status in auction
 
-- **Backend**: FastAPI, Python 3.9+
-- **Database**: PostgreSQL, SQLModel, Alembic
-- **Environment Management**: Pipenv
-- **API Documentation**: Swagger UI, ReDoc
+3. **Database Migrations**
+   - Create Alembic migration scripts for new models
+   - Add indexes for performance optimization
+   - Implement database constraints for data integrity
 
-## Setup
+### Phase 2: API & Services Development (Week 1-2)
+1. **Core Auction Services**
+   - Develop `AuctionService` for managing auction rounds
+   - Implement `BidService` for bid placement and validation
+   - Create `AuctionTimerService` for timer management
 
-### Prerequisites
-
-- Python 3.9+
-- PostgreSQL
-- Pipenv
-
-### Installation
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/GullyGuru.git
-   cd GullyGuru
-   ```
-
-2. Install dependencies:
-   ```bash
-   pipenv install
-   
-   # For development, include dev dependencies
-   pipenv install --dev
-   ```
-
-3. Create a `.env` file with the following variables:
-   ```
-   DATABASE_URL=postgresql://username:password@localhost:5432/gullyguru
-   SECRET_KEY=your_secret_key
-   ENVIRONMENT=development
-   ```
-
-4. Make the migration script executable:
-   ```bash
-   chmod +x scripts/migration.sh
-   ```
-
-5. Run database migrations:
-   ```bash
-   pipenv run ./scripts/migration.sh upgrade
-   ```
-
-## Development
-
-### Running the Application
-
-```bash
-# Run the development server
-pipenv run uvicorn src.main:app --reload
-```
-
-### Database Migrations
-
-```bash
-# Initialize Alembic (if not already initialized)
-pipenv run ./scripts/migration.sh init
-
-# Create a new migration
-pipenv run ./scripts/migration.sh create "Description of changes"
-
-# Apply migrations
-pipenv run ./scripts/migration.sh upgrade
-
-# Downgrade migrations
-pipenv run ./scripts/migration.sh downgrade
-
-# Show migration history
-pipenv run ./scripts/migration.sh history
-```
-
-### Testing
-
-```bash
-# Run all tests
-pipenv run pytest
-
-# Run specific tests
-pipenv run pytest tests/test_models.py
-
-# Run tests with coverage
-pipenv run pytest --cov=src
-
-# Test database models
-pipenv run python scripts/test_models.py
-```
-
-### Code Quality
-
-```bash
-# Format code
-pipenv run black src/
-
-# Sort imports
-pipenv run isort src/
-
-# Run linting
-pipenv run flake8 src/
-```
-
-## Project Structure
-
-```
-GullyGuru/
-├── alembic/                  # Database migration files
-├── docs/                     # Documentation
-│   ├── cursor_rules/         # Cursor rules for development
-│   └── db_migration.md       # Database migration guide
-├── scripts/                  # Utility scripts
-│   ├── migration.sh          # Database migration script
-│   └── test_models.py        # Model testing script
-├── src/                      # Source code
-│   ├── api/                  # API endpoints
-│   │   └── schemas/          # API request/response models
-│   │       ├── user.py       # User-related schemas
-│   │       ├── player.py     # Player-related schemas
-│   │       ├── match.py      # Match-related schemas
-│   │       └── game.py       # Game mechanics schemas
-│   ├── db/                   # Database models and utilities
-│   │   ├── models/           # SQLModel definitions
-│   │   └── init.py           # Database initialization
-│   ├── services/             # Business logic
-│   └── main.py               # Application entry point
-├── tests/                    # Test suite
-├── .env                      # Environment variables (not in version control)
-├── .gitignore                # Git ignore file
-├── Pipfile                   # Pipenv dependencies
-├── Pipfile.lock              # Pipenv lock file
-└── README.md                 # This file
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Migration Script Permissions**:
-   If you get a "Permission denied" error when running the migration script, make sure it's executable:
-   ```bash
-   chmod +x scripts/migration.sh
-   ```
-
-2. **Database Connection Issues**:
-   Ensure your PostgreSQL server is running and the DATABASE_URL is correct in your .env file.
-
-3. **Alembic Not Initialized**:
-   If you see errors about missing alembic.ini, run:
-   ```bash
-   pipenv run ./scripts/migration.sh init
-   ```
-
-## Contributing
-
-1. Create a new branch for your feature
-2. Make your changes
-3. Run tests to ensure everything works
-4. Submit a pull request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-
-
+2. **API Endpoints**
+   - Create `/api/auctions/rounds` endpoints (GET, POST, PUT)
+   - Implement `/api/auctions/bids` endpoints (GET, POST)
+   - Add `/api/auctions/status`

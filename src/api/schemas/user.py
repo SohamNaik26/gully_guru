@@ -1,10 +1,7 @@
 from datetime import datetime
-from typing import List, ForwardRef
+from typing import List, Optional
 from decimal import Decimal
 from pydantic import BaseModel
-
-# Forward reference for circular imports
-PlayerResponse = ForwardRef("PlayerResponse")
 
 
 # User API Models
@@ -37,14 +34,15 @@ class UserResponse(UserBase):
         from_attributes = True
 
 
+# Note: We're using string type annotation to avoid circular imports
 class UserWithPlayers(UserResponse):
     """User model with owned players."""
 
-    owned_players: List[PlayerResponse] = []
+    owned_players: List["PlayerResponse"] = []
 
     class Config:
         from_attributes = True
 
 
-# Resolve forward references
-UserWithPlayers.model_rebuild()
+# No need to rebuild the model, Pydantic will handle the string type annotation
+# UserWithPlayers.model_rebuild()

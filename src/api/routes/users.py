@@ -4,7 +4,7 @@ from typing import List
 
 from src.db.session import get_session
 from src.db.models import User
-from src.models.api import UserCreate, UserResponse
+from src.db.models.api import UserCreate, UserResponse
 from src.api.dependencies import get_current_user, get_admin_user
 from src.api.exceptions import NotFoundException
 
@@ -38,6 +38,16 @@ def create_user(user_data: UserCreate, session: Session = Depends(get_session)):
 def get_current_user_info(current_user: User = Depends(get_current_user)):
     """Get information about the current authenticated user."""
     return current_user
+
+
+@router.get("/telegram/{telegram_id}", response_model=UserResponse)
+def get_user_by_telegram_id(telegram_id: int, session: Session = Depends(get_session)):
+    """Get a user by Telegram ID."""
+    user = session.exec(select(User).where(User.telegram_id == telegram_id)).first()
+    if not user:
+        raise NotFoundException(resource_type="User", resource_id=telegram_id)
+
+    return user
 
 
 @router.get("/{user_id}", response_model=UserResponse)

@@ -457,6 +457,7 @@ class GullyParticipant(TimeStampedModel, table=True):
         team_name: Name of the user's team in this Gully
         budget: Available budget for this Gully
         points: Total points earned in this Gully
+        role: User's role in this Gully (member, admin, owner)
     """
 
     __tablename__ = "gully_participants"
@@ -471,6 +472,9 @@ class GullyParticipant(TimeStampedModel, table=True):
         default=100.0, description="Available budget for this Gully"
     )
     points: int = Field(default=0, description="Total points earned in this Gully")
+    role: str = Field(
+        default="member", description="User's role in this Gully (member, admin, owner)"
+    )
 
     # Relationships
     gully: Optional["Gully"] = Relationship(
@@ -480,6 +484,15 @@ class GullyParticipant(TimeStampedModel, table=True):
         back_populates="gully_participations",
         sa_relationship_kwargs={"lazy": "selectin"},
     )
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v):
+        """Validate that the role is one of the allowed values."""
+        allowed_roles = ["member", "admin", "owner"]
+        if v not in allowed_roles:
+            raise ValueError(f"Role must be one of: {', '.join(allowed_roles)}")
+        return v
 
     @field_validator("budget")
     @classmethod
@@ -492,7 +505,57 @@ class GullyParticipant(TimeStampedModel, table=True):
     @field_validator("points")
     @classmethod
     def validate_points(cls, v):
-        """Ensure points is non-negative."""
+        """Validate that points is a non-negative integer."""
         if v < 0:
-            raise ValueError("Points cannot be negative")
+            raise ValueError("Points must be a non-negative integer")
+        return v
+
+
+class AdminPermission(TimeStampedModel, table=True):
+    """
+    Model for granular admin permissions.
+
+    Defines specific permissions that can be assigned to admin users
+    within a gully context.
+
+    Attributes:
+        id: Primary key
+        gully_id: Reference to the Gully
+        user_id: Reference to the User
+        permission_type: Type of permission (user_mgmt, team_mgmt, auction_mgmt, etc.)
+        is_active: Whether this permission is active
+    """
+
+    __tablename__ = "admin_permissions"
+
+    id: Optional[int] = Field(default=None, primary_key=True, description="Primary key")
+    gully_id: int = Field(
+        foreign_key="gullies.id", description="Reference to the Gully"
+    )
+    user_id: int = Field(foreign_key="users.id", description="Reference to the User")
+    permission_type: str = Field(description="Type of permission")
+    is_active: bool = Field(
+        default=True, description="Whether this permission is active"
+    )
+
+    # Relationships
+    gully: Optional["Gully"] = Relationship(sa_relationship_kwargs={"lazy": "selectin"})
+    user: Optional["User"] = Relationship(sa_relationship_kwargs={"lazy": "selectin"})
+
+    @field_validator("permission_type")
+    @classmethod
+    def validate_permission_type(cls, v):
+        """Validate that the permission type is one of the allowed values."""
+        allowed_types = [
+            "user_management",
+            "team_management",
+            "auction_management",
+            "match_management",
+            "settings_management",
+            "all",  # Special permission that grants all access
+        ]
+        if v not in allowed_types:
+            raise ValueError(
+                f"Permission type must be one of: {', '.join(allowed_types)}"
+            )
         return v
