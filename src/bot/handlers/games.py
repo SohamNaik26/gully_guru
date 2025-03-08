@@ -67,6 +67,7 @@ async def create_gully_command(
 
 async def gully_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle gully name input."""
+    user = update.effective_user
     gully_name = update.message.text.strip()
 
     if len(gully_name) < 3 or len(gully_name) > 50:
@@ -98,12 +99,26 @@ async def gully_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ConversationHandler.END
 
     # Store gully ID in context
-    context.chat_data["gully_id"] = result.get("id")
+    gully_id = result.get("id")
+    context.chat_data["gully_id"] = gully_id
+
+    # Automatically add the creator as a participant and admin
+    try:
+        # First ensure the creator is registered in the gully
+        await api_client.add_user_to_gully(user.id, gully_id)
+
+        # Then make them an admin
+        await api_client.assign_admin_role(user.id, gully_id)
+        logger.info(f"User {user.id} assigned as admin in gully {gully_id}")
+    except Exception as e:
+        logger.error(f"Error assigning admin role to gully creator: {e}")
+        # Continue anyway, as the gully was created successfully
 
     # Announce gully creation
     await update.message.reply_text(
         f"🎮 *New Fantasy Cricket Gully Created!* 🎮\n\n"
         f"*{gully_name}* has been created successfully!\n\n"
+        f"You have been automatically assigned as an admin for this gully.\n\n"
         f"Group members can now join this gully by using the /join_gully command.\n\n"
         f"The season will run for 12 weeks, ending on {end_date.strftime('%d %b %Y')}.",
         parse_mode="Markdown",
@@ -415,22 +430,10 @@ async def help_group_command(
     Provides help with group-specific commands.
     """
     help_text = (
-        "*GullyGuru Group Commands*\n\n"
-        "*Core Group Commands:*\n"
-        "/create_gully - Create a new gully\n"
-        "/join_gully - Join the gully for this group\n"
-        "/gully_info - Show information about the current gully\n"
-        "/help_group - Show this help message\n\n"
-        "*Team Commands:*\n"
-        "/captain - Set your team captain\n"
-        "/transfer - List a player for transfer\n\n"
-        "*Auction Commands:*\n"
-        "/auction - Show current auction status\n"
-        "/bid - Place a bid in the current auction\n"
+        "🏏 *GullyGuru Group Commands* 🏏\n\n"
+        "*Available Commands:*\n"
         "/submit_squad - Submit your initial squad of 18 players\n"
-        "/round_zero_status - Check Round 0 status\n"
-        "/vote_time_slot - Vote for auction time slots\n"
-        "/time_slot_results - View time slot voting results"
+        "/auction_status - Check auction status for all rounds"
     )
 
     await update.message.reply_text(help_text, parse_mode="Markdown")

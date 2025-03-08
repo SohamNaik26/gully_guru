@@ -12,8 +12,17 @@ from telegram import (
     BotCommand,
     BotCommandScopeAllPrivateChats,
     BotCommandScopeAllGroupChats,
+    BotCommandScopeDefault,
+    BotCommandScopeChatAdministrators,
 )
 from telegram.ext import Application, ApplicationBuilder
+from src.bot.api_client_instance import api_client
+from src.bot.utils.group_management import get_active_group_chats
+from src.bot.utils.user_management import (
+    ensure_user_exists,
+    ensure_user_in_gully,
+    assign_admin_role,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -29,48 +38,33 @@ if __name__ == "__main__":
 
 async def setup_command_scopes(application: Application) -> None:
     """Set up command scopes for private and group chats."""
-    # Define commands for private chats - based on user_management.md and auction_management.md
+    # Define commands for private chats - based on user journey documentation
     private_commands = [
         # Core user commands
-        BotCommand("start", "Register with the bot and set up your profile"),
-        BotCommand("help", "Get help with bot commands and game concepts"),
+        BotCommand("start", "Register and start using the bot"),
+        BotCommand("help", "Show available commands and how to use them"),
         BotCommand("game_guide", "Learn about the game and cricket terminology"),
-        BotCommand("profile", "View and edit your profile information"),
-        # Gully management
-        BotCommand("my_gullies", "View all gullies you are participating in"),
-        BotCommand("switch_gully", "Switch your active gully context"),
-        # Team and auction management
         BotCommand("myteam", "View your current team composition"),
         BotCommand("submit_squad", "Submit initial squad of 18 players (Round 0)"),
         BotCommand("bid", "Place a bid during active auction"),
-        BotCommand("auction_status", "Check current auction status"),
-        # Admin commands (only visible to admins)
-        BotCommand("admin_panel", "Access admin functionality"),
-        BotCommand("create_gully", "Create a new gully"),
-        BotCommand("setup_wizard", "Launch or resume the gully setup wizard"),
-        BotCommand("invite_link", "Generate a custom invite link for the group"),
-        BotCommand("admin_roles", "Manage granular admin permissions"),
-        BotCommand("bulk_add", "Facilitate adding multiple users at once"),
+        BotCommand("auction_status", "Check auction status for all rounds"),
     ]
 
-    # Define commands for group chats - based on user_management.md and auction_management.md
+    # Define commands for group chats - based on user journey documentation
     group_commands = [
-        # Core group commands
-        BotCommand("help_group", "Get help with group-specific commands"),
-        BotCommand("gully_info", "View information about the current gully"),
-        BotCommand("join_gully", "Join the gully associated with this group"),
-        # Team commands
-        BotCommand("team_info", "View information about teams in this gully"),
-        # Auction commands
-        BotCommand("round_zero_status", "Check status of Round 0 submissions"),
-        BotCommand("vote_time_slot", "Vote for preferred auction time"),
-        BotCommand("time_slot_results", "View results of time slot voting"),
-        BotCommand("auction_status", "Check current auction status"),
-        # Admin commands (only visible to admins)
-        BotCommand("add_admin", "Assign admin role to a user"),
-        BotCommand("remove_admin", "Remove admin role from a user"),
-        BotCommand("gully_settings", "Configure gully settings"),
-        BotCommand("nominate_admin", "Nominate a new admin"),
+        # Auction and game commands
+        BotCommand("auction_status", "Check auction status for all rounds"),
+        BotCommand("start", "Register to play"),
+        BotCommand("help", "Show available commands"),
+    ]
+
+    # Define admin-only commands - visible only to chat administrators
+    admin_commands = [
+        BotCommand("admin_panel", "Access auction-related admin functionality"),
+        BotCommand("create_gully", "Create a new gully and link it to this group"),
+        BotCommand(
+            "check_members", "Check all group members and prompt unregistered users"
+        ),
     ]
 
     # Set commands for private chats
@@ -84,6 +78,66 @@ async def setup_command_scopes(application: Application) -> None:
         group_commands, scope=BotCommandScopeAllGroupChats()
     )
     logger.info("Group chat commands set successfully")
+
+    # Set admin commands for group chat administrators
+    active_chats = await get_active_group_chats()
+    if active_chats:
+        for chat_id in active_chats:
+            try:
+                # Set admin commands for all administrators in this chat
+                await application.bot.set_my_commands(
+                    admin_commands,
+                    scope=BotCommandScopeChatAdministrators(chat_id=chat_id),
+                )
+                logger.info(f"Admin commands set for chat {chat_id}")
+
+                # Get the group owner and ensure they have admin commands
+                try:
+                    chat_admins = await application.bot.get_chat_administrators(chat_id)
+                    group_owner = next(
+                        (admin for admin in chat_admins if admin.status == "creator"),
+                        None,
+                    )
+
+                    if group_owner:
+                        # Get the gully for this chat
+                        gully = await api_client.get_gully_by_chat_id(chat_id)
+                        if gully:
+                            # Ensure the owner is registered in the gully and as an admin
+                            await ensure_user_exists(group_owner.user)
+                            await ensure_user_in_gully(group_owner.user.id, gully["id"])
+                            await assign_admin_role(group_owner.user.id, gully["id"])
+                            logger.info(
+                                f"Group owner {group_owner.user.id} assigned as admin in gully {gully['id']}"
+                            )
+                except Exception as e:
+                    logger.error(f"Error setting up group owner as admin: {e}")
+            except Exception as e:
+                logger.error(f"Failed to set admin commands for chat {chat_id}: {e}")
+    else:
+        logger.info("No active group chats found, skipping admin command setup")
+
+    # Set default commands (visible to all users in all contexts)
+    default_commands = [
+        BotCommand("start", "Register and start using the bot"),
+        BotCommand("help", "Show available commands and how to use them"),
+    ]
+    await application.bot.set_my_commands(
+        default_commands, scope=BotCommandScopeDefault()
+    )
+    logger.info("Default commands set successfully")
+
+
+async def refresh_command_scopes(application: Application) -> None:
+    """
+    Refresh command scopes for all chats.
+    This should be called when a new group is added or when admin status changes.
+    """
+    try:
+        await setup_command_scopes(application)
+        logger.info("Command scopes refreshed successfully")
+    except Exception as e:
+        logger.error(f"Error refreshing command scopes: {e}")
 
 
 async def main():

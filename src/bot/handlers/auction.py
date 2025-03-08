@@ -27,11 +27,9 @@ logger = logging.getLogger(__name__)
 async def auction_status_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Handle the /auction command to show current auction status."""
-    user = update.effective_user
-
+    """Handle the /auction_status command to show status of all auction rounds."""
     # Get user from database
-    db_user = await api_client.get_user(user.id)
+    db_user = await api_client.get_user(update.effective_user.id)
 
     if not db_user:
         await update.message.reply_text(
@@ -39,48 +37,120 @@ async def auction_status_command(
         )
         return
 
-    # Get auction status
+    # Get Round 0 status (Initial Squad Submission)
+    round_zero = await api_client.get_round_zero_status()
+
+    # Get active auction status (Rounds 1 and 2)
     auction = await api_client.get_auction_status()
 
-    if not auction or auction.get("status") != "active":
-        await update.message.reply_text("There is no active auction at the moment.")
-        return
+    # Build comprehensive status message
+    message = "🏏 *AUCTION STATUS* 🏏\n\n"
 
-    # Get current player
-    current_player = auction.get("current_player")
-    if not current_player:
-        await update.message.reply_text("No player is currently being auctioned.")
-        return
+    # Round 0 Status - Initial Squad Submission
+    if round_zero:
+        status = round_zero.get("status", "not_started")
+        deadline = round_zero.get("deadline")
+        submissions = round_zero.get("submissions", [])
 
-    # Format message
-    message = "*Current Auction*\n\n"
-    message += format_player_card(current_player)
-    message += f"\n*Current Bid:* ₹{auction.get('current_bid', 0)} cr\n"
+        # Format deadline
+        deadline_str = "Not set"
+        if deadline:
+            deadline_dt = datetime.fromisoformat(deadline)
+            deadline_str = deadline_dt.strftime("%d %b %Y, %H:%M")
 
-    if auction.get("highest_bidder"):
-        message += f"*Highest Bidder:* {auction.get('highest_bidder')}\n\n"
+        message += "📋 *ROUND 0: INITIAL SQUAD SUBMISSION*\n"
+
+        if status == "not_started":
+            message += "Status: Not started yet\n\n"
+        elif status == "active":
+            # Calculate time remaining
+            time_remaining = "N/A"
+            if deadline:
+                deadline_dt = datetime.fromisoformat(deadline)
+                now = datetime.now(pytz.UTC)
+                if deadline_dt > now:
+                    remaining = deadline_dt - now
+                    days = remaining.days
+                    hours, remainder = divmod(remaining.seconds, 3600)
+                    minutes, _ = divmod(remainder, 60)
+                    time_remaining = f"{days}d {hours}h {minutes}m"
+                else:
+                    time_remaining = "Expired"
+
+            message += (
+                f"Status: *Active*\n"
+                f"Deadline: *{deadline_str}*\n"
+                f"Time Remaining: *{time_remaining}*\n"
+                f"Total Submissions: *{len(submissions)}*\n\n"
+            )
+
+            # In group chats, show list of users who submitted
+            if update.effective_chat.type in ["group", "supergroup"]:
+                submitted_users = "\n".join(
+                    [f"• {sub.get('username', 'Unknown')}" for sub in submissions]
+                )
+                if submitted_users:
+                    message += f"Submissions:\n{submitted_users}\n\n"
+                else:
+                    message += "No submissions yet\n\n"
+
+                message += "Use /submit_squad in a private chat with me to submit your squad.\n\n"
+        elif status == "completed":
+            message += (
+                f"Status: *Completed*\n" f"Total Submissions: *{len(submissions)}*\n\n"
+            )
     else:
-        message += "*No bids yet*\n\n"
+        message += "📋 *ROUND 0: INITIAL SQUAD SUBMISSION*\nNot configured yet\n\n"
 
-    # Add user's remaining budget
-    message += f"*Your Remaining Budget:* ₹{db_user.get('budget', 0)} cr\n\n"
-
-    # Add time remaining if available
-    if auction.get("time_remaining"):
-        message += f"*Time Remaining:* {auction.get('time_remaining')} seconds\n\n"
-
-    # Create keyboard
-    keyboard = get_auction_keyboard(auction, db_user.get("id"))
-
-    # Send message
-    if update.callback_query:
-        await update.callback_query.edit_message_text(
-            message, reply_markup=keyboard, parse_mode="Markdown"
-        )
+    # Round 1 Status - Players with User Conflict
+    message += "🔄 *ROUND 1: PLAYERS WITH USER CONFLICT*\n"
+    if auction and auction.get("round") == 1:
+        message += "Status: Active\n\n"
     else:
-        await update.message.reply_text(
-            message, reply_markup=keyboard, parse_mode="Markdown"
-        )
+        message += "Status: Not started\n\n"
+
+    # Round 2 Status - User Requested Players
+    message += "🔍 *ROUND 2: USER REQUESTED PLAYERS*\n"
+    if auction and auction.get("round") == 2:
+        message += "Status: Active\n\n"
+    else:
+        message += "Status: Not started\n\n"
+
+    # Current Active Auction (could be Round 1 or 2)
+    if auction and auction.get("status") == "active":
+        current_round = auction.get("round", "unknown")
+        message += f"\n*CURRENTLY ACTIVE: ROUND {current_round}*\n"
+
+        # Get current player
+        current_player = auction.get("current_player")
+        if current_player:
+            message += format_player_card(current_player)
+            message += f"\n*Current Bid:* ₹{auction.get('current_bid', 0)} cr\n"
+
+            if auction.get("highest_bidder"):
+                message += f"*Highest Bidder:* {auction.get('highest_bidder')}\n"
+
+            # Add time remaining if available
+            if auction.get("end_time"):
+                end_time = datetime.fromisoformat(auction.get("end_time"))
+                now = datetime.now(pytz.UTC)
+                if end_time > now:
+                    remaining = end_time - now
+                    seconds = remaining.total_seconds()
+                    message += f"*Time Remaining:* {int(seconds)} seconds\n"
+                else:
+                    message += "*Time Remaining:* Auction ending...\n"
+
+            # Add user's remaining budget
+            message += f"\n*Your Remaining Budget:* ₹{db_user.get('budget', 0)} cr\n"
+        else:
+            message += "No player is currently being auctioned.\n"
+    elif auction:
+        message += f"\nAuction status: {auction.get('status', 'unknown')}\n"
+    else:
+        message += "\nNo active auction at the moment.\n"
+
+    await update.message.reply_text(message, parse_mode="Markdown")
 
 
 async def auction_history_command(
@@ -1020,112 +1090,5 @@ async def round_zero_status_command(
         )
     else:
         message = f"Round 0 status: {status}"
-
-    await update.message.reply_text(message, parse_mode="Markdown")
-
-
-async def vote_time_slot_command(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
-    """
-    Handle the /vote_time_slot command.
-    Allows users to vote for their preferred auction time slot.
-    """
-    # Check if command is used in a group
-    if update.effective_chat.type not in ["group", "supergroup"]:
-        await update.message.reply_text("This command is intended for group chats.")
-        return
-
-    user = update.effective_user
-
-    # Get time slot poll
-    time_slots = await api_client.get_time_slot_poll()
-
-    if not time_slots or not time_slots.get("slots"):
-        await update.message.reply_text(
-            "There are no time slots available for voting at the moment."
-        )
-        return
-
-    # Create keyboard with time slots
-    keyboard = []
-    for slot in time_slots.get("slots", []):
-        slot_id = slot.get("id")
-        slot_time = slot.get("time")
-
-        # Format time
-        slot_time_str = "Unknown time"
-        if slot_time:
-            slot_time_dt = datetime.fromisoformat(slot_time)
-            slot_time_str = slot_time_dt.strftime("%d %b, %H:%M")
-
-        keyboard.append(
-            [InlineKeyboardButton(slot_time_str, callback_data=f"vote_slot_{slot_id}")]
-        )
-
-    keyboard.append([InlineKeyboardButton("Cancel", callback_data="cancel_vote")])
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await update.message.reply_text(
-        "🏏 *Vote for Auction Time Slot* 🏏\n\n"
-        "Please select your preferred time slot for the Round 1 auction:",
-        reply_markup=reply_markup,
-        parse_mode="Markdown",
-    )
-
-
-async def time_slot_results_command(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
-    """
-    Handle the /time_slot_results command.
-    Shows the results of the time slot voting.
-    """
-    # Check if command is used in a group
-    if update.effective_chat.type not in ["group", "supergroup"]:
-        await update.message.reply_text("This command is intended for group chats.")
-        return
-
-    # Get time slot poll results
-    results = await api_client.get_time_slot_results()
-
-    if not results or not results.get("slots"):
-        await update.message.reply_text(
-            "There are no time slot voting results available."
-        )
-        return
-
-    # Format results
-    slots = results.get("slots", [])
-    winner = results.get("winner")
-
-    # Build message
-    message = "🏏 *Time Slot Voting Results* 🏏\n\n"
-
-    for slot in slots:
-        slot_id = slot.get("id")
-        slot_time = slot.get("time")
-        votes = slot.get("votes", 0)
-
-        # Format time
-        slot_time_str = "Unknown time"
-        if slot_time:
-            slot_time_dt = datetime.fromisoformat(slot_time)
-            slot_time_str = slot_time_dt.strftime("%d %b, %H:%M")
-
-        # Mark winner
-        winner_mark = "🏆 " if winner and winner == slot_id else ""
-
-        message += f"{winner_mark}*{slot_time_str}*: {votes} votes\n"
-
-    # Add winner announcement if available
-    if winner:
-        winning_slot = next((s for s in slots if s.get("id") == winner), None)
-        if winning_slot and winning_slot.get("time"):
-            winning_time = datetime.fromisoformat(winning_slot.get("time"))
-            winning_time_str = winning_time.strftime("%d %b, %H:%M")
-
-            message += f"\n*The auction will be held at {winning_time_str}*"
 
     await update.message.reply_text(message, parse_mode="Markdown")

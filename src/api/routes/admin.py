@@ -131,3 +131,13 @@ async def generate_invite_link(
     return await admin_service.generate_invite_link(
         session, current_user.id, gully_id, expiration_hours
     )
+
+
+@router.get("/is-admin-anywhere/{user_id}", response_model=Dict[str, bool])
+async def check_admin_anywhere(
+    user_id: int,
+    session: Session = Depends(get_session),
+):
+    """Check if a user is an admin in any gully."""
+    is_admin = await admin_service.is_admin_anywhere(session, user_id)
+    return {"is_admin": is_admin}

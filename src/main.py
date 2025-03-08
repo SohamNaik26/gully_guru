@@ -1,6 +1,6 @@
 import uvicorn
 import logging
-from src.app import app
+from src.app import app  # Changed back to absolute import for running from root
 
 # Configure logging
 logging.basicConfig(

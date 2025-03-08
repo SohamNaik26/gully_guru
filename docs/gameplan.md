@@ -12,6 +12,7 @@
    - [Backend Architecture](#backend-architecture)  
    - [Data Pipelines & Operations](#data-pipelines--operations)  
    - [API Endpoints & Asynchronous Operations](#api-endpoints--asynchronous-operations)  
+   - [Telegram Bot Interface](#telegram-bot-interface)
 4. [Database Schema & Approach](#database-schema--approach)  
    - [Schema Overview](#schema-overview)  
    - [Schema Details](#schema-details)  
@@ -52,7 +53,7 @@
   - **<5 Cr:** +0.50 Cr  
   - **≥5 Cr:** (Increment rule TBD)
 - **Auction Timer:** If no new bid is received within **15 seconds**, the highest bidder wins.
-- **Budget Deduction:** Winning bid is deducted from the manager’s budget.
+- **Budget Deduction:** Winning bid is deducted from the manager's budget.
 
 ### Weekly Transfer Windows
 - **Duration:** Every weekend for **48 hours**.
@@ -89,6 +90,13 @@
 ### API Endpoints & Asynchronous Operations
 - **FastAPI Endpoints:** Squad submission, auctions, transfers, leaderboard.
 - **Database Interaction:** `asyncpg` or `databases` library for non-blocking operations.
+
+### Telegram Bot Interface
+- **Command Structure:** Combination of slash commands and inline keyboards
+  - **Slash Commands:** Used for simple, direct actions (e.g., `/myteam`, `/bid`)
+  - **Inline Keyboards:** Used for multi-step or complex interactions
+- **Command Scopes:** Different commands for private chats, group chats, and admin-only
+- **Detailed Documentation:** See the [User Management Documentation](./user_management.md#telegram-ui) for complete details on command types and rationale
 
 ---
 

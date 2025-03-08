@@ -26,6 +26,8 @@ from src.db.models.models import (
     # Gully models
     Gully,
     GullyParticipant,
+    # Admin models
+    AdminPermission,
 )
 
 # Import integration models
@@ -59,6 +61,7 @@ all_models = [
     PollVote,
     Gully,
     GullyParticipant,
+    AdminPermission,
     # API models - Removed from database tables but kept in code for future use
     # ApiMatch,
     # ApiPlayer,

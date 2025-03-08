@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import logging
 
-from src.api.routes import users, players, games, fantasy
+from src.api.routes import api_router
 from src.api.exceptions import GullyGuruException
 from src.db.session import create_db_and_tables
 from src.utils.config import settings
@@ -32,10 +32,7 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(users.router, prefix="/api/users", tags=["Users"])
-app.include_router(players.router, prefix="/api/players", tags=["Players"])
-app.include_router(games.router, prefix="/api/games", tags=["Games"])
-app.include_router(fantasy.router, prefix="/api/fantasy", tags=["Fantasy"])
+app.include_router(api_router, prefix="/api")
 
 
 # Exception handler

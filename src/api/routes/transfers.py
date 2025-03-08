@@ -12,7 +12,7 @@ from src.db.models import (
     TransferWindow,
     TransferListing,
     TransferBid,
-    UserPlayerLink,
+    UserPlayer,
 )
 from src.api.schemas.transfers import (
     TransferWindowResponse,
@@ -97,9 +97,9 @@ async def create_transfer_listing(
 
     # Check if user owns the player
     user_player = session.exec(
-        select(UserPlayerLink).where(
-            UserPlayerLink.user_id == current_user.id,
-            UserPlayerLink.player_id == listing.player_id,
+        select(UserPlayer).where(
+            UserPlayer.user_id == current_user.id,
+            UserPlayer.player_id == listing.player_id,
         )
     ).first()
 
@@ -290,9 +290,9 @@ async def accept_transfer_bid(
     # 3. Transfer the player
     # First, remove from seller
     seller_link = session.exec(
-        select(UserPlayerLink).where(
-            UserPlayerLink.user_id == current_user.id,
-            UserPlayerLink.player_id == listing.player_id,
+        select(UserPlayer).where(
+            UserPlayer.user_id == current_user.id,
+            UserPlayer.player_id == listing.player_id,
         )
     ).first()
 
@@ -300,7 +300,7 @@ async def accept_transfer_bid(
         session.delete(seller_link)
 
     # Then, add to buyer
-    buyer_link = UserPlayerLink(user_id=bidder.id, player_id=listing.player_id)
+    buyer_link = UserPlayer(user_id=bidder.id, player_id=listing.player_id)
     session.add(buyer_link)
 
     # 4. Update budgets
@@ -550,9 +550,9 @@ async def process_transfer_deadline(
 
             # 3. Remove player from seller's team
             seller_link = session.exec(
-                select(UserPlayerLink).where(
-                    UserPlayerLink.user_id == seller.id,
-                    UserPlayerLink.player_id == player.id,
+                select(UserPlayer).where(
+                    UserPlayer.user_id == seller.id,
+                    UserPlayer.player_id == player.id,
                 )
             ).first()
 
@@ -560,7 +560,7 @@ async def process_transfer_deadline(
                 session.delete(seller_link)
 
             # 4. Add player to buyer's team
-            buyer_link = UserPlayerLink(
+            buyer_link = UserPlayer(
                 user_id=buyer.id,
                 player_id=player.id,
                 is_captain=False,

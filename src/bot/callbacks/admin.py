@@ -1,56 +1,290 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 
-from src.bot.client import api_client
-from src.bot.utils import get_active_gully_id
+from src.bot.api_client_instance import api_client
+from src.bot.handlers.admin import admin_panel_command
 
 
 async def handle_admin_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Handle admin-related callback queries."""
+    """Handle admin panel callbacks."""
     query = update.callback_query
-    await query.answer()
+    user_id = update.effective_user.id
+
+    # Check if user is admin
+    is_admin = await api_client.is_admin(user_id)
+    if not is_admin:
+        await query.answer("You don't have admin permissions.")
+        return
 
     # Get callback data
-    data = query.data
+    callback_data = query.data
+    parts = callback_data.split("_")
 
-    # Extract action and parameters
-    parts = data.split("_")
     if len(parts) < 2:
         return
 
     action = parts[1]
 
-    # Handle different admin actions
-    if action == "users":
-        # User management panel
-        await handle_user_management(update, context, parts)
-    elif action == "teams":
-        # Team management panel
-        await handle_team_management(update, context, parts)
-    elif action == "auction":
-        # Auction management panel
-        await handle_auction_management(update, context, parts)
-    elif action == "matches":
-        # Match management panel
-        await handle_match_management(update, context, parts)
-    elif action == "settings":
-        # Gully settings panel
-        await handle_settings_management(update, context, parts)
-    elif action == "roles":
-        # Admin roles panel
-        await handle_roles_management(update, context, parts)
-    elif action == "invite":
-        # Generate invite link
-        await handle_invite_link(update, context, parts)
-    elif action == "perm":
-        # Manage permissions for a specific admin
-        await handle_admin_permissions(update, context, parts)
+    # Handle different actions
+    if action == "panel":
+        # Show admin panel
+        await admin_panel_command(update, context)
+
+    elif action == "gully":
+        # Handle gully selection
+        await handle_gully_selection(update, context, parts)
+
+    elif action == "start":
+        # Handle start auction round
+        if len(parts) >= 4:
+            gully_id = int(parts[3])
+            round_type = parts[2]  # round_zero or round_one
+
+            if round_type == "round":
+                # Start Round 0
+                await query.edit_message_text(
+                    f"Starting Round 0 for gully {gully_id}...\n\n"
+                    "This will initiate the squad submission phase. "
+                    "Users will be able to submit their preferred squads.",
+                    parse_mode="Markdown",
+                )
+                # Call API to start Round 0
+                result = await api_client.start_auction_round_zero(gully_id)
+                if result:
+                    await query.edit_message_text(
+                        f"✅ Round 0 has been started successfully!\n\n"
+                        "Users can now submit their squads using the /submit_squad command.",
+                        parse_mode="Markdown",
+                    )
+                else:
+                    await query.edit_message_text(
+                        "❌ Failed to start Round 0. Please try again later.",
+                        parse_mode="Markdown",
+                    )
+
+            elif round_type == "round":
+                # Start Round 1
+                await query.edit_message_text(
+                    f"Starting Round 1 for gully {gully_id}...\n\n"
+                    "This will initiate the live auction for contested players.",
+                    parse_mode="Markdown",
+                )
+                # Call API to start Round 1
+                result = await api_client.start_auction_round_one(gully_id)
+                if result:
+                    await query.edit_message_text(
+                        "✅ Round 1 has been started successfully!\n\n"
+                        "The live auction for contested players has begun.",
+                        parse_mode="Markdown",
+                    )
+                else:
+                    await query.edit_message_text(
+                        "❌ Failed to start Round 1. Please try again later.",
+                        parse_mode="Markdown",
+                    )
+
+    elif action == "next":
+        # Handle next player in auction
+        if len(parts) >= 4:
+            gully_id = int(parts[3])
+
+            await query.edit_message_text(
+                f"Moving to next player in auction for gully {gully_id}...",
+                parse_mode="Markdown",
+            )
+
+            # Call API to move to next player
+            result = await api_client.next_auction_player(gully_id)
+            if result:
+                player = result.get("player", {})
+                await query.edit_message_text(
+                    f"✅ Moved to next player: {player.get('name')}\n\n"
+                    f"Base price: ₹{player.get('base_price')} cr\n"
+                    f"Team: {player.get('team')}\n"
+                    f"Type: {player.get('player_type')}\n\n"
+                    "The auction for this player has begun.",
+                    parse_mode="Markdown",
+                )
+            else:
+                await query.edit_message_text(
+                    "❌ Failed to move to next player. Please try again later.",
+                    parse_mode="Markdown",
+                )
+
+    elif action == "end":
+        # Handle end auction round
+        if len(parts) >= 4:
+            gully_id = int(parts[3])
+
+            await query.edit_message_text(
+                f"Ending current auction round for gully {gully_id}...",
+                parse_mode="Markdown",
+            )
+
+            # Call API to end auction round
+            result = await api_client.end_auction_round(gully_id)
+            if result:
+                await query.edit_message_text(
+                    "✅ Auction round has been ended successfully!\n\n"
+                    "All current player auctions have been finalized.",
+                    parse_mode="Markdown",
+                )
+            else:
+                await query.edit_message_text(
+                    "❌ Failed to end auction round. Please try again later.",
+                    parse_mode="Markdown",
+                )
+
+    elif action == "complete":
+        # Handle complete auction
+        if len(parts) >= 4:
+            gully_id = int(parts[3])
+
+            await query.edit_message_text(
+                f"Completing the entire auction process for gully {gully_id}...\n\n"
+                "This will finalize all player allocations and update user budgets.",
+                parse_mode="Markdown",
+            )
+
+            # Call API to complete auction
+            result = await api_client.complete_auction(gully_id)
+            if result:
+                await query.edit_message_text(
+                    "✅ Auction has been completed successfully!\n\n"
+                    "All players have been allocated to users and budgets have been updated.",
+                    parse_mode="Markdown",
+                )
+            else:
+                await query.edit_message_text(
+                    "❌ Failed to complete auction. Please try again later.",
+                    parse_mode="Markdown",
+                )
+
+    elif action == "view":
+        # Handle view users
+        if len(parts) >= 4:
+            gully_id = int(parts[3])
+            # Implement view users functionality
+            await query.edit_message_text(
+                f"Viewing users for gully {gully_id}...", parse_mode="Markdown"
+            )
+
     elif action == "add":
-        # Add new admin
-        await handle_add_admin(update, context, parts)
+        # Handle add admin
+        if len(parts) >= 4:
+            gully_id = int(parts[3])
+            # Implement add admin functionality
+            await query.edit_message_text(
+                f"Adding admin for gully {gully_id}...", parse_mode="Markdown"
+            )
+
+    elif action == "remove":
+        # Handle remove admin
+        if len(parts) >= 4:
+            gully_id = int(parts[3])
+            # Implement remove admin functionality
+            await query.edit_message_text(
+                f"Removing admin for gully {gully_id}...", parse_mode="Markdown"
+            )
+
+    elif action == "create":
+        # Handle create match
+        if len(parts) >= 4:
+            gully_id = int(parts[3])
+            # Implement create match functionality
+            await query.edit_message_text(
+                f"Creating match for gully {gully_id}...", parse_mode="Markdown"
+            )
+
+    elif action == "edit":
+        # Handle edit name/dates
+        if len(parts) >= 4:
+            gully_id = int(parts[3])
+            # Implement edit functionality
+            await query.edit_message_text(
+                f"Editing settings for gully {gully_id}...", parse_mode="Markdown"
+            )
+
+    elif action == "generate":
+        # Handle generate invite
+        if len(parts) >= 4:
+            gully_id = int(parts[3])
+            # Implement generate invite functionality
+            await query.edit_message_text(
+                f"Generating invite for gully {gully_id}...", parse_mode="Markdown"
+            )
+
+    else:
+        # Unknown action
+        await query.answer("Unknown action.")
+
+
+async def handle_gully_selection(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, parts: List[str]
+) -> None:
+    """Handle gully selection for admin panel."""
+    query = update.callback_query
+
+    # Get gully ID from callback data
+    if len(parts) < 3:
+        return
+
+    gully_id = int(parts[2])
+
+    # Set active gully for the user
+    user_id = update.effective_user.id
+    await api_client.set_active_game(user_id, gully_id)
+
+    # Get gully info
+    gully = await api_client.get_gully(gully_id)
+
+    # Create admin panel keyboard with auction-related options
+    keyboard = [
+        # Auction Management
+        [
+            InlineKeyboardButton(
+                "🔨 Start Round 0", callback_data=f"admin_start_round_zero_{gully_id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🏁 Start Round 1", callback_data=f"admin_start_round_one_{gully_id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "⏭️ Next Player", callback_data=f"admin_next_player_{gully_id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🛑 End Auction Round", callback_data=f"admin_end_round_{gully_id}"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🏆 Complete Auction",
+                callback_data=f"admin_complete_auction_{gully_id}",
+            )
+        ],
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.edit_message_text(
+        f"🛠️ *Admin Panel - {gully.get('name')}* 🛠️\n\n"
+        f"Welcome to the admin panel. Here you can manage auction-related functionality for your gully.\n\n"
+        f"• Start Round 0: Begin the initial squad submission phase\n"
+        f"• Start Round 1: Begin the live auction for contested players\n"
+        f"• Next Player: Move to the next player in the auction\n"
+        f"• End Auction Round: End the current auction round\n"
+        f"• Complete Auction: Finalize the entire auction process\n",
+        reply_markup=reply_markup,
+        parse_mode="Markdown",
+    )
 
 
 async def handle_user_management(
@@ -103,58 +337,6 @@ async def handle_user_management(
         f"👥 *User Management - {gully.get('name')}* 👥\n\n"
         f"Select a user to manage:\n\n"
         f"Total Users: {len(participants)}\n"
-    )
-
-    await query.edit_message_text(
-        message, reply_markup=reply_markup, parse_mode="Markdown"
-    )
-
-
-async def handle_team_management(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, parts: List[str]
-) -> None:
-    """Handle team management panel."""
-    query = update.callback_query
-
-    # Get gully ID from callback data
-    if len(parts) < 3:
-        return
-
-    gully_id = int(parts[2])
-
-    # Get gully info
-    gully = await api_client.get_gully(gully_id)
-
-    # Create keyboard with team management options
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "View Teams", callback_data=f"admin_viewteams_{gully_id}"
-            ),
-            InlineKeyboardButton(
-                "Create Team", callback_data=f"admin_createteam_{gully_id}"
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                "Assign Players", callback_data=f"admin_assignplayers_{gully_id}"
-            ),
-            InlineKeyboardButton(
-                "Team Rules", callback_data=f"admin_teamrules_{gully_id}"
-            ),
-        ],
-        [InlineKeyboardButton("Back", callback_data=f"admin_panel_{gully_id}")],
-    ]
-
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    message = (
-        f"🏏 *Team Management - {gully.get('name')}* 🏏\n\n"
-        f"Select an option to manage teams:\n\n"
-        f"• View Teams: See all teams in this gully\n"
-        f"• Create Team: Create a new team\n"
-        f"• Assign Players: Assign players to teams\n"
-        f"• Team Rules: Configure team rules and requirements\n"
     )
 
     await query.edit_message_text(
@@ -432,9 +614,6 @@ async def handle_invite_link(
 
     gully_id = int(parts[2])
 
-    # Get user ID
-    user_id = update.effective_user.id
-
     # Generate invite link
     try:
         result = await api_client.generate_invite_link(
@@ -529,7 +708,6 @@ async def handle_admin_permissions(
         # Define all possible permissions
         all_permissions = [
             ("user_management", "User Management"),
-            ("team_management", "Team Management"),
             ("auction_management", "Auction Management"),
             ("match_management", "Match Management"),
             ("settings_management", "Settings Management"),
@@ -652,6 +830,250 @@ async def handle_add_admin(
         f"👑 *Add New Admin - {gully.get('name')}* 👑\n\n"
         f"Select a user to nominate as admin:\n\n"
     )
+
+    await query.edit_message_text(
+        message, reply_markup=reply_markup, parse_mode="Markdown"
+    )
+
+
+async def handle_section_selection(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, parts: List[str]
+) -> None:
+    """Handle section selection in admin panel."""
+    query = update.callback_query
+    user_id = update.effective_user.id
+
+    # Check if user is admin
+    is_admin = await api_client.is_admin(user_id)
+    if not is_admin:
+        await query.answer("You don't have admin permissions.")
+        return
+
+    # Get section and gully ID from callback data
+    if len(parts) < 4:
+        return
+
+    section = parts[2]
+    gully_id = int(parts[3])
+
+    # Get gully info
+    gully = await api_client.get_gully(gully_id)
+
+    # Handle different sections
+    if section == "users":
+        # User Management Section
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "👁️ View Users", callback_data=f"admin_view_users_{gully_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "➕ Add Admin", callback_data=f"admin_add_admin_{gully_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "➖ Remove Admin", callback_data=f"admin_remove_admin_{gully_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📊 Bulk Add Users",
+                    callback_data=f"admin_bulk_add_users_{gully_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔙 Back to Admin Panel", callback_data=f"admin_gully_{gully_id}"
+                )
+            ],
+        ]
+
+        message = (
+            f"👥 *User Management - {gully.get('name')}* 👥\n\n"
+            f"Manage users and their roles in your gully:\n\n"
+            f"• View all users in your gully\n"
+            f"• Add admin privileges to users\n"
+            f"• Remove admin privileges from users\n"
+            f"• Bulk add users to your gully\n"
+        )
+
+    elif section == "auction":
+        # Auction Management Section
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "🏁 Start Auction", callback_data=f"admin_start_auction_{gully_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "⚙️ Auction Settings",
+                    callback_data=f"admin_auction_settings_{gully_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📋 Player List", callback_data=f"admin_player_list_{gully_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔙 Back to Admin Panel", callback_data=f"admin_gully_{gully_id}"
+                )
+            ],
+        ]
+
+        message = (
+            f"🔨 *Auction Management - {gully.get('name')}* 🔨\n\n"
+            f"Configure and run player auctions:\n\n"
+            f"• Start a new auction session\n"
+            f"• Configure auction settings\n"
+            f"• Manage player list for auction\n"
+        )
+
+    elif section == "matches":
+        # Match Management Section
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "➕ Create Match", callback_data=f"admin_create_match_{gully_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📝 Update Scores", callback_data=f"admin_update_scores_{gully_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📅 Schedule Matches",
+                    callback_data=f"admin_schedule_matches_{gully_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔙 Back to Admin Panel", callback_data=f"admin_gully_{gully_id}"
+                )
+            ],
+        ]
+
+        message = (
+            f"🏆 *Match Management - {gully.get('name')}* 🏆\n\n"
+            f"Set up and manage matches:\n\n"
+            f"• Create new matches\n"
+            f"• Update match scores\n"
+            f"• Schedule upcoming matches\n"
+        )
+
+    elif section == "settings":
+        # Gully Settings Section
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "✏️ Edit Name", callback_data=f"admin_edit_name_{gully_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📅 Edit Dates", callback_data=f"admin_edit_dates_{gully_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "💰 Edit Points", callback_data=f"admin_edit_points_{gully_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔙 Back to Admin Panel", callback_data=f"admin_gully_{gully_id}"
+                )
+            ],
+        ]
+
+        message = (
+            f"⚙️ *Gully Settings - {gully.get('name')}* ⚙️\n\n"
+            f"Configure general settings for your gully:\n\n"
+            f"• Edit gully name and description\n"
+            f"• Modify start and end dates\n"
+            f"• Configure point system\n"
+        )
+
+    elif section == "roles":
+        # Admin Roles Section
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "👁️ View Admins", callback_data=f"admin_view_admins_{gully_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "➕ Add Admin", callback_data=f"admin_add_admin_{gully_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "➖ Remove Admin", callback_data=f"admin_remove_admin_{gully_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔙 Back to Admin Panel", callback_data=f"admin_gully_{gully_id}"
+                )
+            ],
+        ]
+
+        message = (
+            f"🔐 *Admin Roles - {gully.get('name')}* 🔐\n\n"
+            f"Manage admin permissions:\n\n"
+            f"• View current admins\n"
+            f"• Add new admins\n"
+            f"• Remove admin privileges\n"
+        )
+
+    elif section == "invite":
+        # Invite Management Section
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "🔗 Generate Invite Link",
+                    callback_data=f"admin_generate_invite_{gully_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "⏱️ 24-Hour Link", callback_data=f"admin_24h_invite_{gully_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🗑️ Revoke Links", callback_data=f"admin_revoke_invites_{gully_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔙 Back to Admin Panel", callback_data=f"admin_gully_{gully_id}"
+                )
+            ],
+        ]
+
+        message = (
+            f"🔗 *Invite Management - {gully.get('name')}* 🔗\n\n"
+            f"Create and manage invite links:\n\n"
+            f"• Generate permanent invite links\n"
+            f"• Create temporary 24-hour links\n"
+            f"• Revoke existing invite links\n"
+        )
+
+    else:
+        # Invalid section, return to admin panel
+        await handle_gully_selection(update, context, ["admin", "gully", str(gully_id)])
+        return
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
 
     await query.edit_message_text(
         message, reply_markup=reply_markup, parse_mode="Markdown"

@@ -1,83 +1,70 @@
+"""
+Keyboard utilities for team management.
+"""
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from typing import Dict, Any, List
 
 
-def get_team_management_keyboard():
+def get_team_management_keyboard() -> InlineKeyboardMarkup:
     """Create a keyboard for team management."""
     keyboard = [
         [
-            InlineKeyboardButton("Set Captain", callback_data="team_captain"),
-            InlineKeyboardButton("Transfer Players", callback_data="team_transfer"),
+            InlineKeyboardButton("Set Captain", callback_data="team_set_captain"),
+            InlineKeyboardButton("View Players", callback_data="team_view_players"),
         ],
         [
-            InlineKeyboardButton("View Players", callback_data="nav_players"),
-            InlineKeyboardButton("« Back to Menu", callback_data="nav_back_main"),
+            InlineKeyboardButton(
+                "Check Composition", callback_data="team_check_composition"
+            ),
+            InlineKeyboardButton("Transfer", callback_data="team_transfer"),
         ],
+        [InlineKeyboardButton("Back", callback_data="main_menu")],
     ]
-
     return InlineKeyboardMarkup(keyboard)
 
 
-def get_captain_selection_keyboard(team: Dict[str, Any]):
+def get_captain_selection_keyboard(
+    players: List[Dict[str, Any]], page: int = 0, items_per_page: int = 5
+) -> InlineKeyboardMarkup:
     """Create a keyboard for captain selection."""
+    # Calculate pagination
+    total_pages = (len(players) + items_per_page - 1) // items_per_page
+    start_idx = page * items_per_page
+    end_idx = min(start_idx + items_per_page, len(players))
+
+    # Create player buttons
     keyboard = []
+    for i in range(start_idx, end_idx):
+        player = players[i]
+        player_id = player.get("id")
+        player_name = player.get("name", "Unknown")
+        player_type = player.get("type", "Unknown")
 
-    # Group players by type for better organization
-    players_by_type = {"BAT": [], "BOWL": [], "ALL": [], "WK": []}
-
-    for player in team.get("players", []):
-        player_type = player.get("player_type", "BAT")
-        players_by_type[player_type].append(player)
-
-    # Add buttons for each player
-    for player_type, players in players_by_type.items():
-        if players:
-            for player in players:
-                captain_mark = "👑 " if player["id"] == team.get("captain_id") else ""
-                keyboard.append(
-                    [
-                        InlineKeyboardButton(
-                            f"{captain_mark}{player['name']} ({player_type})",
-                            callback_data=f"team_set_captain_{player['id']}",
-                        )
-                    ]
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    f"{player_name} ({player_type})",
+                    callback_data=f"captain_select_{player_id}",
                 )
+            ]
+        )
 
-    # Add back button
-    keyboard.append(
-        [InlineKeyboardButton("« Back to Team", callback_data="nav_back_team")]
-    )
+    # Add navigation buttons
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(
+            InlineKeyboardButton("◀️ Previous", callback_data=f"captain_page_{page-1}")
+        )
+    if page < total_pages - 1:
+        nav_buttons.append(
+            InlineKeyboardButton("Next ▶️", callback_data=f"captain_page_{page+1}")
+        )
 
-    return InlineKeyboardMarkup(keyboard)
+    if nav_buttons:
+        keyboard.append(nav_buttons)
 
-
-def get_player_removal_keyboard(team: Dict[str, Any]):
-    """Create a keyboard for removing players."""
-    keyboard = []
-
-    # Group players by type for better organization
-    players_by_type = {"BAT": [], "BOWL": [], "ALL": [], "WK": []}
-
-    for player in team.get("players", []):
-        player_type = player.get("player_type", "BAT")
-        players_by_type[player_type].append(player)
-
-    # Add buttons for each player
-    for player_type, players in players_by_type.items():
-        if players:
-            for player in players:
-                keyboard.append(
-                    [
-                        InlineKeyboardButton(
-                            f"Remove: {player['name']} ({player_type})",
-                            callback_data=f"team_remove_{player['id']}",
-                        )
-                    ]
-                )
-
-    # Add back button
-    keyboard.append(
-        [InlineKeyboardButton("« Back to Team", callback_data="nav_back_team")]
-    )
+    # Add cancel button
+    keyboard.append([InlineKeyboardButton("Cancel", callback_data="team_cancel")])
 
     return InlineKeyboardMarkup(keyboard)

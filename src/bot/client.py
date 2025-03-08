@@ -14,9 +14,10 @@ class APIClient:
 
     def __init__(self, base_url: str = None):
         """Initialize the API client."""
-        self.base_url = (
-            base_url or f"http://{settings.API_HOST}:{settings.API_PORT}/api"
-        )
+        self.base_url = base_url or f"http://{settings.API_HOST}:{settings.API_PORT}"
+        # Make sure the base_url ends with /api
+        if not self.base_url.endswith("/api"):
+            self.base_url = f"{self.base_url}/api"
         self.client = httpx.AsyncClient(timeout=30.0)
 
     async def close(self):
@@ -40,6 +41,10 @@ class APIClient:
     async def create_user(self, user_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Create a new user."""
         try:
+            # Map 'name' to 'full_name' if it exists
+            if "name" in user_data and "full_name" not in user_data:
+                user_data["full_name"] = user_data.pop("name")
+
             response = await self.client.post(f"{self.base_url}/users/", json=user_data)
             if response.status_code == 201:
                 return response.json()
@@ -47,6 +52,26 @@ class APIClient:
             return None
         except Exception as e:
             logger.error(f"Error creating user: {e}")
+            return None
+
+    async def update_user(
+        self, telegram_id: int, user_data: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Update an existing user."""
+        try:
+            # Map 'name' to 'full_name' if it exists
+            if "name" in user_data and "full_name" not in user_data:
+                user_data["full_name"] = user_data.pop("name")
+
+            response = await self.client.patch(
+                f"{self.base_url}/users/telegram/{telegram_id}", json=user_data
+            )
+            if response.status_code == 200:
+                return response.json()
+            logger.error(f"Error updating user: {response.text}")
+            return None
+        except Exception as e:
+            logger.error(f"Error updating user: {e}")
             return None
 
     # Player endpoints
@@ -481,6 +506,10 @@ class APIClient:
             logger.error(f"Error getting gully by group: {e}")
             return None
 
+    async def get_gully_by_chat_id(self, chat_id: int) -> Dict[str, Any]:
+        """Get a gully by Telegram chat ID (alias for get_gully_by_group)."""
+        return await self.get_gully_by_group(chat_id)
+
     async def join_game(
         self, game_id: int, user_id: int, team_name: str
     ) -> Dict[str, Any]:
@@ -518,10 +547,11 @@ class APIClient:
     async def set_active_game(self, user_id: int, game_id: int) -> Dict[str, Any]:
         """Set a user's active game."""
         try:
-            response = await self.client.patch(
-                f"{self.base_url}/users/{user_id}", json={"active_game_id": game_id}
+            response = await self.client.post(
+                f"{self.base_url}/users/{user_id}/active-game",
+                json={"game_id": game_id},
             )
-            return response
+            return response.json()
         except Exception as e:
             logger.error(f"Error setting active game: {e}")
             return {"success": False, "error": str(e)}
@@ -540,10 +570,10 @@ class APIClient:
             return None
 
     async def get_user_squad_submission(self, user_id: int) -> Optional[Dict[str, Any]]:
-        """Get a user's squad submission for Round 0."""
+        """Get a user's squad submission."""
         try:
             response = await self.client.get(
-                f"{self.base_url}/api/auctions/users/{user_id}/squad-submission"
+                f"{self.base_url}/api/auctions/users/{user_id}/squad"
             )
             if response.status_code == 200:
                 return response.json()
@@ -564,44 +594,6 @@ class APIClient:
             logger.error(f"Error submitting squad: {str(e)}")
             return False
 
-    async def get_time_slot_poll(self) -> Optional[Dict[str, Any]]:
-        """Get the time slot poll for auction scheduling."""
-        try:
-            response = await self.client.get(f"{self.base_url}/api/auctions/time-slots")
-            if response.status_code == 200:
-                return response.json()
-            return None
-        except Exception as e:
-            logger.error(f"Error getting time slot poll: {str(e)}")
-            return None
-
-    async def vote_time_slot(self, user_id: int, slot_id: str) -> bool:
-        """Vote for a time slot."""
-        try:
-            data = {"slot_id": slot_id}
-            response = await self.client.post(
-                f"{self.base_url}/api/auctions/users/{user_id}/vote-time-slot",
-                json=data,
-            )
-            return response.status_code == 200
-        except Exception as e:
-            logger.error(f"Error voting for time slot: {str(e)}")
-            return False
-
-    async def get_time_slot_results(self) -> Optional[Dict[str, Any]]:
-        """Get the results of the time slot voting."""
-        try:
-            response = await self.client.get(
-                f"{self.base_url}/api/auctions/time-slot-results"
-            )
-            if response.status_code == 200:
-                return response.json()
-            return None
-        except Exception as e:
-            logger.error(f"Error getting time slot results: {str(e)}")
-            return None
-
-    # Admin methods
     async def get_user_permissions(
         self, user_id: int, gully_id: int
     ) -> List[Dict[str, Any]]:
@@ -616,13 +608,46 @@ class APIClient:
 
     async def assign_admin_role(self, user_id: int, gully_id: int) -> Dict[str, Any]:
         """Assign admin role to a user in a gully."""
-        url = f"{self.base_url}/admin/roles/{gully_id}/{user_id}"
-        return await self._make_request("POST", url)
+        try:
+            # First check if the user is already an admin
+            is_admin = await self.is_admin_in_gully(user_id, gully_id)
+            if is_admin:
+                logger.info(f"User {user_id} is already an admin in gully {gully_id}")
+                return {"success": True, "message": "User is already an admin"}
+
+            # If not, assign the admin role
+            url = f"{self.base_url}/admin/roles/{gully_id}/{user_id}"
+            response = await self.client.post(url)
+
+            if response.status_code == 200:
+                logger.info(
+                    f"Successfully assigned admin role to user {user_id} in gully {gully_id}"
+                )
+                return response.json()
+            else:
+                logger.error(f"Error assigning admin role: {response.text}")
+                return {"success": False, "error": response.text}
+        except Exception as e:
+            logger.error(f"Error assigning admin role: {e}")
+            return {"success": False, "error": str(e)}
 
     async def remove_admin_role(self, user_id: int, gully_id: int) -> Dict[str, Any]:
         """Remove admin role from a user in a gully."""
-        url = f"{self.base_url}/admin/roles/{gully_id}/{user_id}"
-        return await self._make_request("DELETE", url)
+        try:
+            url = f"{self.base_url}/admin/roles/{gully_id}/{user_id}"
+            response = await self.client.delete(url)
+
+            if response.status_code == 200:
+                logger.info(
+                    f"Successfully removed admin role from user {user_id} in gully {gully_id}"
+                )
+                return response.json()
+            else:
+                logger.error(f"Error removing admin role: {response.text}")
+                return {"success": False, "error": response.text}
+        except Exception as e:
+            logger.error(f"Error removing admin role: {e}")
+            return {"success": False, "error": str(e)}
 
     async def assign_admin_permission(
         self, user_id: int, gully_id: int, permission_type: str
@@ -654,3 +679,185 @@ class APIClient:
         url = f"{self.base_url}/admin/invite-link/{gully_id}"
         params = {"expiration_hours": expiration_hours}
         return await self._make_request("POST", url, params=params)
+
+    async def is_admin_anywhere(self, user_id: int) -> bool:
+        """Check if a user is an admin in any gully."""
+        try:
+            url = f"{self.base_url}/admin/is-admin-anywhere/{user_id}"
+            result = await self._make_request("GET", url)
+            return result.get("is_admin", False)
+        except Exception as e:
+            logger.error(f"Error checking admin status: {str(e)}")
+            return False
+
+    async def is_admin_in_gully(self, user_id: int, gully_id: int) -> bool:
+        """Check if a user is an admin in a specific gully."""
+        try:
+            url = f"{self.base_url}/admin/is-admin-in-gully/{gully_id}/{user_id}"
+            response = await self.client.get(url)
+
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("is_admin", False)
+            else:
+                logger.error(f"Error checking admin status: {response.text}")
+                return False
+        except Exception as e:
+            logger.error(f"Error checking admin status in gully: {str(e)}")
+            return False
+
+    async def start_auction_round_zero(self, gully_id: int) -> Optional[Dict[str, Any]]:
+        """Start Round 0 (initial squad submission) for a gully."""
+        try:
+            response = await self.client.post(
+                f"{self.base_url}/auctions/start-round-zero",
+                json={"gully_id": gully_id},
+            )
+            if response.status_code in (200, 201):
+                return response.json()
+            logger.error(f"Error starting auction round zero: {response.text}")
+            return None
+        except Exception as e:
+            logger.error(f"Error starting auction round zero: {e}")
+            return None
+
+    async def start_auction_round_one(self, gully_id: int) -> Optional[Dict[str, Any]]:
+        """Start Round 1 (contested players auction) for a gully."""
+        try:
+            response = await self.client.post(
+                f"{self.base_url}/auctions/start-round-one", json={"gully_id": gully_id}
+            )
+            if response.status_code in (200, 201):
+                return response.json()
+            logger.error(f"Error starting auction round one: {response.text}")
+            return None
+        except Exception as e:
+            logger.error(f"Error starting auction round one: {e}")
+            return None
+
+    async def next_auction_player(self, gully_id: int) -> Optional[Dict[str, Any]]:
+        """Move to the next player in the auction."""
+        try:
+            response = await self.client.post(
+                f"{self.base_url}/auctions/next-player", json={"gully_id": gully_id}
+            )
+            if response.status_code == 200:
+                return response.json()
+            logger.error(f"Error moving to next auction player: {response.text}")
+            return None
+        except Exception as e:
+            logger.error(f"Error moving to next auction player: {e}")
+            return None
+
+    async def end_auction_round(self, gully_id: int) -> Optional[Dict[str, Any]]:
+        """End the current auction round."""
+        try:
+            response = await self.client.post(
+                f"{self.base_url}/auctions/end-round", json={"gully_id": gully_id}
+            )
+            if response.status_code == 200:
+                return response.json()
+            logger.error(f"Error ending auction round: {response.text}")
+            return None
+        except Exception as e:
+            logger.error(f"Error ending auction round: {e}")
+            return None
+
+    async def complete_auction(self, gully_id: int) -> Optional[Dict[str, Any]]:
+        """Complete the entire auction process."""
+        try:
+            response = await self.client.post(
+                f"{self.base_url}/auctions/complete", json={"gully_id": gully_id}
+            )
+            if response.status_code == 200:
+                return response.json()
+            logger.error(f"Error completing auction: {response.text}")
+            return None
+        except Exception as e:
+            logger.error(f"Error completing auction: {e}")
+            return None
+
+    async def get_gully_participant(
+        self, user_id: int, gully_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Get a user's participation details in a specific gully."""
+        try:
+            response = await self.client.get(
+                f"{self.base_url}/gullies/{gully_id}/participants/{user_id}"
+            )
+            if response.status_code == 200:
+                return response.json()
+            return None
+        except Exception as e:
+            logger.error(f"Error getting gully participant: {e}")
+            return None
+
+    async def is_admin(self, user_id: int) -> bool:
+        """Check if a user is an admin in any gully."""
+        return await self.is_admin_anywhere(user_id)
+
+    async def add_user_to_gully(self, user_id: int, gully_id: int) -> Dict[str, Any]:
+        """Add a user to a gully with a default team name."""
+        try:
+            # First check if the user exists, if not create them
+            user = await self.get_user(user_id)
+            if not user:
+                # Create a minimal user record
+                user_data = {
+                    "telegram_id": user_id,
+                    "name": f"User_{user_id}",  # Temporary name
+                }
+                await self.create_user(user_data)
+
+            # Generate a default team name
+            default_team_name = f"Team_{user_id}"
+
+            # Join the gully (game)
+            return await self.join_game(gully_id, user_id, default_team_name)
+        except Exception as e:
+            logger.error(f"Error adding user to gully: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def get_all_gullies(self) -> List[Dict[str, Any]]:
+        """Get all active gullies."""
+        try:
+            response = await self.client.get(f"{self.base_url}/gullies/")
+            if response.status_code == 200:
+                return response.json()
+            logger.error(f"Error getting all gullies: {response.text}")
+            return []
+        except Exception as e:
+            logger.error(f"Error getting all gullies: {e}")
+            return []
+
+    async def _make_request(
+        self,
+        method: str,
+        url: str,
+        json: Dict[str, Any] = None,
+        params: Dict[str, Any] = None,
+    ) -> Dict[str, Any]:
+        """Make a request to the API with error handling."""
+        try:
+            if method == "GET":
+                response = await self.client.get(url, params=params)
+            elif method == "POST":
+                response = await self.client.post(url, json=json, params=params)
+            elif method == "PUT":
+                response = await self.client.put(url, json=json, params=params)
+            elif method == "DELETE":
+                response = await self.client.delete(url, params=params)
+            else:
+                logger.error(f"Unsupported HTTP method: {method}")
+                return {"success": False, "error": f"Unsupported HTTP method: {method}"}
+
+            if response.status_code in (200, 201, 204):
+                if response.status_code == 204:  # No content
+                    return {"success": True}
+                return response.json()
+            else:
+                logger.error(f"API request failed: {response.text}")
+                return {"success": False, "error": response.text}
+        except Exception as e:
+            logger.error(f"Error making API request: {e}")
+            return {"success": False, "error": str(e)}

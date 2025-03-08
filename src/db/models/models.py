@@ -1,9 +1,9 @@
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from datetime import datetime, timezone
 from decimal import Decimal
 from sqlmodel import SQLModel, Field, Relationship
 from pydantic import field_validator
-from sqlalchemy import TypeDecorator, DateTime
+from sqlalchemy import TypeDecorator, DateTime, BigInteger
 import sqlalchemy
 
 
@@ -50,7 +50,7 @@ class User(TimeStampedModel, table=True):
     __tablename__ = "users"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    telegram_id: int = Field(unique=True, index=True)
+    telegram_id: int = Field(unique=True, index=True, sa_type=BigInteger)
     username: str = Field(index=True)
     full_name: str
     budget: Decimal = Field(default=100.0)
@@ -405,7 +405,9 @@ class Gully(TimeStampedModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True, description="Primary key")
     name: str = Field(index=True, description="Name of the Gully")
     telegram_group_id: int = Field(
-        unique=True, description="Telegram group ID associated with this Gully"
+        unique=True,
+        sa_type=BigInteger,
+        description="Telegram group ID associated with this Gully",
     )
     status: str = Field(
         default="pending",
