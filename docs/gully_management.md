@@ -45,17 +45,6 @@ In GullyGuru, a "gully" represents a cricket community group or league. The term
 ### Joining a Gully
 - Users can join a gully by being added to the associated Telegram group
 - The bot automatically registers new users and adds them to the gully
-- Users can also join via invitation links or by using the `/start` command in the group
-
-### Active Gully
-- Users can participate in multiple gullies
-- One gully is set as the "active" gully for each user
-- Commands without explicit gully context operate on the active gully
-
-### Switching Gullies
-- Users can switch their active gully using the `/switch_gully` command
-- The bot provides a list of gullies the user is part of
-- User selects the gully they want to set as active
 
 ## Admin Management
 

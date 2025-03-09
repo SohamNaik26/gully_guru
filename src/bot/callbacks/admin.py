@@ -2,7 +2,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from typing import Dict, Any, List
 
-from src.bot.api_client_instance import api_client
+from src.api.api_client_instance import api_client
 from src.bot.handlers.admin import admin_panel_command
 
 
@@ -519,8 +519,6 @@ async def handle_settings_management(
         f"Configure settings for your gully:\n\n"
         f"*Current Settings:*\n"
         f"• Name: {gully.get('name')}\n"
-        f"• Start Date: {gully.get('start_date')}\n"
-        f"• End Date: {gully.get('end_date')}\n"
         f"• Status: {gully.get('status')}\n\n"
         f"Select an option below to modify settings:"
     )

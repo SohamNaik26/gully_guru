@@ -4,13 +4,13 @@ from typing import Dict, Any, List, Optional
 from decimal import Decimal
 import logging
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 
-from src.bot.api_client_instance import api_client
+from src.api.api_client_instance import api_client
 from src.bot.keyboards.auction import get_auction_keyboard, get_bid_keyboard
 from src.bot.utils.formatting import format_player_card
-from src.bot.utils.auction import (
+from src.bot.services.auction_service import (
     calculate_min_bid_increment,
     calculate_max_bid,
     validate_team_composition,
@@ -29,19 +29,19 @@ async def auction_status_command(
 ) -> None:
     """Handle the /auction_status command to show status of all auction rounds."""
     # Get user from database
-    db_user = await api_client.get_user(update.effective_user.id)
+    db_user = await api_client.users.get_user(update.effective_user.id)
 
     if not db_user:
         await update.message.reply_text(
-            "You need to register first. Use /start to register."
+            "You need to register first. Use /join_gully to register."
         )
         return
 
     # Get Round 0 status (Initial Squad Submission)
-    round_zero = await api_client.get_round_zero_status()
+    round_zero = await api_client.fantasy.get_round_zero_status()
 
     # Get active auction status (Rounds 1 and 2)
-    auction = await api_client.get_auction_status()
+    auction = await api_client.fantasy.get_auction_status()
 
     # Build comprehensive status message
     message = "🏏 *AUCTION STATUS* 🏏\n\n"
@@ -156,11 +156,9 @@ async def auction_status_command(
 async def auction_history_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Handle the /auctionhistory command to show recent auction results."""
-    user = update.effective_user
-
+    """Handle the /auction_history command to show recent auction results."""
     # Get auction history
-    history = await api_client.get_auction_history(limit=10)
+    history = await api_client.fantasy.get_auction_history(limit=10)
 
     if not history:
         await update.message.reply_text("No auction history available yet.")
@@ -191,16 +189,16 @@ async def bid_command(
     user = update.effective_user
 
     # Get user from database
-    db_user = await api_client.get_user(user.id)
+    db_user = await api_client.users.get_user(user.id)
 
     if not db_user:
         await update.message.reply_text(
-            "You need to register first. Use /start to register."
+            "You need to register first. Use /join_gully to register."
         )
         return ConversationHandler.END
 
     # Get auction status
-    auction = await api_client.get_auction_status()
+    auction = await api_client.fantasy.get_auction_status()
 
     if not auction or auction.get("status") != "active":
         await update.message.reply_text("There is no active auction at the moment.")
@@ -273,10 +271,8 @@ async def bid_command(
         return ConversationHandler.END
 
     # Place bid
-    result = await api_client.place_bid(
-        user_id=db_user.get("id"),
-        player_id=current_player.get("id"),
-        bid_amount=float(bid_amount),
+    result = await api_client.fantasy.place_bid(
+        db_user.get("id"), current_player.get("id"), Decimal(bid_amount)
     )
 
     if result.get("success"):
@@ -312,16 +308,16 @@ async def quick_bid_callback(
     bid_amount = Decimal(data.split("_")[-1])
 
     # Get user from database
-    db_user = await api_client.get_user(user.id)
+    db_user = await api_client.users.get_user(user.id)
 
     if not db_user:
         await query.edit_message_text(
-            "You need to register first. Use /start to register."
+            "You need to register first. Use /join_gully to register."
         )
         return
 
     # Get auction status
-    auction = await api_client.get_auction_status()
+    auction = await api_client.fantasy.get_auction_status()
 
     if not auction or auction.get("status") != "active":
         await query.edit_message_text("There is no active auction at the moment.")
@@ -341,10 +337,8 @@ async def quick_bid_callback(
         return
 
     # Place bid
-    result = await api_client.place_bid(
-        user_id=db_user.get("id"),
-        player_id=current_player.get("id"),
-        bid_amount=float(bid_amount),
+    result = await api_client.fantasy.place_bid(
+        db_user.get("id"), current_player.get("id"), Decimal(bid_amount)
     )
 
     if result.get("success"):
@@ -398,7 +392,7 @@ async def auction_round_notification(context: ContextTypes.DEFAULT_TYPE) -> None
     for user_id in user_ids:
         try:
             # Get user details
-            user = await api_client.get_user_by_id(user_id)
+            user = await api_client.users.get_user(user_id)
             if not user:
                 continue
 
@@ -446,7 +440,7 @@ async def auction_result_notification(context: ContextTypes.DEFAULT_TYPE) -> Non
 
     try:
         # Get user details
-        user = await api_client.get_user_by_id(user_id)
+        user = await api_client.users.get_user(user_id)
         if not user:
             return
 
@@ -512,14 +506,14 @@ async def start_auction_rounds(
     user = update.effective_user
 
     # Check if user is admin
-    db_user = await api_client.get_user(user.id)
+    db_user = await api_client.users.get_user(user.id)
 
     if not db_user or not db_user.get("is_admin", False):
         await update.message.reply_text("Only admins can start auction rounds.")
         return
 
     # Get contested players
-    contested_players = await api_client.get_contested_players()
+    contested_players = await api_client.fantasy.get_contested_players()
 
     if not contested_players:
         await update.message.reply_text("No contested players found for auction.")
@@ -559,7 +553,7 @@ async def start_next_auction_round(
     player = contested_players[current_index]
 
     # Start auction for this player
-    result = await api_client.start_auction_round(player["id"])
+    result = await api_client.fantasy.start_auction_round(player["id"])
 
     if not result.get("success"):
         await update.effective_message.reply_text(
@@ -571,7 +565,7 @@ async def start_next_auction_round(
     context.bot_data["current_auction_index"] = current_index + 1
 
     # Get all users for notification
-    users = await api_client.get_all_users()
+    users = await api_client.users.get_all_users()
     user_ids = [user["id"] for user in users]
 
     # Schedule notification
@@ -622,7 +616,7 @@ async def end_auction_round(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     # End the auction round
-    result = await api_client.end_auction_round(player_id)
+    result = await api_client.fantasy.end_auction_round(player_id)
 
     if not result.get("success"):
         logger.error(
@@ -641,7 +635,7 @@ async def end_auction_round(context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     # Assign player to winner's team
-    assign_result = await api_client.assign_player_to_user(
+    assign_result = await api_client.fantasy.assign_player_to_user(
         user_id=winner.get("id"), player_id=player.get("id"), price=price
     )
 
@@ -651,7 +645,7 @@ async def end_auction_round(context: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
     # Notify all users about the result
-    users = await api_client.get_all_users()
+    users = await api_client.users.get_all_users()
 
     for user in users:
         context_obj.job_queue.run_once(
@@ -692,14 +686,14 @@ async def start_auction_command(
     user = update.effective_user
 
     # Check if user is admin
-    db_user = await api_client.get_user(user.id)
+    db_user = await api_client.users.get_user(user.id)
 
     if not db_user or not db_user.get("is_admin", False):
         await update.message.reply_text("Only admins can start the auction.")
         return
 
     # Check if all users have submitted their initial squads
-    status = await api_client.get_initial_squad_status(update.effective_chat.id)
+    status = await api_client.fantasy.get_initial_squad_status(update.effective_chat.id)
 
     if not status or not status.get("all_submitted", False):
         await update.message.reply_text(
@@ -709,7 +703,7 @@ async def start_auction_command(
         return
 
     # Start the auction
-    result = await api_client.start_auction(update.effective_chat.id)
+    result = await api_client.fantasy.start_auction(update.effective_chat.id)
 
     if not result or not result.get("success", False):
         await update.message.reply_text(
@@ -728,7 +722,7 @@ async def start_auction_command(
         price = player_info.get("price", 0)
 
         if player_id and user_id:
-            assign_result = await api_client.assign_player_to_user(
+            assign_result = await api_client.fantasy.assign_player_to_user(
                 user_id=user_id, player_id=player_id, price=price
             )
 
@@ -835,7 +829,7 @@ async def place_bid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.message.from_user
 
     # Get auction status
-    auction = await api_client.get_auction_status()
+    auction = await api_client.fantasy.get_auction_status()
 
     if not auction or auction.get("status") != "active":
         message = "There is no active auction at the moment."
@@ -856,10 +850,10 @@ async def place_bid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     # Get user from database
-    db_user = await api_client.get_user(user.id)
+    db_user = await api_client.users.get_user(user.id)
 
     if not db_user:
-        message = "You need to register first. Use /start to register."
+        message = "You need to register first. Use /join_gully to register."
         if update.callback_query:
             await update.callback_query.edit_message_text(message)
         else:
@@ -890,7 +884,7 @@ async def place_bid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     # Get user's current team size
-    user_team = await api_client.get_user_team(db_user.get("id"))
+    user_team = await api_client.fantasy.get_user_team(db_user.get("id"))
     remaining_slots = 18 - len(user_team)
 
     # Calculate max bid to ensure user can complete their squad
@@ -911,10 +905,8 @@ async def place_bid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     # Place bid
-    result = await api_client.place_bid(
-        user_id=db_user.get("id"),
-        player_id=current_player.get("id"),
-        bid_amount=float(bid_amount),
+    result = await api_client.fantasy.place_bid(
+        db_user.get("id"), current_player.get("id"), Decimal(bid_amount)
     )
 
     if not result.get("success"):
@@ -962,16 +954,16 @@ async def submit_squad_command(
     user = update.effective_user
 
     # Get user from database
-    db_user = await api_client.get_user(user.id)
+    db_user = await api_client.users.get_user(user.id)
 
     if not db_user:
         await update.message.reply_text(
-            "You need to register first. Use /start to register."
+            "You need to register first. Use /join_gully to register."
         )
         return ConversationHandler.END
 
     # Check if there's an active Round 0
-    round_zero = await api_client.get_round_zero_status()
+    round_zero = await api_client.fantasy.get_round_zero_status()
 
     if not round_zero or round_zero.get("status") != "active":
         await update.message.reply_text(
@@ -981,7 +973,7 @@ async def submit_squad_command(
         return ConversationHandler.END
 
     # Check if user has already submitted a squad
-    user_submission = await api_client.get_user_squad_submission(user.id)
+    user_submission = await api_client.fantasy.get_user_squad_submission(user.id)
 
     if user_submission and user_submission.get("status") == "submitted":
         await update.message.reply_text(
@@ -1032,7 +1024,7 @@ async def round_zero_status_command(
         return
 
     # Get Round 0 status
-    round_zero = await api_client.get_round_zero_status()
+    round_zero = await api_client.fantasy.get_round_zero_status()
 
     if not round_zero:
         await update.message.reply_text("There is no Round 0 configured yet.")

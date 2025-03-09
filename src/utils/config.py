@@ -17,6 +17,7 @@ class Settings:
     # API
     API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
     API_PORT: int = int(os.getenv("API_PORT", "8000"))
+    API_BASE_URL: str = os.getenv("API_BASE_URL", f"http://{API_HOST}:{API_PORT}")
     CORS_ORIGINS: List[str] = ["*"]
 
     # Database

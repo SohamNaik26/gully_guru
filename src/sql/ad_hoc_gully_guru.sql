@@ -10,3 +10,17 @@ SELECT
     *
 FROM 
     public.users
+
+SELECT 
+    *
+FROM 
+    public.gullies
+
+
+
+SELECT 
+    *
+FROM 
+    public.gully_participants
+
+

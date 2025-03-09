@@ -1,3 +1,7 @@
+import logging
+import re
+from typing import Dict, Any, List, Optional
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ContextTypes,
@@ -7,15 +11,13 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-from datetime import datetime, timedelta
-import logging
-import pytz
 
-from src.bot.api_client_instance import api_client
+from src.api.api_client_instance import api_client
 from src.bot.keyboards.gullies import (
     get_gully_management_keyboard,
     get_gully_list_keyboard,
 )
+from src.bot.utils.user_management import ensure_user_exists, ensure_user_in_gully
 
 # Conversation states
 GULLY_NAME = 1
@@ -79,17 +81,10 @@ async def gully_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Store gully name in context
     context.user_data["gully_name"] = gully_name
 
-    # Calculate default dates (12 weeks from now)
-    now = datetime.now(pytz.UTC)
-    start_date = now
-    end_date = now + timedelta(weeks=12)
-
     # Create gully
     result = await api_client.create_gully(
         name=gully_name,
         telegram_group_id=update.effective_chat.id,
-        start_date=start_date,
-        end_date=end_date,
     )
 
     if not result or "id" not in result:
@@ -119,8 +114,7 @@ async def gully_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"🎮 *New Fantasy Cricket Gully Created!* 🎮\n\n"
         f"*{gully_name}* has been created successfully!\n\n"
         f"You have been automatically assigned as an admin for this gully.\n\n"
-        f"Group members can now join this gully by using the /join_gully command.\n\n"
-        f"The season will run for 12 weeks, ending on {end_date.strftime('%d %b %Y')}.",
+        f"Group members can now join this gully by using the /join_gully command.",
         parse_mode="Markdown",
     )
 
@@ -171,7 +165,7 @@ async def join_gully_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         if not db_user:
             await update.message.reply_text(
-                "You need to register first. Use /start to register."
+                "You need to register first. Use /join_gully to register."
             )
             return ConversationHandler.END
 
@@ -210,7 +204,7 @@ async def team_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     if not db_user:
         await update.message.reply_text(
-            "You need to register first. Use /start to register."
+            "You need to register first. Use /join_gully to register."
         )
         return ConversationHandler.END
 
@@ -256,7 +250,7 @@ async def my_gullies_command(
 
     if not db_user:
         await update.message.reply_text(
-            "You need to register first. Use /start to register."
+            "You need to register first. Use /join_gully to register."
         )
         return
 
@@ -287,7 +281,7 @@ async def switch_gully_command(
 
     if not db_user:
         await update.message.reply_text(
-            "You need to register first. Use /start to register."
+            "You need to register first. Use /join_gully to register."
         )
         return ConversationHandler.END
 
@@ -398,14 +392,9 @@ async def gully_info_command(
     participants = await api_client.get_gully_participants(gully.get("id"))
 
     # Format gully info
-    start_date = datetime.fromisoformat(gully.get("start_date").replace("Z", "+00:00"))
-    end_date = datetime.fromisoformat(gully.get("end_date").replace("Z", "+00:00"))
-
     message = (
         f"🎮 *{gully.get('name')}* 🎮\n\n"
         f"*Status:* {gully.get('status')}\n"
-        f"*Start Date:* {start_date.strftime('%d %b %Y')}\n"
-        f"*End Date:* {end_date.strftime('%d %b %Y')}\n"
         f"*Participants:* {len(participants)}\n\n"
     )
 

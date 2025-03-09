@@ -197,7 +197,7 @@ Environment variables are managed through Cloud Run's configuration:
 ## Basic Usage
 
 ### Admin Commands
-- `/start` - Register with the bot
+- `/join_gully` - Join a gully and start playing
 - `/create_gully` - Create a new gully in a group
 - `/gully_settings` - Configure gully settings
 - `/add_admin` - Add an admin to the current gully
@@ -335,7 +335,7 @@ For detailed documentation on the gully system, see [Gully Management Documentat
 ## Usage
 
 ### Basic Commands
-- `/start` - Register with the bot
+- `/join_gully` - Join a gully and start playing
 - `/create_gully` - Create a new gully in a group (admin only)
 - `/join_gully` - Join a gully in the current group
 - `/my_gullies` - View all gullies you're participating in

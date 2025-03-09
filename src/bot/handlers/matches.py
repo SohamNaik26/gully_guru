@@ -2,7 +2,7 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
-from src.bot.api_client_instance import api_client
+from src.api.api_client_instance import api_client
 from src.bot.utils.formatting import format_match_card
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ async def list_matches_command(
 
     if not db_user:
         await update.message.reply_text(
-            "You don't have an account yet. Use /start to create one."
+            "You don't have an account yet. Use /join_gully to create one."
         )
         return
 

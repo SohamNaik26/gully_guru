@@ -3,7 +3,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from src.db.session import get_session
-from src.bot.api_client_instance import api_client
+from src.api.api_client_instance import api_client
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     if not db_user:
         await update.message.reply_text(
-            "You don't have an account yet. Use /start to create one."
+            "You don't have an account yet. Use /join_gully to create one."
         )
         return
 

@@ -6,6 +6,7 @@ from datetime import datetime
 from src.db.session import get_session
 from src.db.models import User, Gully, GullyParticipant
 from src.api.dependencies import get_current_user
+from src.api.schemas.user import GullyParticipantCreate, GullyParticipantResponse
 
 # Remove imports from gully_service
 import logging
@@ -24,18 +25,15 @@ async def get_all_gullies(session: Session) -> List[Dict[str, Any]]:
         session: Database session
 
     Returns:
-        List of all gullies
+        List of gullies
     """
     gullies = session.exec(select(Gully)).all()
-
     return [
         {
             "id": gully.id,
             "name": gully.name,
             "telegram_group_id": gully.telegram_group_id,
             "status": gully.status,
-            "start_date": gully.start_date.isoformat(),
-            "end_date": gully.end_date.isoformat(),
         }
         for gully in gullies
     ]
@@ -45,14 +43,14 @@ async def get_gully_by_chat_id(
     telegram_group_id: int, session: Session
 ) -> Optional[Dict[str, Any]]:
     """
-    Get a gully by its Telegram chat ID.
+    Get a gully by Telegram chat ID.
 
     Args:
-        telegram_group_id: The Telegram group ID
+        telegram_group_id: Telegram group ID
         session: Database session
 
     Returns:
-        The gully data or None if not found
+        Gully data or None if not found
     """
     gully = session.exec(
         select(Gully).where(Gully.telegram_group_id == telegram_group_id)
@@ -66,16 +64,12 @@ async def get_gully_by_chat_id(
         "name": gully.name,
         "telegram_group_id": gully.telegram_group_id,
         "status": gully.status,
-        "start_date": gully.start_date.isoformat(),
-        "end_date": gully.end_date.isoformat(),
     }
 
 
 async def create_gully(
     name: str,
     telegram_group_id: int,
-    start_date: str,
-    end_date: str,
     session: Session,
 ) -> Optional[Dict[str, Any]]:
     """
@@ -84,15 +78,13 @@ async def create_gully(
     Args:
         name: The name of the gully
         telegram_group_id: The Telegram group ID
-        start_date: The start date (YYYY-MM-DD)
-        end_date: The end date (YYYY-MM-DD)
         session: Database session
 
     Returns:
-        The created gully or None if creation failed
+        The created gully data or None if creation failed
     """
     try:
-        # Check if a gully already exists for this group
+        # Check if a gully with this Telegram group ID already exists
         existing_gully = session.exec(
             select(Gully).where(Gully.telegram_group_id == telegram_group_id)
         ).first()
@@ -103,19 +95,13 @@ async def create_gully(
                 "name": existing_gully.name,
                 "telegram_group_id": existing_gully.telegram_group_id,
                 "status": existing_gully.status,
-                "start_date": existing_gully.start_date.isoformat(),
-                "end_date": existing_gully.end_date.isoformat(),
             }
 
         # Create a new gully
         new_gully = Gully(
             name=name,
             telegram_group_id=telegram_group_id,
-            status="active",
-            start_date=datetime.strptime(start_date, "%Y-%m-%d").date(),
-            end_date=datetime.strptime(end_date, "%Y-%m-%d").date(),
         )
-
         session.add(new_gully)
         session.commit()
         session.refresh(new_gully)
@@ -125,8 +111,6 @@ async def create_gully(
             "name": new_gully.name,
             "telegram_group_id": new_gully.telegram_group_id,
             "status": new_gully.status,
-            "start_date": new_gully.start_date.isoformat(),
-            "end_date": new_gully.end_date.isoformat(),
         }
     except Exception as e:
         logger.error(f"Error creating gully: {e}")
@@ -167,11 +151,29 @@ async def add_user_to_gully(
                 "is_active": existing_participant.is_active,
             }
 
+        # Get user details to create a default team name
+        user = session.get(User, user_id)
+        if not user:
+            logger.error(f"User {user_id} not found")
+            return None
+
+        # Get gully details
+        gully = session.get(Gully, gully_id)
+        if not gully:
+            logger.error(f"Gully {gully_id} not found")
+            return None
+
+        # Create a default team name based on username and role
+        default_team_name = f"{user.username}'s Team"
+        if role == "owner":
+            default_team_name = f"{gully.name} Owner"
+
         # Create a new participant
         new_participant = GullyParticipant(
             user_id=user_id,
             gully_id=gully_id,
             role=role,
+            team_name=default_team_name,  # Add default team name
             is_active=True,
             joined_via="added",
             last_active_at=datetime.now(),
@@ -252,13 +254,20 @@ async def get_gully(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Get a specific gully by ID.
+    Get a gully by ID.
+
+    Args:
+        gully_id: The gully ID
+        session: Database session
+        current_user: The current user
+
+    Returns:
+        The gully data
     """
     gully = session.get(Gully, gully_id)
     if not gully:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Gully with ID {gully_id} not found",
+            status_code=status.HTTP_404_NOT_FOUND, detail="Gully not found"
         )
 
     return {
@@ -266,8 +275,6 @@ async def get_gully(
         "name": gully.name,
         "telegram_group_id": gully.telegram_group_id,
         "status": gully.status,
-        "start_date": gully.start_date.isoformat(),
-        "end_date": gully.end_date.isoformat(),
     }
 
 
@@ -291,30 +298,47 @@ async def get_gully_by_chat_id_endpoint(
 
 @router.post("/", response_model=Dict[str, Any])
 async def create_gully_endpoint(
-    name: str,
-    telegram_group_id: int,
-    start_date: str,
-    end_date: str,
+    gully_data: Dict[str, Any],
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
     """
     Create a new gully.
-    """
-    gully_data = await create_gully(
-        name, telegram_group_id, start_date, end_date, session
-    )
 
-    if not gully_data:
+    Args:
+        gully_data: The gully data including name and telegram_group_id
+        session: Database session
+        current_user: The current user
+
+    Returns:
+        The created gully
+    """
+    if "name" not in gully_data or "telegram_group_id" not in gully_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="name and telegram_group_id are required",
+        )
+
+    name = gully_data["name"]
+    telegram_group_id = gully_data["telegram_group_id"]
+
+    # Check if a gully with this telegram_group_id already exists
+    existing_gully = await get_gully_by_chat_id(telegram_group_id, session)
+    if existing_gully:
+        return existing_gully
+
+    gully_result = await create_gully(name, telegram_group_id, session)
+
+    if not gully_result:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Failed to create gully",
         )
 
     # Add the creator as an admin
-    await add_user_to_gully(current_user.id, gully_data["id"], "owner", session)
+    await add_user_to_gully(current_user.id, gully_result["id"], "owner", session)
 
-    return gully_data
+    return gully_result
 
 
 @router.get("/participants/{gully_id}", response_model=List[Dict[str, Any]])
@@ -377,38 +401,40 @@ async def get_user_gullies(
     current_user: User = Depends(get_current_user),
 ):
     """
-    Get all gullies a user is participating in.
+    Get all gullies for a user.
+
+    Args:
+        user_id: The user ID
+        session: Database session
+        current_user: The current user
+
+    Returns:
+        List of gullies for the user
     """
-    # Users can only view their own gully participations
-    if current_user.id != user_id:
+    # Check if the user exists
+    user = session.get(User, user_id)
+    if not user:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only view your own gully participations",
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         )
 
-    # Get all gully participations for the user
-    participations = session.exec(
+    # Get all gullies for the user
+    gully_participants = session.exec(
         select(GullyParticipant).where(GullyParticipant.user_id == user_id)
     ).all()
 
-    result = []
-    for p in participations:
-        gully = session.get(Gully, p.gully_id)
-        if gully:
-            result.append(
-                {
-                    "id": gully.id,
-                    "name": gully.name,
-                    "telegram_group_id": gully.telegram_group_id,
-                    "status": gully.status,
-                    "start_date": gully.start_date.isoformat(),
-                    "end_date": gully.end_date.isoformat(),
-                    "role": p.role,
-                    "is_active": p.is_active,
-                }
-            )
+    gully_ids = [gp.gully_id for gp in gully_participants]
+    gullies = session.exec(select(Gully).where(Gully.id.in_(gully_ids))).all()
 
-    return result
+    return [
+        {
+            "id": gully.id,
+            "name": gully.name,
+            "telegram_group_id": gully.telegram_group_id,
+            "status": gully.status,
+        }
+        for gully in gullies
+    ]
 
 
 @router.post("/participants/{gully_id}/{user_id}")

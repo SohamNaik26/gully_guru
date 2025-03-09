@@ -3,7 +3,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from typing import List, Dict, Any
 import logging
 
-from src.bot.api_client_instance import api_client
+from src.api.api_client_instance import api_client
 from src.bot.keyboards.players import (
     get_player_filters_keyboard,
     get_player_details_keyboard,

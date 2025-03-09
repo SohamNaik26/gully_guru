@@ -1,7 +1,7 @@
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from typing import Dict, Any, List
 from decimal import Decimal
-from src.bot.utils.auction import calculate_min_bid_increment, calculate_max_bid
+from src.bot.services.auction_service import calculate_min_bid_increment, calculate_max_bid
 
 
 def get_auction_keyboard(player_id: int) -> InlineKeyboardMarkup:

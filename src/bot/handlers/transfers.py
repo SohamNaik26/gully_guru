@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timedelta
 import pytz
 
-from src.bot.api_client_instance import api_client
+from src.api.api_client_instance import api_client
 from src.bot.keyboards.transfers import (
     get_transfer_menu_keyboard,
     get_player_listing_keyboard,
@@ -35,7 +35,7 @@ async def transfers_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     if not db_user:
         await update.message.reply_text(
-            "You need to register first. Use /start to register."
+            "You need to register first. Use /join_gully to register."
         )
         return
 
@@ -118,7 +118,7 @@ async def handle_transfer_callback(
 
     if not db_user:
         await query.edit_message_text(
-            "You need to register first. Use /start to register."
+            "You need to register first. Use /join_gully to register."
         )
         return
 
@@ -940,7 +940,7 @@ async def view_transfer_results_command(
 
     if not db_user:
         await update.message.reply_text(
-            "You need to register first. Use /start to register."
+            "You need to register first. Use /join_gully to register."
         )
         return
 

@@ -2,7 +2,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from decimal import Decimal
 
-from src.bot.api_client_instance import api_client
+from src.api.api_client_instance import api_client
 from src.bot.handlers.auction import auction_status_command, quick_bid_callback
 from src.bot.keyboards.auction import get_auction_history_keyboard
 
@@ -53,7 +53,7 @@ async def handle_auction_callback(
 
         if not db_user:
             await query.edit_message_text(
-                "You need to register first. Use /start to register."
+                "You need to register first. Use /join_gully to register."
             )
             return
 

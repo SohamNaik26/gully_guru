@@ -1,143 +1,109 @@
-# API Service Documentation
+# GullyGuru API Documentation
 
 ## Overview
 
-The GullyGuru API is a FastAPI-based backend service that provides all the data and business logic for the fantasy cricket platform. It handles user management, team management, player data, auctions, match data, and scoring.
+The GullyGuru API is organized using a service-oriented architecture. Each service corresponds to a specific domain area of the application (users, gullies, players, etc.) and provides methods for interacting with that domain.
 
-This document provides a high-level overview of the API architecture. For detailed information about specific components, please refer to the following documents:
-- [User Management System](user_management.md#api-system) - For user, group, and gully management APIs
-- [Auction Management System](auction_management.md#api-system) - For auction and bidding APIs
+## API Client Structure
 
-## Architecture
+The API client is organized as follows:
 
-The GullyGuru API follows a modular architecture with clear separation of concerns:
+- `APIClientFactory`: A factory class that creates and manages service clients
+- Service Clients: Domain-specific clients for interacting with different parts of the API
 
-1. **API Layer** - FastAPI endpoints for handling HTTP requests
-2. **Service Layer** - Business logic encapsulated in service classes
-3. **Database Layer** - SQLModel-based models with proper relationships
+### Using the API Client
 
-## Core Components
+```python
+from src.api.api_client_instance import api_client
 
-### 1. User Management
+# User-related operations
+user = await api_client.users.get_user(telegram_id)
+await api_client.users.create_user(user_data)
 
-- **Registration**: Creates new user accounts with initial budget
-- **Authentication**: JWT-based authentication system
-- **Profile Management**: Updates user profiles and tracks budgets
+# Gully-related operations
+gully = await api_client.gullies.get_gully(gully_id)
+participants = await api_client.gullies.get_gully_participants(gully_id)
 
-For detailed information, see [User Management API](user_management.md#api-system).
+# Player-related operations
+players = await api_client.players.get_players(limit=10)
+player = await api_client.players.get_player(player_id)
 
-### 2. Team Management
+# Transfer-related operations
+listings = await api_client.transfers.get_transfer_listings()
+window = await api_client.transfers.get_current_transfer_window()
 
-- **Team Creation**: Allows users to build their fantasy teams
-- **Player Addition/Removal**: Manages team composition with budget constraints
-- **Captain Selection**: Handles captain designation (for bonus points)
-- **Team Validation**: Enforces team composition rules (max players per role, etc.)
+# Fantasy-related operations
+team = await api_client.fantasy.get_user_team(user_id)
+await api_client.fantasy.set_captain(user_id, player_id)
 
-### 3. Player Management
+# Admin operations
+await api_client.admin.assign_admin_role(user_id, gully_id)
+```
 
-- **Player Database**: Stores all player information and statistics
-- **Player Filtering**: Provides search and filter capabilities
-- **Player Statistics**: Tracks and updates player performance data
+## Available Services
 
-### 4. Auction System
+### UserService
 
-- **Auction Rounds**: Manages sequential player auctions
-- **Bidding Process**: Handles bid placement and validation
-- **Auction Results**: Processes auction outcomes and updates teams
-- **Notifications**: Triggers notifications for auction events
+Methods for managing users.
 
-For detailed information, see [Auction Management API](auction_management.md#api-system).
+- `get_user(telegram_id)`: Get a user by Telegram ID
+- `create_user(user_data)`: Create a new user
+- `update_user(telegram_id, user_data)`: Update an existing user
+- `delete_user(telegram_id)`: Delete a user
+- `get_user_by_id(user_id)`: Get a user by database ID
 
-### 5. Match Management
+### GullyService
 
-- **Match Scheduling**: Tracks upcoming and live matches
-- **Live Scores**: Updates match scores and statistics
-- **Player Performance**: Records player performance in matches
-- **Points Calculation**: Calculates fantasy points based on real performance
+Methods for managing gullies (cricket communities).
 
-### 6. Leaderboard System
+- `get_all_gullies()`: Get all gullies
+- `get_gully(gully_id)`: Get a gully by ID
+- `get_gully_by_group(group_id)`: Get a gully by Telegram group ID
+- `create_gully(name, telegram_group_id)`: Create a new gully
+- `get_gully_participants(gully_id, skip, limit)`: Get participants of a gully
+- `get_user_gully_participations(user_id)`: Get all gullies a user participates in
+- `add_user_to_gully(user_id, gully_id, role)`: Add a user to a gully
+- `set_active_gully(user_id, gully_id)`: Set a gully as active for a user
 
-- **Points Tracking**: Aggregates user points
-- **Rankings**: Generates leaderboards
-- **Historical Data**: Maintains historical performance data
+### PlayerService
 
-## Authentication
+Methods for managing cricket players.
 
-The API uses JWT (JSON Web Tokens) for authentication:
+- `get_players(skip, limit, team, player_type, search)`: Get players with optional filtering
+- `get_player(player_id)`: Get a player by ID
+- `get_player_stats(player_id)`: Get statistics for a player
 
-1. User logs in with credentials
-2. API returns a JWT token
-3. Subsequent requests include the token in the Authorization header
-4. API validates the token and identifies the user
+### TransferService
 
-For detailed information, see [User Management Authentication](user_management.md#authentication).
+Methods for managing player transfers.
 
-## Error Handling
+- `get_transfer_listings(status, window_id)`: Get transfer listings
+- `get_transfer_listing(listing_id)`: Get a specific transfer listing
+- `get_user_listings(user_id, status)`: Get listings created by a user
+- `create_transfer_listing(player_id, min_price, transfer_window_id)`: Create a new transfer listing
+- `place_transfer_bid(listing_id, bid_amount)`: Place a bid on a transfer listing
+- `accept_transfer_bid(bid_id)`: Accept a transfer bid
+- `cancel_transfer_listing(listing_id)`: Cancel a transfer listing
+- `get_current_transfer_window()`: Get the current transfer window
 
-The API provides standardized error responses:
+### FantasyService
 
-- 400: Bad Request (invalid input)
-- 401: Unauthorized (authentication required)
-- 403: Forbidden (insufficient permissions)
-- 404: Not Found (resource doesn't exist)
-- 409: Conflict (resource already exists)
-- 422: Unprocessable Entity (invalid data format)
-- 500: Internal Server Error (server-side issue)
+Methods for managing fantasy cricket teams.
 
-Each error response includes:
-- Error code
-- Error message
-- Optional details for debugging
+- `get_user_team(user_id, game_id)`: Get a user's fantasy team
+- `buy_player(user_id, player_id, price)`: Buy a player for a user's team
+- `set_captain(user_id, player_id)`: Set a player as captain
+- `validate_user_team(user_id)`: Validate a user's team
 
-For component-specific error handling, see:
-- [User Management Error Handling](user_management.md#error-handling)
-- [Auction Management Error Handling](auction_management.md#error-handling)
+### AdminService
 
-## Scheduled Tasks
+Methods for administrative operations.
 
-The API includes background tasks for:
-
-- Updating player statistics
-- Processing auction rounds
-- Calculating match points
-- Updating leaderboards
-- Managing user sessions and tokens
-
-For component-specific scheduled tasks, see:
-- [User Management Scheduled Tasks](user_management.md#scheduled-tasks)
-- [Auction Management Scheduled Tasks](auction_management.md#scheduled-tasks)
-
-## API Models
-
-The API uses Pydantic models for request validation and response serialization. These models are organized in the `src/api/schemas/` directory by domain:
-
-### Schema Organization
-
-- **User Schemas** (`src/api/schemas/user.py`): Models for user data, authentication, and profiles
-- **Player Schemas** (`src/api/schemas/player.py`): Models for player data and statistics
-- **Match Schemas** (`src/api/schemas/match.py`): Models for match data and performance
-- **Game Schemas** (`src/api/schemas/game.py`): Models for game mechanics like auctions, bids, and leaderboards
-
-For detailed schema examples, see:
-- [User Management API Schemas](user_management.md#api-schemas)
-- [Auction Management API Schemas](auction_management.md#api-schemas)
-
-### Schema Inheritance
-
-Schemas follow a consistent inheritance pattern:
-
-1. **Base Models**: Define common fields (e.g., `UserBase`, `PlayerBase`)
-2. **Create Models**: Extend base models for creation requests (e.g., `UserCreate`, `PlayerCreate`)
-3. **Response Models**: Extend base models with additional fields for responses (e.g., `UserResponse`, `PlayerResponse`)
-
-## API Endpoints
-
-For a complete list of API endpoints, see:
-- [User Management API Endpoints](user_management.md#api-endpoints)
-- [Auction Management API Endpoints](auction_management.md#api-endpoints)
-
-## Database Models
-
-For detailed information about database models, see:
-- [User Management Database Models](user_management.md#database-models)
-- [Auction Management Database Models](auction_management.md#database-models) 
+- `get_user_permissions(user_id, gully_id)`: Get a user's permissions in a gully
+- `get_gully_admins(gully_id)`: Get all admins of a gully
+- `assign_admin_role(user_id, gully_id)`: Assign admin role to a user
+- `remove_admin_role(user_id, gully_id)`: Remove admin role from a user
+- `assign_admin_permission(user_id, gully_id, permission_type)`: Assign a specific permission to an admin
+- `remove_admin_permission(user_id, gully_id, permission_type)`: Remove a specific permission from an admin
+- `nominate_admin(nominee_id, gully_id)`: Nominate a user as admin
+- `generate_invite_link(gully_id, expiration_hours)`: Generate an invite link for a gully 

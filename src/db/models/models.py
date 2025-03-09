@@ -353,8 +353,6 @@ class Gully(TimeStampedModel, table=True):
         name: Name of the Gully
         telegram_group_id: Telegram group ID associated with this Gully
         status: Current status of the Gully (pending, active, completed)
-        start_date: When the Gully starts
-        end_date: When the Gully ends
     """
 
     __tablename__ = "gullies"
@@ -370,8 +368,6 @@ class Gully(TimeStampedModel, table=True):
         default="pending",
         description="Current status of the Gully (pending, active, completed)",
     )
-    start_date: str = Field(description="When the Gully starts")
-    end_date: str = Field(description="When the Gully ends")
 
     # Relationships
     participants: List["GullyParticipant"] = Relationship(
@@ -391,14 +387,6 @@ class Gully(TimeStampedModel, table=True):
         valid_statuses = ["pending", "active", "completed"]
         if v not in valid_statuses:
             raise ValueError(f"Status must be one of {valid_statuses}")
-        return v
-
-    @field_validator("end_date")
-    @classmethod
-    def validate_end_date(cls, v, values):
-        """Ensure end_date is after start_date."""
-        if "start_date" in values.data and v <= values.data["start_date"]:
-            raise ValueError("End date must be after start date")
         return v
 
 

@@ -2,7 +2,7 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from src.bot.api_client_instance import api_client
+from src.api.api_client_instance import api_client
 from src.bot.handlers import players
 
 logger = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ async def buy_player(
 
     if not db_user:
         await query.edit_message_text(
-            "You don't have an account yet. Use /start to create one."
+            "You don't have an account yet. Use /join_gully to create one."
         )
         return
 

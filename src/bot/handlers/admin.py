@@ -1,15 +1,19 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
+import logging
 
-from src.bot.api_client_instance import api_client
-from src.bot.utils import get_active_gully_id
+from src.api.api_client_instance import api_client
+from src.bot.services import user_service, gully_service, admin_service
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 # Admin panel command
 async def admin_panel_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Handle the /admin_panel command to access auction-related admin functionality."""
+    """Handle the /admin_panel command to access admin functionality."""
     user = update.effective_user
 
     # Check if this is a private chat
@@ -20,125 +24,55 @@ async def admin_panel_command(
         return
 
     # Get user from database
-    db_user = await api_client.get_user(user.id)
+    db_user = await api_client.users.get_user(user.id)
     if not db_user:
         await update.message.reply_text(
-            "You need to register first. Use /start to register."
+            "You need to register first. Use /join_gully to register."
         )
         return
 
-    # Check if user is an admin anywhere
-    is_admin = await api_client.is_admin_anywhere(user.id)
-    if not is_admin:
+    # Get all gullies the user is part of
+    gullies = await gully_service.get_user_gully_participations(db_user["id"])
+    if not gullies:
         await update.message.reply_text(
-            "You don't have admin permissions in any gully. "
-            "You need to be an admin in at least one gully to access admin functionality."
+            "You are not a member of any gullies yet. Use /join_gully to join a gully."
         )
         return
 
-    # Get active gully
-    active_gully_id = await get_active_gully_id(user.id, context)
-    if not active_gully_id:
-        # Show list of gullies where user is admin
-        gullies = await api_client.get_user_games(user.id)
-        admin_gullies = []
+    # Filter to only show gullies where the user is an admin
+    admin_gullies = []
+    for gully in gullies:
+        # Check if user is admin in this gully using AdminService
+        is_admin = await admin_service.check_admin_status(
+            user.id, gully.get("gully_id")
+        )
+        if is_admin:
+            admin_gullies.append(gully)
 
-        for gully in gullies:
-            # Check if user is admin in this gully
-            is_admin_in_gully = await check_admin_status(user.id, gully.get("id"))
-            if is_admin_in_gully:
-                admin_gullies.append(gully)
-
-        if not admin_gullies:
-            await update.message.reply_text(
-                "You don't have admin permissions in any gully. "
-                "You need to be an admin in at least one gully to access admin functionality."
-            )
-            return
-
-        # Create keyboard with admin gullies
-        keyboard = []
-        for gully in admin_gullies:
-            keyboard.append(
-                [
-                    InlineKeyboardButton(
-                        gully.get("name"),
-                        callback_data=f"admin_select_gully_{gully.get('id')}",
-                    )
-                ]
-            )
-
-        reply_markup = InlineKeyboardMarkup(keyboard)
+    if not admin_gullies:
         await update.message.reply_text(
-            "Please select a gully to manage:", reply_markup=reply_markup
+            "You are not an admin in any gullies. Only gully admins can access the admin panel."
         )
         return
 
-    # Check if user is admin in active gully
-    is_admin_in_gully = await check_admin_status(user.id, active_gully_id)
-    if not is_admin_in_gully:
-        await update.message.reply_text(
-            "You don't have admin permissions in the active gully. "
-            "Please select a different gully where you have admin permissions."
+    # Create keyboard with admin gullies
+    keyboard = []
+    for gully in admin_gullies:
+        gully_name = gully.get("gully", {}).get("name", "Unknown Gully")
+        gully_id = gully.get("gully_id")
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    f"🏏 {gully_name}", callback_data=f"admin_select_gully_{gully_id}"
+                )
+            ]
         )
-        return
-
-    # Get gully details
-    gully = await api_client.get_gully(active_gully_id)
-    if not gully:
-        await update.message.reply_text(
-            "Failed to get gully details. Please try again later."
-        )
-        return
-
-    # Create admin panel keyboard
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "Start Round 0", callback_data=f"admin_start_round_0_{active_gully_id}"
-            ),
-            InlineKeyboardButton(
-                "End Round 0", callback_data=f"admin_end_round_0_{active_gully_id}"
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                "Start Round 1", callback_data=f"admin_start_round_1_{active_gully_id}"
-            ),
-            InlineKeyboardButton(
-                "End Round 1", callback_data=f"admin_end_round_1_{active_gully_id}"
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                "Next Player", callback_data=f"admin_next_player_{active_gully_id}"
-            ),
-            InlineKeyboardButton(
-                "End Auction", callback_data=f"admin_end_auction_{active_gully_id}"
-            ),
-        ],
-        [
-            InlineKeyboardButton("Switch Gully", callback_data="admin_switch_gully"),
-            InlineKeyboardButton("Back to Main", callback_data="admin_back_to_main"),
-        ],
-    ]
 
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        f"Admin Panel for {gully.get('name')}\n\n"
-        f"Status: {gully.get('status')}\n"
-        f"Members: {gully.get('member_count', 0)}\n\n"
-        f"Select an action:",
+        "Welcome to the Admin Panel! Please select a gully to manage:",
         reply_markup=reply_markup,
     )
-
-
-async def check_admin_status(user_id: int, gully_id: int) -> bool:
-    """Check if a user is an admin in a specific gully."""
-    try:
-        return await api_client.is_admin_in_gully(user_id, gully_id)
-    except Exception:
-        return False
 
 
 async def create_gully_command(
@@ -164,22 +98,232 @@ async def create_gully_command(
         await update.message.reply_text("Only group administrators can create gullies.")
         return
 
-    # Check if the group is already linked to a gully
-    existing_gully = await api_client.get_gully_by_chat_id(chat.id)
+    # Check if a gully already exists for this group using GullyService
+    existing_gully = await gully_service.get_gully_by_group(chat.id)
     if existing_gully:
         await update.message.reply_text(
-            f"This group is already linked to the gully '{existing_gully.get('name')}'. "
-            f"You cannot create another gully for this group."
+            f"A gully already exists for this group: {existing_gully.get('name')}"
         )
         return
 
-    # Start the gully creation process
+    # Get or create the user using UserService
+    db_user = await api_client.users.get_user(user.id)
+    if not db_user:
+        db_user = await user_service.ensure_user_exists(user)
+        if not db_user:
+            await update.message.reply_text(
+                "❌ Sorry, there was an error with your account. Please try again later."
+            )
+            return
+
+    # Create a default gully name based on the group name
+    default_name = chat.title or f"Gully {chat.id}"
+
+    try:
+        # Create the gully using GullyService
+        new_gully = await gully_service.create_gully(
+            name=default_name, telegram_group_id=chat.id, creator_telegram_id=user.id
+        )
+
+        if new_gully:
+            await update.message.reply_text(
+                f"✅ Successfully created gully '{default_name}' and assigned you as admin!"
+            )
+        else:
+            await update.message.reply_text(
+                "❌ Failed to create the gully. Please try again later."
+            )
+
+    except Exception as e:
+        logger.error(f"Error creating gully: {str(e)}")
+        await update.message.reply_text(
+            "❌ An error occurred while creating the gully. Please try again later."
+        )
+
+
+async def add_member_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    Handle the /add_member command.
+    This command allows admins to add a user to the current gully.
+
+    Usage: /add_member <user_id>
+    """
+    user = update.effective_user
+    chat = update.effective_chat
+
+    # Check if this is a group chat
+    if chat.type not in ["group", "supergroup"]:
+        await update.message.reply_text(
+            "This command can only be used in a group chat."
+        )
+        return
+
+    # Check if the user provided a user ID
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text(
+            "Please provide a valid user ID. Usage: `/add_member <user_id>`",
+            parse_mode="Markdown",
+        )
+        return
+
+    target_user_id = int(context.args[0])
+
+    # Get the current gully using the GullyService
+    gully = await gully_service.get_gully_by_group(chat.id)
+    if not gully:
+        await update.message.reply_text(
+            "This group is not registered as a gully yet. Use /join_gully to create one."
+        )
+        return
+
+    # Get the current user using the UserService
+    db_user = await api_client.users.get_user(user.id)
+    if not db_user:
+        # Create the user if they don't exist
+        db_user = await user_service.ensure_user_exists(user)
+        if not db_user:
+            await update.message.reply_text(
+                "❌ Sorry, there was an error with your account. Please try again later."
+            )
+            return
+
+    # Check admin status using the AdminService
+    is_admin = await admin_service.check_admin_status(db_user["id"], gully["id"])
+    if not is_admin:
+        # Check if user is a Telegram admin
+        chat_member = await context.bot.get_chat_member(chat.id, user.id)
+        is_telegram_admin = chat_member.status in ["creator", "administrator"]
+
+        if is_telegram_admin:
+            # Telegram admin but not gully admin - let's fix that using AdminService
+            result = await admin_service.assign_admin_role(db_user["id"], gully["id"])
+            if result.get("success", False):
+                await update.message.reply_text(
+                    "✅ You've been assigned as a gully admin because you're a Telegram admin."
+                )
+            else:
+                await update.message.reply_text(
+                    f"❌ Only gully admins can add members. Error: {result.get('error', 'Unknown error')}"
+                )
+                return
+        else:
+            await update.message.reply_text("❌ Only gully admins can add members.")
+            return
+
+    # Get the target user using the UserService
+    target_user = None
+    # First try as database ID
+    if str(target_user_id).isdigit():
+        target_user = await api_client.users.get_user_by_id(target_user_id)
+
+    # If not found, try as Telegram ID
+    if not target_user:
+        target_user = await api_client.users.get_user(target_user_id)
+
+    if not target_user:
+        await update.message.reply_text(
+            f"❌ User with ID {target_user_id} not found. Make sure they have interacted with the bot at least once."
+        )
+        return
+
+    # Add the user to the gully using GullyService
+    try:
+        new_participant = await gully_service.add_user_to_gully(
+            user_id=target_user["id"], gully_id=gully["id"], role="member"
+        )
+
+        if new_participant:
+            user_name = target_user.get(
+                "full_name", target_user.get("username", "Unknown")
+            )
+            await update.message.reply_text(
+                f"✅ Successfully added {user_name} to the gully!"
+            )
+        else:
+            await update.message.reply_text(
+                "❌ Failed to add the user to the gully. Please try again later."
+            )
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Error adding user to gully: {error_msg}")
+
+        if "403" in error_msg:
+            await update.message.reply_text(
+                "❌ Permission denied. You may not have the required permissions to add users."
+            )
+        else:
+            await update.message.reply_text(
+                "❌ An error occurred while adding the user. Please try again later."
+            )
+
+
+async def manage_admins_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    Handle the /manage_admins command.
+    This command allows admins to view and manage other admins in the gully.
+    """
+    user = update.effective_user
+    chat = update.effective_chat
+
+    # Check if this is a group chat
+    if chat.type not in ["group", "supergroup"]:
+        await update.message.reply_text(
+            "This command can only be used in a group chat."
+        )
+        return
+
+    # Get the current gully using the GullyService
+    gully = await gully_service.get_gully_by_group(chat.id)
+    if not gully:
+        await update.message.reply_text(
+            "This group is not registered as a gully yet. Use /join_gully to create one."
+        )
+        return
+
+    # Get the current user using the UserService
+    db_user = await api_client.users.get_user(user.id)
+    if not db_user:
+        db_user = await user_service.ensure_user_exists(user)
+        if not db_user:
+            await update.message.reply_text(
+                "❌ Sorry, there was an error with your account. Please try again later."
+            )
+            return
+
+    # Check admin status using the AdminService
+    is_admin = await admin_service.check_admin_status(db_user["id"], gully["id"])
+    if not is_admin:
+        await update.message.reply_text("❌ Only gully admins can manage admins.")
+        return
+
+    # Get all admins for this gully
+    admins = await admin_service.get_gully_admins(gully["id"])
+
+    if not admins:
+        await update.message.reply_text("No admins found for this gully.")
+        return
+
+    # Format the admin list
+    admin_list = "Current Admins:\n\n"
+    for admin in admins:
+        admin_list += f"• {admin.get('full_name', admin.get('username', 'Unknown'))} - {admin.get('role', 'admin')}\n"
+
+    # Create keyboard for admin management
+    keyboard = [
+        [InlineKeyboardButton("Add Admin", callback_data=f"admin_add_{gully['id']}")],
+        [
+            InlineKeyboardButton(
+                "Remove Admin", callback_data=f"admin_remove_{gully['id']}"
+            )
+        ],
+    ]
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "Let's create a new gully! Please provide a name for your gully:"
+        f"{admin_list}\n\nSelect an action to manage admins:",
+        reply_markup=reply_markup,
     )
-
-    # Store the chat ID in user data for the conversation handler
-    context.user_data["creating_gully_for_chat"] = chat.id
-
-    # Note: The actual conversation handler for gully creation would be defined elsewhere
-    # and would handle the rest of the flow

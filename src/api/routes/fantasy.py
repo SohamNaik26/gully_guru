@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, status, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from src.api.dependencies import get_current_user
-from src.bot.utils.auction import validate_team_composition
+from src.bot.services.auction_service import validate_team_composition
 from src.db.models.models import User
 from src.db.models.models import Player
 from src.db.models.models import UserPlayer

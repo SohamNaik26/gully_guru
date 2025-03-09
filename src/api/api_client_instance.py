@@ -4,8 +4,8 @@ This helps avoid circular imports between bot.py and handlers.
 """
 
 import logging
-from src.bot.client import APIClient
-from src.config import settings
+from src.api.client_factory import APIClientFactory
+from src.utils.config import settings
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -16,4 +16,4 @@ if not api_base_url.endswith("/api"):
     api_base_url = f"{api_base_url}/api"
 
 logger.info(f"Initializing API client with base URL: {api_base_url}")
-api_client = APIClient(base_url=api_base_url)
+api_client = APIClientFactory(base_url=api_base_url)

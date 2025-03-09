@@ -1,8 +1,7 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from typing import Dict, Any, List, Optional
 
-from src.bot.api_client_instance import api_client
+from src.api.api_client_instance import api_client
 from src.bot.utils.formatting import format_team_card
 from src.bot.keyboards.team import (
     get_team_management_keyboard,
@@ -15,16 +14,16 @@ async def my_team_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     user = update.effective_user
 
     # Get user from database
-    db_user = await api_client.get_user(user.id)
+    db_user = await api_client.users.get_user(user.id)
 
     if not db_user:
         await update.effective_message.reply_text(
-            "You need to register first. Use /start to register."
+            "You need to register first. Use /join_gully to register."
         )
         return
 
     # Get user's team
-    team = await api_client.get_user_team(db_user["id"])
+    team = await api_client.fantasy.get_user_team(db_user["id"])
 
     if not team or not team.get("players"):
         await update.effective_message.reply_text(
@@ -57,16 +56,16 @@ async def set_captain_command(
     user = update.effective_user
 
     # Get user from database
-    db_user = await api_client.get_user(user.id)
+    db_user = await api_client.users.get_user(user.id)
 
     if not db_user:
         await update.message.reply_text(
-            "You need to register first. Use /start to register."
+            "You need to register first. Use /join_gully to register."
         )
         return
 
     # Get user's team
-    team = await api_client.get_user_team(db_user["id"])
+    team = await api_client.fantasy.get_user_team(db_user["id"])
 
     if not team or not team.get("players"):
         await update.message.reply_text(
@@ -87,11 +86,11 @@ async def transfer_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     user = update.effective_user
 
     # Get user from database
-    db_user = await api_client.get_user(user.id)
+    db_user = await api_client.users.get_user(user.id)
 
     if not db_user:
         await update.message.reply_text(
-            "You need to register first. Use /start to register."
+            "You need to register first. Use /join_gully to register."
         )
         return
 
@@ -120,20 +119,20 @@ async def transfer_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 async def check_team_composition(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Handle the /check_team command to validate team composition."""
+    """Check if the user's team meets the composition requirements."""
     user = update.effective_user
 
     # Get user from database
-    db_user = await api_client.get_user(user.id)
+    db_user = await api_client.users.get_user(user.id)
 
     if not db_user:
-        await update.message.reply_text(
-            "You need to register first. Use /start to register."
+        await update.effective_message.reply_text(
+            "You need to register first. Use /join_gully to register."
         )
         return
 
-    # Validate team composition
-    validation = await api_client.validate_user_team(db_user.get("id"))
+    # Validate user's team
+    validation = await api_client.fantasy.validate_user_team(db_user.get("id"))
 
     # Format message
     if validation.get("valid"):
