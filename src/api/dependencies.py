@@ -5,7 +5,6 @@ from typing import Optional
 
 from src.db.session import get_session
 from src.db.models import User
-from src.services.auth import verify_token
 
 # OAuth2 scheme for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_error=False)
@@ -41,8 +40,6 @@ async def get_current_user(
         default_user = User(
             username="admin",
             full_name="Admin User",
-            email="admin@example.com",
-            is_admin=True,
             telegram_id=12345,
         )
         session.add(default_user)
@@ -50,24 +47,25 @@ async def get_current_user(
         session.refresh(default_user)
         return default_user
 
-    # If token is provided, verify it
-    user_id = verify_token(token)
-    if not user_id:
+    # If token is provided, use a simple token-to-user_id mapping for development
+    # In a real app, you would verify the token properly
+    try:
+        # Simple development implementation - assume token is the user_id
+        user_id = int(token)
+        user = session.get(User, user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        return user
+    except (ValueError, TypeError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-    user = session.get(User, user_id)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    return user
 
 
 # Optional current user dependency (for endpoints that work with or without auth)
@@ -95,27 +93,81 @@ async def get_optional_current_user(
 
 
 # Admin user dependency
-async def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
+async def get_admin_user(
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> User:
     """
-    Get the current user and verify they have admin privileges.
+    Get the current user and verify they have admin privileges in any gully.
     For development, this will always succeed.
 
     Args:
         current_user: The authenticated user
+        session: Database session
 
     Returns:
         User: The authenticated admin user
 
     Raises:
-        HTTPException: If the user is not an admin (disabled for development)
+        HTTPException: If the user is not an admin in any gully
     """
     # For development, always allow admin access
     return current_user
 
     # Uncomment this for production
-    # if not current_user.is_admin:
+    # # Check if user is an admin in any gully
+    # admin_participation = session.exec(
+    #     select(GullyParticipant).where(
+    #         (GullyParticipant.user_id == current_user.id) &
+    #         (GullyParticipant.role == "admin")
+    #     )
+    # ).first()
+    #
+    # if not admin_participation:
     #     raise HTTPException(
     #         status_code=status.HTTP_403_FORBIDDEN,
     #         detail="Admin privileges required",
+    #     )
+    # return current_user
+
+
+# Gully admin user dependency
+async def get_gully_admin_user(
+    gully_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> User:
+    """
+    Get the current user and verify they have admin privileges in the specified gully.
+    For development, this will always succeed.
+
+    Args:
+        gully_id: The ID of the gully to check admin privileges for
+        current_user: The authenticated user
+        session: Database session
+
+    Returns:
+        User: The authenticated admin user
+
+    Raises:
+        HTTPException: If the user is not an admin in the specified gully
+    """
+    # For development, always allow admin access
+    return current_user
+
+    # Uncomment this for production
+    # # Check if user is an admin in the specified gully
+    # admin_participation = session.exec(
+    #     select(GullyParticipant).where(
+    #         (GullyParticipant.user_id == current_user.id) &
+    #         (GullyParticipant.gully_id == gully_id) &
+    #         (GullyParticipant.role.in_(["admin", "owner"]))
+    #     )
+    # ).first()
+    #
+    # if not admin_participation:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_403_FORBIDDEN,
+    #         detail=f"Admin privileges required for gully {gully_id}",
     #     )
     # return current_user

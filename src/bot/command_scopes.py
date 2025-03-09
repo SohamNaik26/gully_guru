@@ -16,8 +16,7 @@ from telegram import (
     BotCommandScopeChatAdministrators,
 )
 from telegram.ext import Application, ApplicationBuilder
-from src.bot.api_client_instance import api_client
-from src.bot.utils.group_management import get_active_group_chats
+from src.bot.utils.gully_management import get_active_group_chats
 from src.bot.utils.user_management import (
     ensure_user_exists,
     ensure_user_in_gully,
@@ -41,7 +40,6 @@ async def setup_command_scopes(application: Application) -> None:
     # Define commands for private chats - based on user journey documentation
     private_commands = [
         # Core user commands
-        BotCommand("start", "Register and start using the bot"),
         BotCommand("help", "Show available commands and how to use them"),
         BotCommand("game_guide", "Learn about the game and cricket terminology"),
         BotCommand("myteam", "View your current team composition"),
@@ -54,7 +52,6 @@ async def setup_command_scopes(application: Application) -> None:
     group_commands = [
         # Auction and game commands
         BotCommand("auction_status", "Check auction status for all rounds"),
-        BotCommand("start", "Register to play"),
         BotCommand("help", "Show available commands"),
     ]
 
@@ -82,8 +79,11 @@ async def setup_command_scopes(application: Application) -> None:
     # Set admin commands for group chat administrators
     active_chats = await get_active_group_chats()
     if active_chats:
-        for chat_id in active_chats:
+        for chat in active_chats:
             try:
+                chat_id = chat["telegram_group_id"]
+                gully_id = chat["id"]
+
                 # Set admin commands for all administrators in this chat
                 await application.bot.set_my_commands(
                     admin_commands,
@@ -100,16 +100,28 @@ async def setup_command_scopes(application: Application) -> None:
                     )
 
                     if group_owner:
-                        # Get the gully for this chat
-                        gully = await api_client.get_gully_by_chat_id(chat_id)
-                        if gully:
-                            # Ensure the owner is registered in the gully and as an admin
-                            await ensure_user_exists(group_owner.user)
-                            await ensure_user_in_gully(group_owner.user.id, gully["id"])
-                            await assign_admin_role(group_owner.user.id, gully["id"])
-                            logger.info(
-                                f"Group owner {group_owner.user.id} assigned as admin in gully {gully['id']}"
+                        # Ensure the owner is registered in the system
+                        db_user = await ensure_user_exists(group_owner.user)
+                        if db_user:
+                            # Ensure the owner is in the gully and set as admin
+                            participant = await ensure_user_in_gully(
+                                db_user["id"], gully_id
                             )
+                            if participant:
+                                # Set the user as admin
+                                result = await assign_admin_role(
+                                    db_user["id"], gully_id
+                                )
+                                if result:
+                                    logger.info(
+                                        f"Group owner {group_owner.user.id} assigned as admin "
+                                        f"in gully {gully_id}"
+                                    )
+                                else:
+                                    logger.error(
+                                        f"Failed to assign admin role to group owner "
+                                        f"{group_owner.user.id} in gully {gully_id}"
+                                    )
                 except Exception as e:
                     logger.error(f"Error setting up group owner as admin: {e}")
             except Exception as e:

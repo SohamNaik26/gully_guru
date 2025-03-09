@@ -21,8 +21,8 @@ from src.db.models.models import (
     TransferWindow,
     TransferListing,
     TransferBid,
-    MatchPoll,
-    PollVote,
+    
+    
     # Gully models
     Gully,
     GullyParticipant,
@@ -57,8 +57,8 @@ all_models = [
     TransferWindow,
     TransferListing,
     TransferBid,
-    MatchPoll,
-    PollVote,
+    
+    
     Gully,
     GullyParticipant,
     AdminPermission,

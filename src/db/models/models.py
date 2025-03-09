@@ -53,10 +53,6 @@ class User(TimeStampedModel, table=True):
     telegram_id: int = Field(unique=True, index=True, sa_type=BigInteger)
     username: str = Field(index=True)
     full_name: str
-    budget: Decimal = Field(default=100.0)
-    total_points: float = Field(default=0.0)
-    is_admin: bool = Field(default=False)
-    active_gully_id: Optional[int] = Field(default=None, foreign_key="gullies.id")
 
     # Relationships
     owned_players: List["UserPlayer"] = Relationship(back_populates="user")
@@ -64,10 +60,6 @@ class User(TimeStampedModel, table=True):
     transfer_listings: List["TransferListing"] = Relationship(back_populates="seller")
     transfer_bids: List["TransferBid"] = Relationship(back_populates="bidder")
     gully_participations: List["GullyParticipant"] = Relationship(back_populates="user")
-    active_gully: Optional["Gully"] = Relationship()
-
-    # Add field to track free bids used in current window
-    free_bids_used: int = Field(default=0)
 
 
 # Player Models
@@ -236,7 +228,6 @@ class Match(TimeStampedModel, table=True):
 
     # Relationships
     performances: List["MatchPerformance"] = Relationship(back_populates="match")
-    polls: List["MatchPoll"] = Relationship(back_populates="match")
 
 
 class MatchPerformance(TimeStampedModel, table=True):
@@ -350,40 +341,6 @@ class TransferBid(TimeStampedModel, table=True):
     listing: TransferListing = Relationship(back_populates="bids")
 
 
-class MatchPoll(TimeStampedModel, table=True):
-    """Polls for predicting match outcomes."""
-
-    __tablename__ = "match_polls"
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    match_id: int = Field(foreign_key="matches.id")
-    question: str
-    option1: str
-    option2: str
-    correct_option: Optional[int] = Field(default=None)  # 1 or 2
-    status: str = Field(default="open")  # open, closed
-
-    # Relationships
-    match: Match = Relationship(back_populates="polls")
-    votes: List["PollVote"] = Relationship(back_populates="poll")
-
-
-class PollVote(TimeStampedModel, table=True):
-    """User votes on match polls."""
-
-    __tablename__ = "poll_votes"
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="users.id")
-    poll_id: int = Field(foreign_key="match_polls.id")
-    selected_option: int  # 1 or 2
-    points_earned: Optional[float] = Field(default=None)
-
-    # Relationships
-    poll: MatchPoll = Relationship(back_populates="votes")
-    user: User = Relationship()
-
-
 class Gully(TimeStampedModel, table=True):
     """
     Model for fantasy cricket leagues (called 'Gullies').
@@ -460,6 +417,9 @@ class GullyParticipant(TimeStampedModel, table=True):
         budget: Available budget for this Gully
         points: Total points earned in this Gully
         role: User's role in this Gully (member, admin, owner)
+        is_active: Whether this is the user's currently active gully
+        last_active_at: When the user last interacted with this gully
+        registration_complete: Whether the user has completed full registration
     """
 
     __tablename__ = "gully_participants"
@@ -471,11 +431,22 @@ class GullyParticipant(TimeStampedModel, table=True):
     user_id: int = Field(foreign_key="users.id", description="Reference to the User")
     team_name: str = Field(description="Name of the user's team in this Gully")
     budget: Decimal = Field(
-        default=100.0, description="Available budget for this Gully"
+        default=120.0, description="Available budget for this Gully"
     )
     points: int = Field(default=0, description="Total points earned in this Gully")
     role: str = Field(
         default="member", description="User's role in this Gully (member, admin, owner)"
+    )
+    is_active: bool = Field(
+        default=False, description="Whether this is the user's currently active gully"
+    )
+    last_active_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.DateTime(timezone=True),
+        description="When the user last interacted with this gully",
+    )
+    registration_complete: bool = Field(
+        default=False, description="Whether the user has completed full registration"
     )
 
     # Relationships

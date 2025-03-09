@@ -40,7 +40,7 @@ Detailed information about API request and response schemas.
 ### [Game Plan](gameplan.md)
 High-level overview of the GullyGuru fantasy cricket game mechanics.
 
-### [Group Management](group_management.md)
+### [Gully Management](gully_management.md)
 Conceptual overview of the gully management system.
 
 ## Implementation Approach

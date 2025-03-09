@@ -10,6 +10,3 @@ SELECT
     *
 FROM 
     public.users
-
-
-

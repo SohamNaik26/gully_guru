@@ -2,7 +2,6 @@ import logging
 import httpx
 from typing import Dict, Any, Optional, List
 from decimal import Decimal
-from datetime import datetime
 
 from src.utils.config import settings
 
@@ -73,6 +72,21 @@ class APIClient:
         except Exception as e:
             logger.error(f"Error updating user: {e}")
             return None
+
+    async def delete_user(self, telegram_id: int) -> bool:
+        """Delete a user by Telegram ID."""
+        try:
+            response = await self.client.delete(
+                f"{self.base_url}/users/telegram/{telegram_id}"
+            )
+            if response.status_code == 204:
+                logger.info(f"User with telegram_id {telegram_id} deleted successfully")
+                return True
+            logger.error(f"Error deleting user: {response.text}")
+            return False
+        except Exception as e:
+            logger.error(f"Error deleting user: {e}")
+            return False
 
     # Player endpoints
     async def get_players(
@@ -476,24 +490,27 @@ class APIClient:
         self,
         name: str,
         telegram_group_id: int,
-        start_date: datetime,
-        end_date: datetime,
-    ) -> Dict[str, Any]:
-        """Create a new gully instance."""
+        start_date: str,
+        end_date: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Create a new gully."""
         try:
             response = await self.client.post(
-                f"{self.base_url}/gullies",
-                json={
+                f"{self.base_url}/gullies/",
+                params={
                     "name": name,
                     "telegram_group_id": telegram_group_id,
-                    "start_date": start_date.isoformat(),
-                    "end_date": end_date.isoformat(),
+                    "start_date": start_date,
+                    "end_date": end_date,
                 },
             )
-            return response.json()
+            if response.status_code == 200:
+                return response.json()
+            logger.error(f"Error creating gully: {response.text}")
+            return None
         except Exception as e:
             logger.error(f"Error creating gully: {e}")
-            return {"success": False, "error": str(e)}
+            return None
 
     async def get_gully_by_group(self, group_id: int) -> Dict[str, Any]:
         """Get a gully by Telegram group ID."""
@@ -506,9 +523,17 @@ class APIClient:
             logger.error(f"Error getting gully by group: {e}")
             return None
 
-    async def get_gully_by_chat_id(self, chat_id: int) -> Dict[str, Any]:
-        """Get a gully by Telegram chat ID (alias for get_gully_by_group)."""
-        return await self.get_gully_by_group(chat_id)
+    async def get_gully_by_chat_id(self, chat_id: int) -> Optional[Dict[str, Any]]:
+        """Get a gully by its Telegram chat ID."""
+        try:
+            response = await self.client.get(f"{self.base_url}/gullies/group/{chat_id}")
+            if response.status_code == 200:
+                return response.json()
+            logger.error(f"Error getting gully by chat ID {chat_id}: {response.text}")
+            return None
+        except Exception as e:
+            logger.error(f"Error getting gully by chat ID {chat_id}: {e}")
+            return None
 
     async def join_game(
         self, game_id: int, user_id: int, team_name: str
@@ -608,28 +633,21 @@ class APIClient:
 
     async def assign_admin_role(self, user_id: int, gully_id: int) -> Dict[str, Any]:
         """Assign admin role to a user in a gully."""
-        try:
-            # First check if the user is already an admin
-            is_admin = await self.is_admin_in_gully(user_id, gully_id)
-            if is_admin:
-                logger.info(f"User {user_id} is already an admin in gully {gully_id}")
-                return {"success": True, "message": "User is already an admin"}
+        # Get the user's participation in the gully
+        participation = await self.get_user_gully_participation(user_id, gully_id)
+        if not participation:
+            # User is not in the gully yet, add them first
+            add_result = await self.add_user_to_gully(user_id, gully_id)
+            if not add_result.get("success"):
+                return {"success": False, "error": add_result.get("error")}
+            participation = add_result.get("participant")
 
-            # If not, assign the admin role
-            url = f"{self.base_url}/admin/roles/{gully_id}/{user_id}"
-            response = await self.client.post(url)
+        # Update the role to admin
+        updated = await self.update_gully_participant_role(participation["id"], "admin")
+        if not updated:
+            return {"success": False, "error": "Failed to update role"}
 
-            if response.status_code == 200:
-                logger.info(
-                    f"Successfully assigned admin role to user {user_id} in gully {gully_id}"
-                )
-                return response.json()
-            else:
-                logger.error(f"Error assigning admin role: {response.text}")
-                return {"success": False, "error": response.text}
-        except Exception as e:
-            logger.error(f"Error assigning admin role: {e}")
-            return {"success": False, "error": str(e)}
+        return {"success": True, "participant": updated}
 
     async def remove_admin_role(self, user_id: int, gully_id: int) -> Dict[str, Any]:
         """Remove admin role from a user in a gully."""
@@ -690,21 +708,10 @@ class APIClient:
             logger.error(f"Error checking admin status: {str(e)}")
             return False
 
-    async def is_admin_in_gully(self, user_id: int, gully_id: int) -> bool:
-        """Check if a user is an admin in a specific gully."""
-        try:
-            url = f"{self.base_url}/admin/is-admin-in-gully/{gully_id}/{user_id}"
-            response = await self.client.get(url)
-
-            if response.status_code == 200:
-                result = response.json()
-                return result.get("is_admin", False)
-            else:
-                logger.error(f"Error checking admin status: {response.text}")
-                return False
-        except Exception as e:
-            logger.error(f"Error checking admin status in gully: {str(e)}")
-            return False
+    async def is_user_in_gully(self, user_id: int, gully_id: int) -> bool:
+        """Check if a user is a member of a specific gully."""
+        participation = await self.get_user_gully_participation(user_id, gully_id)
+        return participation is not None
 
     async def start_auction_round_zero(self, gully_id: int) -> Optional[Dict[str, Any]]:
         """Start Round 0 (initial squad submission) for a gully."""
@@ -792,34 +799,8 @@ class APIClient:
             logger.error(f"Error getting gully participant: {e}")
             return None
 
-    async def is_admin(self, user_id: int) -> bool:
-        """Check if a user is an admin in any gully."""
-        return await self.is_admin_anywhere(user_id)
-
-    async def add_user_to_gully(self, user_id: int, gully_id: int) -> Dict[str, Any]:
-        """Add a user to a gully with a default team name."""
-        try:
-            # First check if the user exists, if not create them
-            user = await self.get_user(user_id)
-            if not user:
-                # Create a minimal user record
-                user_data = {
-                    "telegram_id": user_id,
-                    "name": f"User_{user_id}",  # Temporary name
-                }
-                await self.create_user(user_data)
-
-            # Generate a default team name
-            default_team_name = f"Team_{user_id}"
-
-            # Join the gully (game)
-            return await self.join_game(gully_id, user_id, default_team_name)
-        except Exception as e:
-            logger.error(f"Error adding user to gully: {e}")
-            return {"success": False, "error": str(e)}
-
     async def get_all_gullies(self) -> List[Dict[str, Any]]:
-        """Get all active gullies."""
+        """Get all gullies."""
         try:
             response = await self.client.get(f"{self.base_url}/gullies/")
             if response.status_code == 200:
@@ -828,6 +809,82 @@ class APIClient:
             return []
         except Exception as e:
             logger.error(f"Error getting all gullies: {e}")
+            return []
+
+    async def get_gully(self, gully_id: int) -> Optional[Dict[str, Any]]:
+        """Get a gully by ID."""
+        try:
+            response = await self.client.get(f"{self.base_url}/gullies/{gully_id}")
+            if response.status_code == 200:
+                return response.json()
+            logger.error(f"Error getting gully {gully_id}: {response.text}")
+            return None
+        except Exception as e:
+            logger.error(f"Error getting gully {gully_id}: {e}")
+            return None
+
+    async def get_user_gully_participations(self, user_id: int) -> List[Dict[str, Any]]:
+        """Get all gullies a user is participating in."""
+        try:
+            response = await self.client.get(
+                f"{self.base_url}/gullies/user-gullies/{user_id}"
+            )
+            if response.status_code == 200:
+                return response.json()
+            logger.error(f"Error getting user gully participations: {response.text}")
+            return []
+        except Exception as e:
+            logger.error(f"Error getting user gully participations: {e}")
+            return []
+
+    async def add_user_to_gully(
+        self, user_id: int, gully_id: int, role: str = "member"
+    ) -> Optional[Dict[str, Any]]:
+        """Add a user to a gully."""
+        try:
+            response = await self.client.post(
+                f"{self.base_url}/gullies/participants/{gully_id}/{user_id}",
+                params={"role": role},
+            )
+            if response.status_code in [200, 201]:
+                return response.json()
+            logger.error(f"Error adding user to gully: {response.text}")
+            return None
+        except Exception as e:
+            logger.error(f"Error adding user to gully: {e}")
+            return None
+
+    async def set_active_gully(
+        self, user_id: int, gully_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Set a gully as the active gully for a user."""
+        try:
+            response = await self.client.put(
+                f"{self.base_url}/gullies/participants/{gully_id}/{user_id}/activate"
+            )
+            if response.status_code == 200:
+                return response.json()
+            logger.error(f"Error setting active gully: {response.text}")
+            return None
+        except Exception as e:
+            logger.error(f"Error setting active gully: {e}")
+            return None
+
+    async def get_gully_participants(
+        self, gully_id: int, skip: int = 0, limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """Get all participants in a gully."""
+        try:
+            response = await self.client.get(
+                f"{self.base_url}/gullies/participants/{gully_id}",
+                params={"skip": skip, "limit": limit},
+            )
+            if response.status_code == 200:
+                return response.json()
+            logger.error(f"Error getting gully participants: {response.text}")
+            return []
+        except Exception as e:
+            logger.error(f"Error getting gully participants: {e}")
             return []
 
     async def _make_request(
@@ -861,3 +918,73 @@ class APIClient:
         except Exception as e:
             logger.error(f"Error making API request: {e}")
             return {"success": False, "error": str(e)}
+
+    # GullyParticipant endpoints
+    async def get_user_gully_participation(
+        self, user_id: int, gully_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Get a user's participation in a specific gully."""
+        try:
+            # Get all participations for the user
+            participations = await self.get_user_gully_participations(user_id)
+            if not participations:
+                return None
+
+            # Find the one for this gully
+            for participation in participations:
+                if participation.get("gully_id") == gully_id:
+                    return participation
+
+            return None
+        except Exception as e:
+            logger.error(f"Error getting user gully participation: {e}")
+            return None
+
+    async def create_gully_participant(
+        self, participant_data: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Create a new gully participant."""
+        try:
+            response = await self.client.post(
+                f"{self.base_url}/users/gully-participants", json=participant_data
+            )
+            if response.status_code == 201:
+                return response.json()
+            logger.error(f"Error creating gully participant: {response.text}")
+            return None
+        except Exception as e:
+            logger.error(f"Error creating gully participant: {e}")
+            return None
+
+    async def complete_registration(
+        self, participant_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Mark a user's registration as complete for a gully."""
+        try:
+            response = await self.client.put(
+                f"{self.base_url}/users/gully-participants/{participant_id}/complete-registration"
+            )
+            if response.status_code == 200:
+                return response.json()
+            logger.error(f"Error completing registration: {response.text}")
+            return None
+        except Exception as e:
+            logger.error(f"Error completing registration: {e}")
+            return None
+
+    async def update_gully_participant_role(
+        self, participant_id: int, role: str
+    ) -> Optional[Dict[str, Any]]:
+        """Update a gully participant's role."""
+        try:
+            response = await self.client.put(
+                f"{self.base_url}/users/gully-participants/{participant_id}/role",
+                json={"role": role},
+            )
+            if response.status_code == 200:
+                return response.json()
+            logger.error(f"Error updating gully participant role: {response.text}")
+            return None
+        except Exception as e:
+            logger.error(f"Error updating gully participant role: {e}")
+            return None

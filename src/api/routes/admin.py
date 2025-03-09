@@ -1,143 +1,135 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import Session
-from typing import Dict, Any
+from sqlmodel import Session, select
+from typing import Dict, List, Any
 
 from src.db.session import get_session
-from src.db.models import User
+from src.db.models import User, GullyParticipant
 from src.api.dependencies import get_current_user
-from src.services import admin as admin_service
+import logging
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-@router.post("/roles/{gully_id}/{user_id}")
 async def assign_admin_role(
+    user_id: int, gully_id: int, session: Session
+) -> Dict[str, Any]:
+    """
+    Assign admin role to a user in a specific gully.
+
+    Args:
+        user_id: The user's ID
+        gully_id: The gully ID
+        session: Database session
+
+    Returns:
+        Result of the operation
+    """
+    # Find the user's participation in this gully
+    participant = session.exec(
+        select(GullyParticipant).where(
+            (GullyParticipant.user_id == user_id)
+            & (GullyParticipant.gully_id == gully_id)
+        )
+    ).first()
+
+    if not participant:
+        return {
+            "success": False,
+            "error": f"User {user_id} is not a participant in gully {gully_id}",
+        }
+
+    # Update the role to admin
+    participant.role = "admin"
+    session.add(participant)
+    session.commit()
+    session.refresh(participant)
+
+    return {
+        "success": True,
+        "message": f"User {user_id} is now an admin in gully {gully_id}",
+    }
+
+
+async def get_gully_admins(gully_id: int, session: Session) -> List[Dict[str, Any]]:
+    """
+    Get all admins for a specific gully.
+
+    Args:
+        gully_id: The ID of the gully
+        session: Database session
+
+    Returns:
+        List of admin users
+    """
+    # Find all participants with admin role in this gully
+    admin_participants = session.exec(
+        select(GullyParticipant).where(
+            (GullyParticipant.gully_id == gully_id)
+            & (GullyParticipant.role.in_(["admin", "owner"]))
+        )
+    ).all()
+
+    # Get the user details for each admin
+    admins = []
+    for participant in admin_participants:
+        user = session.get(User, participant.user_id)
+        if user:
+            admins.append(
+                {
+                    "user_id": user.id,
+                    "telegram_id": user.telegram_id,
+                    "username": user.username,
+                    "full_name": user.full_name,
+                    "role": participant.role,
+                }
+            )
+
+    return admins
+
+
+@router.post("/roles/{gully_id}/{user_id}")
+async def assign_admin_role_endpoint(
     gully_id: int,
     user_id: int,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
     """Assign admin role to a user in a gully."""
-    return await admin_service.assign_admin_role(
-        session, current_user.id, user_id, gully_id
-    )
+    # Check if current user is an admin in this gully
+    admins = await get_gully_admins(gully_id, session)
+    is_admin = any(admin["user_id"] == current_user.id for admin in admins)
 
-
-@router.delete("/roles/{gully_id}/{user_id}")
-async def remove_admin_role(
-    gully_id: int,
-    user_id: int,
-    session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    """Remove admin role from a user in a gully."""
-    return await admin_service.remove_admin_role(
-        session, current_user.id, user_id, gully_id
-    )
-
-
-@router.post("/permissions/{gully_id}/{user_id}/{permission_type}")
-async def assign_admin_permission(
-    gully_id: int,
-    user_id: int,
-    permission_type: str,
-    session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    """Assign a specific admin permission to a user."""
-    return await admin_service.assign_admin_permission(
-        session, current_user.id, user_id, gully_id, permission_type
-    )
-
-
-@router.delete("/permissions/{gully_id}/{user_id}/{permission_type}")
-async def remove_admin_permission(
-    gully_id: int,
-    user_id: int,
-    permission_type: str,
-    session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    """Remove a specific admin permission from a user."""
-    return await admin_service.remove_admin_permission(
-        session, current_user.id, user_id, gully_id, permission_type
-    )
-
-
-@router.get("/permissions/{gully_id}/{user_id}")
-async def get_user_permissions(
-    gully_id: int,
-    user_id: int,
-    session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    """Get all admin permissions for a user in a gully."""
-    # Check if current user has permission to view this
-    has_permission = await admin_service.check_admin_permission(
-        session, current_user.id, gully_id, "user_management"
-    )
-
-    if not has_permission and current_user.id != user_id:
+    if not is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to view this user's permissions",
+            detail="Only admins can assign admin roles",
         )
 
-    return await admin_service.get_admin_permissions(session, user_id, gully_id)
+    return await assign_admin_role(user_id, gully_id, session)
 
 
 @router.get("/admins/{gully_id}")
-async def get_gully_admins(
+async def get_gully_admins_endpoint(
     gully_id: int,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
     """Get all admins for a gully."""
     # Check if current user is in this gully
-    has_permission = await admin_service.check_admin_permission(
-        session, current_user.id, gully_id
-    )
+    participant = session.exec(
+        select(GullyParticipant).where(
+            (GullyParticipant.user_id == current_user.id)
+            & (GullyParticipant.gully_id == gully_id)
+        )
+    ).first()
 
-    if not has_permission:
+    if not participant:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have permission to view this gully's admins",
+            detail="You are not a participant in this gully",
         )
 
-    return await admin_service.get_gully_admins(session, gully_id)
-
-
-@router.post("/nominate/{gully_id}/{user_id}")
-async def nominate_admin(
-    gully_id: int,
-    user_id: int,
-    session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    """Nominate a user to become an admin."""
-    return await admin_service.nominate_admin(
-        session, current_user.id, user_id, gully_id
-    )
-
-
-@router.post("/invite-link/{gully_id}")
-async def generate_invite_link(
-    gully_id: int,
-    expiration_hours: int = 24,
-    session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    """Generate an invite link for a gully."""
-    return await admin_service.generate_invite_link(
-        session, current_user.id, gully_id, expiration_hours
-    )
-
-
-@router.get("/is-admin-anywhere/{user_id}", response_model=Dict[str, bool])
-async def check_admin_anywhere(
-    user_id: int,
-    session: Session = Depends(get_session),
-):
-    """Check if a user is an admin in any gully."""
-    is_admin = await admin_service.is_admin_anywhere(session, user_id)
-    return {"is_admin": is_admin}
+    return await get_gully_admins(gully_id, session)

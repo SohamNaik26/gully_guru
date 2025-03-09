@@ -8,7 +8,11 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
 from src.bot.api_client_instance import api_client
-from src.bot.utils.user_management import ensure_user_exists
+from src.bot.utils.user_management import (
+    ensure_user_exists,
+    ensure_user_in_gully,
+    get_active_gully,
+)
 
 # Conversation states
 # NAME_INPUT = 1  # No longer needed
@@ -32,7 +36,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     if chat_type in ["group", "supergroup"]:
         return await handle_group_start(update, context)
 
-    # Handle private chat scenario (existing flow)
+    # Handle private chat scenario
     user = update.effective_user
 
     # Check if this is a deep link from a group invitation
@@ -58,16 +62,74 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     # Check if this is a new user (just created) or an existing user
     is_new_user = db_user.get("created_at") == db_user.get("updated_at")
 
-    if is_new_user:
-        # Welcome message for new users
-        greeting = f"Hello {db_user.get('full_name')}! Welcome to GullyGuru. "
-        if from_group:
-            greeting = f"Hello {db_user.get('full_name')}! Welcome to GullyGuru. "
+    # If from a group, check if user is already in the gully
+    if from_group:
+        gully = await api_client.get_gully_by_chat_id(from_group)
+        if gully:
+            gully_id = gully.get("id")
+            gully_name = gully.get("name")
 
+            # Check if user is already in the gully
+            participant = await api_client.get_user_gully_participation(
+                db_user["id"], gully_id
+            )
+
+            if participant:
+                # User is already in the gully
+                await update.message.reply_text(
+                    f"You're already registered in *{gully_name}* as *{participant.get('team_name')}*.",
+                    parse_mode="Markdown",
+                )
+
+                # Set this as the user's active gully if it's not already
+                if not participant.get("is_active"):
+                    await api_client.set_active_gully(participant["id"])
+                    await update.message.reply_text(
+                        "I've set this as your active gully."
+                    )
+            else:
+                # User is not in the gully, ask if they want to join
+                keyboard = [
+                    [
+                        InlineKeyboardButton(
+                            "Yes, join this gully",
+                            callback_data=f"join_gully_{gully_id}",
+                        ),
+                        InlineKeyboardButton(
+                            "No, thanks", callback_data="decline_gully"
+                        ),
+                    ]
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+
+                await update.message.reply_text(
+                    f"You're not yet a participant in the *{gully_name}* gully. Would you like to join?",
+                    parse_mode="Markdown",
+                    reply_markup=reply_markup,
+                )
+                return ConversationHandler.END
+
+    # Welcome message
+    if is_new_user:
+        greeting = f"Hello {db_user.get('full_name')}! Welcome to GullyGuru. "
         await update.message.reply_text(
             f"{greeting}"
             "You are now registered as a player! 🎉\n\n"
             "You can now participate in cricket fantasy gaming with GullyGuru."
+        )
+    else:
+        # Welcome back message for existing users
+        await update.message.reply_text(
+            f"Welcome back, {db_user.get('full_name')}! 👋\n\n"
+            "You're already registered with GullyGuru."
+        )
+
+    # Get active gully
+    active_gully = await get_active_gully(db_user["id"])
+    if active_gully:
+        await update.message.reply_text(
+            f"Your active gully is: *{active_gully.get('name')}*",
+            parse_mode="Markdown",
         )
 
         # Check if user has a squad and prompt accordingly
@@ -91,125 +153,151 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(
-                "Ready to build your team?", reply_markup=reply_markup
+                "Click the button below to start:", reply_markup=reply_markup
             )
-
-            # If this was initiated from a group, send a confirmation to the group
-            if from_group:
-                try:
-                    await context.bot.send_message(
-                        from_group,
-                        f"🎉 @{user.username or db_user.get('full_name')} has successfully registered with GullyGuru!\n"
-                        "They're now setting up their initial squad.",
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"Failed to send confirmation to group {from_group}: {e}"
-                    )
     else:
-        # Existing user
-        welcome_message = (
-            f"Welcome back, {db_user.get('full_name')}! What would you like to do?\n\n"
+        await update.message.reply_text(
+            "You don't have an active gully set. Join a group to participate in a gully."
         )
 
-        # Add group context if applicable
-        if from_group:
-            welcome_message = (
-                f"Welcome back, {db_user.get('full_name')}! "
-                f"I see you're joining us from a group chat.\n\n"
-            )
-
-        welcome_message += "Use /help to see available commands."
-        await update.message.reply_text(welcome_message)
-
-    # Store the chat_id in user_data for context
-    context.user_data["from_group"] = from_group
     return ConversationHandler.END
 
 
 async def handle_group_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """
-    Handle the /start command when used in a group chat.
-
-    Two modes:
-    1. When used without mentioning a specific user: Checks all members and prompts unregistered users
-    2. When a user initiates it themselves: Sends a welcome message and directs them to private chat
+    Handle the /start command in a group chat.
+    This creates or retrieves the gully for the group and registers all members.
     """
-    chat_id = update.effective_chat.id
+    chat = update.effective_chat
     user = update.effective_user
+    chat_id = chat.id
 
-    # Check if this is a user initiating their own registration
-    if update.message.from_user.id == user.id:
-        # User is starting their own registration from the group
-        deep_link = f"https://t.me/{context.bot.username}?start=from_group_{chat_id}"
+    # Log the start command in a group
+    logger.info(
+        f"Start command received in group {chat.title} (ID: {chat_id}) from user {user.id}"
+    )
 
-        # Ensure user exists in database
+    # Check if a gully exists for this group
+    gully = await api_client.get_gully_by_chat_id(chat_id)
+
+    if not gully:
+        # No gully exists, create one
+        await update.message.reply_text(
+            "🏏 Welcome to GullyGuru! I'll help you set up a new fantasy cricket league for this group."
+        )
+
+        # Create a new gully with default settings
+        gully_name = chat.title or f"Gully_{chat_id}"
+        try:
+            # Use current date + 6 months for end date (placeholder)
+            from datetime import datetime, timedelta
+
+            start_date = datetime.now().strftime("%Y-%m-%d")
+            end_date = (datetime.now() + timedelta(days=180)).strftime("%Y-%m-%d")
+
+            gully = await api_client.create_gully(
+                name=gully_name,
+                telegram_group_id=chat_id,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+            if not gully or not gully.get("id"):
+                await update.message.reply_text(
+                    "❌ Sorry, I couldn't create a new gully. Please try again later."
+                )
+                return ConversationHandler.END
+
+            await update.message.reply_text(
+                f"✅ Successfully created a new gully: *{gully_name}*",
+                parse_mode="Markdown",
+            )
+
+            # Make the command sender an admin
+            db_user = await ensure_user_exists(user)
+            if db_user:
+                # Add user to gully and make them an admin
+                participant = await ensure_user_in_gully(db_user["id"], gully["id"])
+                if participant:
+                    await api_client.update_gully_participant_role(
+                        participant["id"], "admin"
+                    )
+                    logger.info(f"Made user {user.id} an admin of gully {gully['id']}")
+
+                    # Set this as the user's active gully
+                    await api_client.set_active_gully(participant["id"])
+
+        except Exception as e:
+            logger.error(f"Error creating gully: {e}")
+            await update.message.reply_text(
+                "❌ Sorry, there was an error setting up the gully. Please try again later."
+            )
+            return ConversationHandler.END
+    else:
+        # Gully exists, welcome the user
+        await update.message.reply_text(
+            f"🏏 Welcome to the *{gully.get('name')}* fantasy cricket league!",
+            parse_mode="Markdown",
+        )
+
+        # Auto-register the user who triggered the command
         db_user = await ensure_user_exists(user)
         if not db_user:
-            # User creation failed
-            logger.error(f"Failed to create user {user.id} in database")
             await update.message.reply_text(
-                "Sorry, there was an error registering you. Please try again later."
+                "❌ Sorry, there was an error registering your account. Please try again later."
             )
             return ConversationHandler.END
 
-        # Check if this is a new user (just created) or an existing user
-        is_new_user = db_user.get("created_at") == db_user.get("updated_at")
+        # Check if user is already part of the gully
+        participant = await api_client.get_user_gully_participation(
+            db_user["id"], gully["id"]
+        )
 
-        if is_new_user:
-            # Send a welcome message in the group
+        if participant:
+            # User is already in the gully
             await update.message.reply_text(
-                f"👋 Welcome to GullyGuru, {db_user.get('full_name')}!\n\n"
-                "You are now registered as a player! 🎉\n\n"
-                "I've sent you a private message to continue setting up your squad.",
-                reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("Open Private Chat", url=deep_link)]]
-                ),
+                f"You're already registered in this gully as *{participant.get('team_name')}*.",
+                parse_mode="Markdown",
             )
 
-            # Try to send a private message to the user
-            try:
-                # Check if user has a squad and prompt accordingly
-                squad = await api_client.get_user_squad_submission(user.id)
-                if not squad:
-                    await context.bot.send_message(
-                        user.id,
-                        f"Hello {db_user.get('full_name')}! 👋\n\n"
-                        "Welcome to GullyGuru, the cricket fantasy gaming platform!\n\n"
-                        "You're now registered and ready to start playing.\n\n"
-                        "📋 *Next Step: Submit Your Initial Squad*\n\n"
-                        "To participate in the game, you need to select your initial team of 18 players (Round 0).\n\n"
-                        "Use the /submit\\_squad command to start building your team.",
-                        parse_mode="MarkdownV2",
-                    )
-            except Exception as e:
-                logger.error(f"Failed to send private message to user {user.id}: {e}")
-                # Inform the user they need to start a private chat
-                await update.message.reply_text(
-                    "I couldn't send you a private message. Please start a private chat with me first.",
-                    reply_markup=InlineKeyboardMarkup(
-                        [[InlineKeyboardButton("Start Private Chat", url=deep_link)]]
-                    ),
-                )
+            # Set this as the user's active gully if it's not already
+            if not participant.get("is_active"):
+                await api_client.set_active_gully(participant["id"])
+                await update.message.reply_text("I've set this as your active gully.")
         else:
-            # Existing user
+            # User is not in the gully, ask if they want to join
+            keyboard = [
+                [
+                    InlineKeyboardButton(
+                        "Yes, join this gully",
+                        callback_data=f"join_gully_{gully['id']}",
+                    ),
+                    InlineKeyboardButton("No, thanks", callback_data="decline_gully"),
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+
             await update.message.reply_text(
-                f"Welcome back, {db_user.get('full_name')}! You're already registered.\n\n"
-                "You can continue in private chat for more options.",
-                reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton("Open Private Chat", url=deep_link)]]
-                ),
+                f"You're not yet a participant in the *{gully.get('name')}* gully. Would you like to join?",
+                parse_mode="Markdown",
+                reply_markup=reply_markup,
             )
 
-        # Get the gully for this group
-        gully = await api_client.get_gully_by_chat_id(chat_id)
-        if gully:
-            # Add user to this gully if not already a member
-            from src.bot.utils.user_management import ensure_user_in_gully
+    # Add a button to check registration status
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "Check Registration Status", callback_data="check_members"
+            )
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "👥 Group admins can check which members have registered:",
+        reply_markup=reply_markup,
+    )
 
-            await ensure_user_in_gully(user.id, gully["id"])
-
-        return ConversationHandler.END
+    return ConversationHandler.END
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -224,7 +312,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         help_text = (
             "🏏 *GullyGuru Bot Help* 🏏\n\n"
             "*Available Commands:*\n"
-            "/start - Register and start using the bot\n"
             "/game_guide - Learn about cricket terminology and game concepts\n"
             "/myteam - View your current team composition\n"
             "/submit_squad - Submit your initial squad of 18 players (Round 0)\n"
@@ -237,6 +324,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         help_text = (
             "🏏 *GullyGuru Bot Help* 🏏\n\n"
             "*Available Group Commands:*\n"
+            "/start - Register to play\n"
             "/auction_status - Check auction status for all rounds\n\n"
             "For more commands and detailed help, message me privately."
         )
@@ -257,123 +345,193 @@ async def check_members_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
     """
-    Handle the /check_members command.
-    This command allows admins to manually trigger a check of all group members
-    and prompt unregistered users to start the bot.
+    Check which members of the group have registered with the bot.
+    This command is only available in group chats.
     """
+    chat = update.effective_chat
+
     # Only allow in group chats
-    chat_type = update.effective_chat.type
-    if chat_type not in ["group", "supergroup"]:
+    if chat.type not in ["group", "supergroup"]:
         await update.message.reply_text("This command can only be used in group chats.")
         return
 
-    # Check if the user is an admin
-    user = update.effective_user
-    try:
-        chat_member = await context.bot.get_chat_member(
-            update.effective_chat.id, user.id
-        )
-        if chat_member.status not in ["administrator", "creator"]:
-            await update.message.reply_text(
-                "This command can only be used by group administrators."
-            )
-            return
-    except Exception as e:
-        logger.error(f"Error checking admin status: {e}")
+    # Get the gully for this group
+    gully = await api_client.get_gully_by_chat_id(chat.id)
+    if not gully:
         await update.message.reply_text(
-            "I couldn't verify your admin status. Please try again later."
+            "No gully has been set up for this group yet. Use /start to create one."
         )
         return
 
-    # Trigger the group member check
-    await handle_group_start(update, context)
+    # Get all participants in this gully
+    participants = await api_client.get_gully_participants(gully["id"])
+
+    if not participants:
+        await update.message.reply_text(
+            "No members have registered for this gully yet."
+        )
+        return
+
+    # Get all chat members
+    try:
+        chat_members = []
+        async for member in context.bot.get_chat_members(chat.id):
+            if not member.user.is_bot:
+                chat_members.append(member)
+    except Exception as e:
+        logger.error(f"Error getting chat members: {e}")
+        await update.message.reply_text(
+            "Sorry, I couldn't retrieve the list of chat members."
+        )
+        return
+
+    # Check which chat members are registered
+    registered_members = []
+    unregistered_members = []
+
+    # Get all users
+    users = {}
+    for participant in participants:
+        user_id = participant["user_id"]
+        user = await api_client.get_user_by_id(user_id)
+        if user:
+            users[user_id] = user
+
+    # Check each chat member
+    for member in chat_members:
+        user_found = False
+        for user_id, user in users.items():
+            if user.get("telegram_id") == member.user.id:
+                registered_members.append(
+                    f"✅ @{member.user.username or user.get('full_name')}"
+                )
+                user_found = True
+                break
+
+        if not user_found:
+            unregistered_members.append(
+                f"❌ @{member.user.username or member.user.first_name}"
+            )
+
+    # Build the response message
+    message = f"*Registration Status for {gully.get('name')}*\n\n"
+
+    if registered_members:
+        message += "*Registered Members:*\n"
+        message += "\n".join(registered_members)
+        message += "\n\n"
+
+    if unregistered_members:
+        message += "*Unregistered Members:*\n"
+        message += "\n".join(unregistered_members)
+        message += "\n\n"
+
+        # Add instructions for unregistered members
+        bot_username = context.bot.username
+        deep_link = f"https://t.me/{bot_username}?start=from_group_{chat.id}"
+        message += f"Unregistered members can [click here]({deep_link}) to register."
+
+    await update.message.reply_text(
+        message, parse_mode="Markdown", disable_web_page_preview=True
+    )
 
 
 async def handle_start_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Handle callbacks from the start command flow."""
+    """Handle callbacks from the start command."""
     query = update.callback_query
     await query.answer()
 
-    if query.data == "start_submit_squad":
+    callback_data = query.data
+
+    if callback_data == "start_submit_squad":
         # Redirect to submit_squad command
-        await query.message.reply_text(
-            "Let's build your team! Starting the squad submission process...\n\n"
-            "You'll need to select 18 players for your initial squad."
+        await query.edit_message_text("Redirecting to squad submission...")
+
+        # Import the submit_squad command
+        from src.bot.handlers.team import submit_squad_command
+
+        # Create a new update object with the text "/submit_squad"
+        new_message = query.message.copy()
+        new_message.text = "/submit_squad"
+        new_update = Update(
+            update_id=update.update_id,
+            message=new_message,
+            callback_query=None,
         )
-        # Import here to avoid circular imports
-        from src.bot.handlers.auction import submit_squad_command
 
-        await submit_squad_command(update, context)
-    elif query.data == "start_use_telegram_name":
-        # Use the user's Telegram name for registration
-        user = update.effective_user
-        name = user.first_name
-        if user.last_name:
-            name += f" {user.last_name}"
+        # Call the submit_squad command
+        await submit_squad_command(new_update, context)
 
-        # Register user with their Telegram name
+    elif callback_data == "check_members":
+        # Check which members have registered
+        await query.edit_message_text("Checking registered members...")
+
+        # Create a new update object with the text "/check_members"
+        new_message = query.message.copy()
+        new_message.text = "/check_members"
+        new_update = Update(
+            update_id=update.update_id,
+            message=new_message,
+            callback_query=None,
+        )
+
+        # Call the check_members command
+        await check_members_command(new_update, context)
+
+    elif callback_data.startswith("join_gully_"):
+        # Extract gully ID from callback data
         try:
-            await api_client.register_user(user.id, name, user.username)
+            gully_id = int(callback_data.split("_")[2])
+            user = update.effective_user
 
-            # Confirmation message with personalized greeting
-            await query.message.reply_text(
-                f"Thank you, {name}! You are now registered as a player. 🎉\n\n"
-                f"You can now participate in cricket fantasy gaming with GullyGuru!"
+            # Get user from database
+            db_user = await ensure_user_exists(user)
+            if not db_user:
+                await query.edit_message_text(
+                    "❌ Sorry, there was an error with your account. Please try again later."
+                )
+                return
+
+            # Add user to gully
+            participant = await ensure_user_in_gully(db_user["id"], gully_id)
+            if not participant:
+                await query.edit_message_text(
+                    "❌ Sorry, there was an error adding you to the gully. Please try again later."
+                )
+                return
+
+            # Set this as the user's active gully
+            await api_client.set_active_gully(participant["id"])
+
+            # Get gully details
+            gully = await api_client.get_gully(gully_id)
+            gully_name = gully.get("name", "this gully") if gully else "this gully"
+
+            # Confirm joining
+            await query.edit_message_text(
+                f"✅ You've successfully joined *{gully_name}* as *{participant.get('team_name')}*!\n\n"
+                f"This is now your active gully. You can use /myteam to view your team or "
+                f"/submit_squad to build your initial squad.",
+                parse_mode="Markdown",
             )
 
-            # Check if user has a squad and prompt accordingly
-            squad = await api_client.get_user_squad_submission(user.id)
-            if not squad:
-                # Prompt user to submit squad with clear instructions
-                await query.message.reply_text(
-                    "📋 *Next Step: Submit Your Initial Squad*\n\n"
-                    "To participate in the game, you need to select your initial team of 18 players (Round 0).\n\n"
-                    "Use the /submit_squad command to start building your team.",
-                    parse_mode="Markdown",
-                )
-
-                # Add a keyboard button for easy access to submit_squad
-                keyboard = [
-                    [
-                        InlineKeyboardButton(
-                            "Submit My Squad", callback_data="start_submit_squad"
-                        )
-                    ]
-                ]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                await query.message.reply_text(
-                    "Ready to build your team?", reply_markup=reply_markup
-                )
-
-                # If this was initiated from a group, send a confirmation to the group
-                if "from_group" in context.user_data:
-                    group_id = context.user_data["from_group"]
-                    try:
-                        await context.bot.send_message(
-                            group_id,
-                            f"🎉 @{user.username or name} has successfully registered with GullyGuru!\n"
-                            f"They're now setting up their initial squad.",
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to send confirmation to group {group_id}: {e}"
-                        )
-            else:
-                # User already has a squad
-                await query.message.reply_text(
-                    "You've already submitted your initial squad. Great job! 👍\n\n"
-                    "Use /myteam to view your current team or /help to see all available commands."
-                )
-        except Exception as e:
-            logger.error(f"Error registering user with Telegram name: {e}")
-            await query.message.reply_text(
-                "Sorry, there was an error registering your account. Please try again later."
+        except (IndexError, ValueError) as e:
+            logger.error(f"Error parsing join_gully callback data: {e}")
+            await query.edit_message_text(
+                "❌ Sorry, there was an error processing your request. Please try again later."
             )
+
+    elif callback_data == "decline_gully":
+        # User declined to join the gully
+        await query.edit_message_text(
+            "You've chosen not to join this gully. You can always join later by using the /start command again."
+        )
+
     else:
         await query.message.reply_text(
-            "Unknown option. Please use /help to see available commands."
+            "Unknown callback. Please try again or use /help for available commands."
         )
 
 

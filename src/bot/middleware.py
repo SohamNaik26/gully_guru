@@ -9,7 +9,7 @@ from telegram.ext import ContextTypes, Application
 from typing import Callable, Any, Awaitable
 
 from src.bot.api_client_instance import api_client
-from src.bot.utils.group_management import setup_new_group, process_new_members
+from src.bot.utils.gully_management import setup_new_group, process_new_members
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -82,10 +82,32 @@ async def new_chat_members_handler(
 
     # If the bot was just added to the group, set up the group
     if bot_added:
-        await setup_new_group(update, context)
+        await setup_new_group(update.effective_chat)
+
+        # Get the group owner (the user who added the bot)
+        if update.message.from_user:
+            # Ensure the user exists in the database
+            from src.bot.utils.user_management import ensure_user_exists
+
+            db_user = await ensure_user_exists(update.message.from_user)
+
+            if db_user:
+                # Get the gully for this group
+                group_gully = await api_client.get_gully_by_group(
+                    update.effective_chat.id
+                )
+
+                if group_gully:
+                    # Set the user as the admin of the gully
+                    await api_client.assign_admin_role(db_user["id"], group_gully["id"])
+                    logger.info(
+                        f"Set user {db_user['id']} as admin for gully {group_gully['id']}"
+                    )
 
     # Process new members (excluding the bot)
-    await process_new_members(update, context)
+    await process_new_members(
+        update.effective_chat, [m for m in new_members if m.id != bot.id], context
+    )
 
 
 async def check_user_in_gully(user_id: int, gully_id: int) -> bool:

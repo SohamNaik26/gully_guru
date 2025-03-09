@@ -20,7 +20,7 @@ For detailed documentation, see the [Documentation Index](docs/README.md) which 
 - [Auction Management System](docs/auction_management.md)
 - [Database Migration](docs/db_migration.md)
 - [API Documentation](docs/api.md)
-- [Group Management](docs/group_management.md)
+- [Gully Management](docs/gully_management.md)
 
 ## System Architecture & Setup
 
@@ -249,7 +249,7 @@ We've implemented a comprehensive gully management system that allows:
 - Automatic context switching based on group interactions
 - Easy navigation between different gullies
 
-For detailed documentation on the gully system, see [Gully Management Documentation](docs/group_management.md).
+For detailed documentation on the gully system, see [Gully Management Documentation](docs/gully_management.md).
 
 ## TODO
 
