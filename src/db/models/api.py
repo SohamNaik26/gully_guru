@@ -16,7 +16,7 @@ from datetime import datetime
 from typing import List, Optional
 from decimal import Decimal
 from sqlmodel import Field, SQLModel, Relationship
-from pydantic import field_validator
+from pydantic import field_validator, ConfigDict
 
 from src.db.models.models import TimeStampedModel
 from src.db.models.base import validate_non_negative, validate_status
@@ -48,8 +48,7 @@ class UserResponse(UserBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Player API Models
@@ -75,8 +74,7 @@ class PlayerRead(PlayerBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PlayerResponse(PlayerBase):
@@ -86,8 +84,7 @@ class PlayerResponse(PlayerBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Match API Models
@@ -117,8 +114,7 @@ class MatchResponse(MatchBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Stats API Models
@@ -137,8 +133,7 @@ class PlayerStatsResponse(SQLModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class MatchPerformanceResponse(SQLModel):
@@ -163,8 +158,7 @@ class MatchPerformanceResponse(SQLModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Game Mechanics API Models
@@ -178,8 +172,7 @@ class UserSquadResponse(SQLModel):
     vice_captain: Optional[PlayerResponse] = None
     total_points: float
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AuctionBidCreate(SQLModel):
@@ -214,8 +207,7 @@ class AuctionBidResponse(SQLModel):
         valid_statuses = ["pending", "accepted", "rejected"]
         return validate_status(v, valid_statuses)
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Leaderboard API Models
@@ -227,8 +219,7 @@ class LeaderboardEntry(SQLModel):
     username: str
     total_points: float
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LeaderboardResponse(SQLModel):
@@ -257,22 +248,19 @@ class UserPlayerRead(UserPlayerBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserPlayerWithDetails(UserPlayerRead):
     player: PlayerRead
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserWithPlayers(UserResponse):
     owned_players: List[UserPlayerWithDetails] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # External API Integration Models

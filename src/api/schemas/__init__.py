@@ -27,8 +27,16 @@ from src.api.schemas.match import (
     MatchPerformanceResponse,
 )
 
-# Game mechanics schemas
-from src.api.schemas.game import (
+# Gully and Game mechanics schemas
+from src.api.schemas.gully import (
+    # Gully schemas
+    GullyBase,
+    GullyCreate,
+    GullyResponse,
+    GullyParticipantBase,
+    GullyParticipantCreate,
+    GullyParticipantResponse,
+    # Game mechanics schemas
     UserSquadResponse,
     AuctionBidCreate,
     AuctionBidResponse,
@@ -58,6 +66,13 @@ __all__ = [
     "MatchCreate",
     "MatchResponse",
     "MatchPerformanceResponse",
+    # Gully schemas
+    "GullyBase",
+    "GullyCreate",
+    "GullyResponse",
+    "GullyParticipantBase",
+    "GullyParticipantCreate",
+    "GullyParticipantResponse",
     # Game mechanics schemas
     "UserSquadResponse",
     "AuctionBidCreate",

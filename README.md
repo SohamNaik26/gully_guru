@@ -253,6 +253,28 @@ For detailed documentation on the gully system, see [Gully Management Documentat
 
 ## TODO
 
+### API Services Implementation
+
+The following API services need to be implemented to complete the bot refactoring:
+
+#### 1. GullyService
+- `get_user_gully_participation(user_id, gully_id)`: Get a user's participation in a gully
+- `get_members_without_teams(gully_id)`: Get members who haven't created teams yet
+
+#### 2. FantasyService
+- `get_auction_status(gully_id)`: Get the current auction status
+- `start_auction(gully_id)`: Start an auction
+- `next_auction_player(gully_id)`: Move to the next player in the auction
+- `end_auction(gully_id)`: End the auction
+- `place_bid(gully_id, user_id, bid_amount)`: Place a bid in an auction
+- `get_user_team(user_id, gully_id)`: Get a user's team
+- `get_team_stats(user_id, gully_id)`: Get statistics for a user's team
+
+#### 3. UserService
+- `get_user_credits(user_id, gully_id)`: Get a user's available credits
+- `set_active_gully(user_id, gully_id)`: Set a user's active gully
+- `get_active_gully(user_id)`: Get a user's active gully
+
 ### High Priority
 1. **Playing XI Selection**
    - Implement daily lineup selection (11 players + Captain + Vice-Captain)

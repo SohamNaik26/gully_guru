@@ -1,43 +1,26 @@
 #!/usr/bin/env python
 """
 Main bot module for GullyGuru.
+Handles bot initialization, command registration, and command scopes.
 """
 
-import logging
 import os
+import logging
 import asyncio
+import httpx
 from dotenv import load_dotenv
-from telegram import Update
 from telegram.ext import (
     Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
     ContextTypes,
-    filters,
 )
 
-from src.bot.handlers.help import help_command
-from src.bot.handlers.game_guide import game_guide_command, handle_term_callback
-from src.bot.handlers.join_gully import join_gully_command, handle_join_callback
-from src.bot.handlers.team import my_team_command
-from src.bot.handlers.auction import (
-    submit_squad_command,
-    bid_command,
-    auction_status_command,
-)
-from src.bot.handlers.admin import (
-    admin_panel_command,
-    add_member_command,
-    create_gully_command,
-    manage_admins_command,
-)
-from src.bot.callbacks.auction import handle_auction_callback
-from src.bot.callbacks.admin import handle_admin_callback
-from src.bot.middleware import new_chat_members_handler
+# Import features module for handler registration
+from src.bot.features import register_handlers
 from src.bot.command_scopes import refresh_command_scopes
-from src.api.api_client_instance import api_client
-from src.bot.services import gully_service
+from src.bot.sync_manager import sync_all_groups
+
+# Import settings
+from src.utils.config import settings
 
 # Load environment variables
 load_dotenv()
@@ -50,102 +33,154 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Route callback queries to the appropriate handler based on the pattern."""
-    query = update.callback_query
-    if query.data.startswith(("term_", "category_")):
-        return handle_term_callback(update, context)
-    elif query.data.startswith(("auction_", "squad_", "player_")):
-        return handle_auction_callback(update, context)
-    elif query.data.startswith("admin_"):
-        return handle_admin_callback(update, context)
-    elif query.data.startswith(("join_gully_", "decline_gully")):
-        return handle_join_callback(update, context)
-
-    # Default case
-    query.answer("Unknown callback")
-    return None
-
-
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle errors in the dispatcher."""
-    logger.error("Exception while handling an update:", exc_info=context.error)
+    logger.error(f"Exception while handling an update: {context.error}")
+
+
+async def wait_for_api(max_retries=30, retry_interval=2):
+    """
+    Wait for the API to be available.
+
+    Args:
+        max_retries: Maximum number of retries
+        retry_interval: Interval between retries in seconds
+
+    Returns:
+        bool: True if API is available, False otherwise
+    """
+    api_base_url = settings.API_BASE_URL
+    health_url = f"{api_base_url}/health"
+
+    logger.info(f"Checking API availability at {health_url}")
+
+    retries = 0
+    while retries < max_retries:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                logger.debug(f"Attempt {retries+1}/{max_retries} to connect to API")
+                response = await client.get(health_url)
+
+                if response.status_code == 200:
+                    # Check if database is also healthy
+                    try:
+                        data = response.json()
+                        db_status = data.get("database", "unknown")
+
+                        if db_status == "healthy":
+                            logger.info("API and database are available and healthy!")
+                            return True
+                        else:
+                            logger.warning(
+                                f"API is available but database status is: {db_status}"
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"API returned status 200 but response is not valid JSON: {str(e)}"
+                        )
+                else:
+                    logger.warning(
+                        f"API returned status code {response.status_code}, retrying..."
+                    )
+        except httpx.ConnectError:
+            logger.warning("Connection to API failed, retrying...")
+        except httpx.ReadTimeout:
+            logger.warning("API request timed out, retrying...")
+        except Exception as e:
+            logger.warning(f"API check failed with error: {str(e)}")
+
+        retries += 1
+        if retries < max_retries:
+            logger.info(
+                f"Retrying in {retry_interval} seconds... (Attempt {retries}/{max_retries})"
+            )
+            await asyncio.sleep(retry_interval)
+
+    logger.error(f"API not available after {max_retries} attempts")
+    return False
 
 
 async def main_async():
-    """Run the bot asynchronously."""
-    # Create the Application
-    application = Application.builder().token(BOT_TOKEN).build()
-
-    # Register handlers
-    # Core Commands (available in all contexts)
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("game_guide", game_guide_command))
-    application.add_handler(CommandHandler("join_gully", join_gully_command))
-
-    # Personal Chat Commands
-    application.add_handler(CommandHandler("my_team", my_team_command))
-    application.add_handler(CommandHandler("bid", bid_command))
-    application.add_handler(CommandHandler("submit_squad", submit_squad_command))
-    application.add_handler(CommandHandler("auction_status", auction_status_command))
-
-    # Admin Commands
-    application.add_handler(CommandHandler("admin_panel", admin_panel_command))
-    application.add_handler(CommandHandler("create_gully", create_gully_command))
-    application.add_handler(CommandHandler("add_member", add_member_command))
-    application.add_handler(CommandHandler("manage_admins", manage_admins_command))
-
-    # Register callback query handlers
-    application.add_handler(CallbackQueryHandler(callback_handler))
-
-    # Register middleware
-    application.add_handler(
-        MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, new_chat_members_handler)
-    )
-
-    # Register error handler
-    application.add_error_handler(error_handler)
-
-    # Initialize the application
-    await application.initialize()
-
-    # Set up command scopes
-    await refresh_command_scopes(application)
-
-    # Scan all groups and set up gullies and admins
-    logger.info("Scanning groups to set up gullies and admins...")
-    scan_results = await gully_service.scan_and_setup_groups(application.bot)
-    logger.info(
-        f"Group scan complete: {scan_results['groups_scanned']} groups scanned, "
-        f"{scan_results['gullies_created']} gullies created, "
-        f"{scan_results['admins_set']} admins set up, "
-        f"{scan_results['errors']} errors"
-    )
-
-    # Start the Bot
-    await application.start()
-    await application.updater.start_polling()
-    logger.info("Bot started successfully")
-
-    # Run the bot until the user presses Ctrl-C
+    """Initialize and start the bot."""
     try:
-        # Wait for signal to stop
+        # Check if API is running and wait until it's available
+        logger.info("Starting GullyGuru bot...")
+        logger.info("Checking if API is running...")
+        api_available = await wait_for_api(
+            max_retries=60, retry_interval=5
+        )  # Wait up to 5 minutes
+
+        if not api_available:
+            logger.error("API is not available after maximum retries. Exiting...")
+            return
+
+        logger.info("API is available. Initializing bot...")
+
+        # Create application
+        application = Application.builder().token(BOT_TOKEN).build()
+
+        # Register all feature handlers
+        register_handlers(application)
+
+        # Register error handler
+        application.add_error_handler(error_handler)
+
+        # Initialize the application
+        await application.initialize()
+
+        # Set up command scopes
+        await refresh_command_scopes(application)
+
+        # Sync all groups and users using the improved sync manager
+        logger.info("Starting comprehensive group and user synchronization...")
+        try:
+            sync_results = await sync_all_groups(application.bot)
+            logger.info("Sync completed with the following results:")
+            logger.info(f"- Groups processed: {sync_results.get('processed', 0)}")
+            logger.info(f"- Gullies created: {sync_results.get('gullies_created', 0)}")
+            logger.info(f"- Users added: {sync_results.get('users_added', 0)}")
+            logger.info(f"- Errors encountered: {sync_results.get('errors', 0)}")
+
+            # Schedule periodic sync every 6 hours
+            async def periodic_sync():
+                while True:
+                    await asyncio.sleep(6 * 60 * 60)  # 6 hours
+                    logger.info("Running scheduled group synchronization...")
+                    try:
+                        sync_results = await sync_all_groups(application.bot)
+                        logger.info(
+                            f"Scheduled sync completed: {sync_results['processed']} groups processed, "
+                            f"{sync_results['users_added']} users added"
+                        )
+                    except Exception as e:
+                        logger.error(f"Error in scheduled sync: {e}")
+
+            # Start the periodic sync task
+            asyncio.create_task(periodic_sync())
+            logger.info("Scheduled periodic sync every 6 hours")
+
+        except Exception as e:
+            logger.error(f"Error during initial group synchronization: {e}")
+            logger.info("Continuing with bot startup despite sync errors")
+
+        # Start the bot
+        logger.info("Starting the bot...")
+        await application.start()
+        await application.updater.start_polling()
+
+        logger.info("Bot started successfully")
+
+        # Keep the bot running until interrupted
         stop_signal = asyncio.Future()
         await stop_signal
-    except (KeyboardInterrupt, SystemExit):
-        # Handle graceful shutdown
-        pass
-    finally:
-        # Ensure proper shutdown
-        await application.stop()
 
-        # Close the API client
-        logger.info("Closing API client connection")
-        await api_client.close()
+    except Exception as e:
+        logger.error(f"Error starting bot: {e}")
+        raise
 
 
 def main():
-    """Main function to run the bot."""
+    """Run the bot."""
     asyncio.run(main_async())
 
 

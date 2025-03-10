@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 from decimal import Decimal
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 # Player API Models
@@ -29,8 +29,7 @@ class PlayerRead(PlayerBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PlayerResponse(PlayerBase):
@@ -40,8 +39,7 @@ class PlayerResponse(PlayerBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Stats API Models
@@ -60,5 +58,4 @@ class PlayerStatsResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

@@ -1,11 +1,10 @@
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Dict, List, Optional, Any
 from decimal import Decimal
-from pydantic import BaseModel, field_validator
-from sqlmodel import Relationship, SQLModel, Field, Column
+from sqlmodel import SQLModel, Field, Relationship, Column
 from sqlalchemy import DECIMAL
+from pydantic import BaseModel, field_validator, ConfigDict
 
-from src.db.models.base import validate_non_negative
 from src.db.models.models import TimeStampedModel
 
 
@@ -229,25 +228,26 @@ class CricsheetMatchModel(BaseModel):
             raise ValueError(f"Match type must be one of {valid_types}")
         return v
 
-    class Config:
-        from_attributes = True
-        json_schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
-                "key": "ipl_2023_m01",
-                "date": "2023-03-31T00:00:00",
-                "venue": "M. Chinnaswamy Stadium",
-                "city": "Bangalore",
+                "key": "ipl_2020_01",
+                "date": "2020-09-19T00:00:00",
+                "venue": "Dubai International Cricket Stadium",
+                "city": "Dubai",
                 "competition": "IPL",
                 "match_type": "T20",
-                "team1": "RCB",
-                "team2": "MI",
-                "toss_winner": "MI",
-                "toss_decision": "field",
-                "winner": "RCB",
+                "team1": "Mumbai Indians",
+                "team2": "Chennai Super Kings",
+                "toss_winner": "Mumbai Indians",
+                "toss_decision": "bat",
+                "winner": "Chennai Super Kings",
                 "result": "runs",
-                "result_margin": 8,
+                "result_margin": 5,
             }
-        }
+        },
+    )
 
     def to_db_model(self) -> Dict[str, Any]:
         """Convert Cricsheet match to database model format."""
@@ -308,33 +308,36 @@ class CricsheetDeliveryModel(BaseModel):
     @field_validator("innings")
     @classmethod
     def validate_innings(cls, v):
-        if v not in [1, 2, 3, 4]:
-            raise ValueError("Innings must be between 1 and 4")
+        if v not in [1, 2]:
+            raise ValueError("Innings must be 1 or 2")
         return v
 
     @field_validator("runs_off_bat", "extras")
     @classmethod
     def validate_non_negative_values(cls, v):
-        return validate_non_negative(v)
+        if v < 0:
+            raise ValueError("Value must be non-negative")
+        return v
 
-    class Config:
-        from_attributes = True
-        json_schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
-                "match_id": "ipl_2023_m01",
+                "match_id": "ipl_2020_01",
                 "innings": 1,
                 "ball": "0.1",
-                "batting_team": "RCB",
-                "bowling_team": "MI",
-                "striker": "Virat Kohli",
-                "non_striker": "Faf du Plessis",
-                "bowler": "Jasprit Bumrah",
+                "batting_team": "Mumbai Indians",
+                "bowling_team": "Chennai Super Kings",
+                "striker": "Rohit Sharma",
+                "non_striker": "Quinton de Kock",
+                "bowler": "Deepak Chahar",
                 "runs_off_bat": 4,
                 "extras": 0,
                 "wicket_type": None,
                 "player_dismissed": None,
             }
-        }
+        },
+    )
 
     def to_db_model(self) -> Dict[str, Any]:
         """Convert to database model format."""

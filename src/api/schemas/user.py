@@ -1,7 +1,11 @@
+"""
+Schemas for user-related data.
+"""
+
 from datetime import datetime
-from typing import List
 from decimal import Decimal
-from pydantic import BaseModel
+from typing import List
+from pydantic import BaseModel, ConfigDict
 
 # Forward reference for PlayerResponse to avoid circular imports
 from src.api.schemas.player import PlayerResponse
@@ -17,7 +21,7 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    """Model for creating a new user."""
+    """Create model for user data."""
 
     pass
 
@@ -29,8 +33,7 @@ class UserResponse(UserBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # GullyParticipant API Models
@@ -48,7 +51,7 @@ class GullyParticipantBase(BaseModel):
 
 
 class GullyParticipantCreate(GullyParticipantBase):
-    """Model for creating a new gully participant."""
+    """Create model for gully participant data."""
 
     pass
 
@@ -61,8 +64,7 @@ class GullyParticipantResponse(GullyParticipantBase):
     updated_at: datetime
     last_active_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Note: We're using string type annotation to avoid circular imports
@@ -71,8 +73,7 @@ class UserWithPlayers(UserResponse):
 
     owned_players: List["PlayerResponse"] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # No need to rebuild the model, Pydantic will handle the string type annotation

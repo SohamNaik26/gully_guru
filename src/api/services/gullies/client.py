@@ -19,6 +19,7 @@ class GullyService(BaseService):
         """
         super().__init__(base_url, client)
         self.endpoint = f"{self.base_url}/gullies/"
+        self.participants_endpoint = f"{self.base_url}/participants/"
 
     def _build_url(self, *path_segments: str) -> str:
         """Build a URL with proper formatting.
@@ -31,6 +32,24 @@ class GullyService(BaseService):
         """
         # Start with the base endpoint without trailing slash
         base = self.endpoint.rstrip("/")
+
+        # Join all path segments, ensuring each has no leading/trailing slashes
+        path = "/".join(segment.strip("/") for segment in path_segments if segment)
+
+        # Return the combined URL
+        return f"{base}/{path}" if path else base
+
+    def _build_participants_url(self, *path_segments: str) -> str:
+        """Build a URL for participants endpoints with proper formatting.
+
+        Args:
+            *path_segments: Path segments to append to the participants endpoint
+
+        Returns:
+            Properly formatted URL without double slashes
+        """
+        # Start with the participants endpoint without trailing slash
+        base = self.participants_endpoint.rstrip("/")
 
         # Join all path segments, ensuring each has no leading/trailing slashes
         path = "/".join(segment.strip("/") for segment in path_segments if segment)
@@ -140,8 +159,8 @@ class GullyService(BaseService):
         Returns:
             List of gully participants
         """
-        params = {"skip": skip, "limit": limit}
-        url = self._build_url("participants", str(gully_id))
+        params = {"gully_id": gully_id, "skip": skip, "limit": limit}
+        url = self._build_participants_url()
         response = await self._make_request(
             "GET",
             url,
@@ -161,8 +180,9 @@ class GullyService(BaseService):
         Returns:
             List of gully participations
         """
-        url = self._build_url("user-gullies", str(user_id))
-        response = await self._make_request("GET", url)
+        params = {"user_id": user_id}
+        url = self._build_participants_url()
+        response = await self._make_request("GET", url, params=params)
         if "error" in response:
             logger.error(
                 f"Error getting user gully participations: {response['error']}"
@@ -207,11 +227,20 @@ class GullyService(BaseService):
         Returns:
             Gully participant data or None if addition failed
         """
-        url = self._build_url("participants", str(gully_id), str(user_id))
+        data = {
+            "user_id": user_id,
+            "team_name": f"User {user_id}'s Team",  # Default team name
+        }
+        params = {
+            "gully_id": gully_id,
+            "role": role,
+        }
+        url = self._build_participants_url()
         response = await self._make_request(
             "POST",
             url,
-            params={"role": role},
+            json=data,
+            params=params,
         )
         if "error" in response:
             logger.error(f"Error adding user to gully: {response['error']}")
@@ -227,8 +256,9 @@ class GullyService(BaseService):
         Returns:
             Result of the operation
         """
-        url = self._build_url("participants", str(participant_id), "activate")
-        response = await self._make_request("PUT", url)
+        url = self._build_participants_url(str(participant_id))
+        data = {"action": "activate"}
+        response = await self._make_request("PUT", url, json=data)
         if "error" in response:
             logger.error(f"Error setting active gully: {response['error']}")
             return None
@@ -246,8 +276,9 @@ class GullyService(BaseService):
         Returns:
             Result of the operation
         """
-        url = self._build_url("participants", str(participant_id), "role")
-        response = await self._make_request("PUT", url, params={"role": role})
+        url = self._build_participants_url(str(participant_id))
+        data = {"role": role}
+        response = await self._make_request("PUT", url, json=data)
         if "error" in response:
             logger.error(f"Error updating participant role: {response['error']}")
             return None

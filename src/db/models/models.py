@@ -423,7 +423,7 @@ class GullyParticipant(TimeStampedModel, table=True):
     )
     points: int = Field(default=0, description="Total points earned in this Gully")
     role: str = Field(
-        default="member", description="User's role in this Gully (member, admin, owner)"
+        default="member", description="User's role in this Gully (member, admin)"
     )
     is_active: bool = Field(
         default=False, description="Whether this is the user's currently active gully"
@@ -450,7 +450,7 @@ class GullyParticipant(TimeStampedModel, table=True):
     @classmethod
     def validate_role(cls, v):
         """Validate that the role is one of the allowed values."""
-        allowed_roles = ["member", "admin", "owner"]
+        allowed_roles = ["member", "admin"]
         if v not in allowed_roles:
             raise ValueError(f"Role must be one of: {', '.join(allowed_roles)}")
         return v

@@ -16,4 +16,5 @@ if not api_base_url.endswith("/api"):
     api_base_url = f"{api_base_url}/api"
 
 logger.info(f"Initializing API client with base URL: {api_base_url}")
-api_client = APIClientFactory(base_url=api_base_url)
+# Use test token for authentication in development
+api_client = APIClientFactory(base_url=api_base_url, auth_token="test")

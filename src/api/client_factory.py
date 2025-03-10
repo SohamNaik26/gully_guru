@@ -14,17 +14,24 @@ logger = logging.getLogger(__name__)
 class APIClientFactory:
     """Factory for creating API service clients."""
 
-    def __init__(self, base_url: str):
+    def __init__(self, base_url: str, auth_token: str = "test"):
         """Initialize the API client factory.
 
         Args:
             base_url: The base URL for the API
+            auth_token: Authentication token (default: "test" for development)
         """
         # Make sure the base_url ends with /api
         if not base_url.endswith("/api"):
             base_url = f"{base_url}/api"
         self.base_url = base_url
-        self.client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+
+        # Set up headers with authentication token
+        headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+
+        self.client = httpx.AsyncClient(
+            timeout=30.0, follow_redirects=True, headers=headers
+        )
         self._services = {}
 
     async def close(self):

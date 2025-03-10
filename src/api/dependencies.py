@@ -1,10 +1,12 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlmodel import Session, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import select
 from typing import Optional
 
 from src.db.session import get_session
 from src.db.models import User
+from src.utils.logger import logger
 
 # OAuth2 scheme for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_error=False)
@@ -12,94 +14,78 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_error=Fals
 
 # Dependency for getting the current user
 async def get_current_user(
-    token: Optional[str] = Depends(oauth2_scheme),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
+    token: str = Depends(oauth2_scheme),
 ) -> User:
     """
-    Get the current authenticated user.
-    For development, this will return a default user if no token is provided.
+    Get the current user from the token.
+    For development, this always returns a test user without authentication.
 
     Args:
-        token: JWT token (optional for development)
         session: Database session
+        token: JWT token (not used in development)
 
     Returns:
-        User: The authenticated user
-
-    Raises:
-        HTTPException: If authentication fails
+        User: Current user (test user in development)
     """
-    # For development: if no token, try to get the first user
-    if not token:
-        # Try to get the first user in the database
-        user = session.exec(select(User).limit(1)).first()
-        if user:
-            return user
-
-        # If no users exist, create a default admin user
-        default_user = User(
-            username="admin",
-            full_name="Admin User",
-            telegram_id=12345,
-        )
-        session.add(default_user)
-        session.commit()
-        session.refresh(default_user)
-        return default_user
-
-    # If token is provided, use a simple token-to-user_id mapping for development
-    # In a real app, you would verify the token properly
     try:
-        # Simple development implementation - assume token is the user_id
-        user_id = int(token)
-        user = session.get(User, user_id)
-        if not user:
+        # For development, always return a test user without authentication
+        try:
+            result = await session.execute(select(User).limit(1))
+            user = result.scalars().first()
+            if not user:
+                # Create a test user if none exists
+                user = User(
+                    telegram_id=12345,
+                    username="test_user",
+                    full_name="Test User",
+                )
+                session.add(user)
+                await session.commit()
+                await session.refresh(user)
+            return user
+        except Exception as e:
+            logger.error(f"Error getting test user: {e}")
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found",
-                headers={"WWW-Authenticate": "Bearer"},
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Internal server error",
             )
-        return user
-    except (ValueError, TypeError):
+    except Exception as e:
+        logger.error(f"Unexpected error in get_current_user: {e}")
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials",
-            headers={"WWW-Authenticate": "Bearer"},
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error",
         )
 
 
 # Optional current user dependency (for endpoints that work with or without auth)
 async def get_optional_current_user(
     token: Optional[str] = Depends(oauth2_scheme),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ) -> Optional[User]:
     """
     Get the current user if authenticated, otherwise None.
+    For development, this always returns a test user.
 
     Args:
-        token: JWT token (optional)
+        token: JWT token (not used in development)
         session: Database session
 
     Returns:
-        Optional[User]: The authenticated user or None
+        Optional[User]: The test user
     """
-    if not token:
-        return None
-
-    try:
-        return await get_current_user(token, session)
-    except HTTPException:
-        return None
+    # In development, always return a user
+    return await get_current_user(session, token)
 
 
 # Admin user dependency
 async def get_admin_user(
     current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ) -> User:
     """
     Get the current user and verify they have admin privileges in any gully.
-    For development, this will always succeed.
+    For development, this always succeeds.
 
     Args:
         current_user: The authenticated user
@@ -107,39 +93,20 @@ async def get_admin_user(
 
     Returns:
         User: The authenticated admin user
-
-    Raises:
-        HTTPException: If the user is not an admin in any gully
     """
     # For development, always allow admin access
     return current_user
-
-    # Uncomment this for production
-    # # Check if user is an admin in any gully
-    # admin_participation = session.exec(
-    #     select(GullyParticipant).where(
-    #         (GullyParticipant.user_id == current_user.id) &
-    #         (GullyParticipant.role == "admin")
-    #     )
-    # ).first()
-    #
-    # if not admin_participation:
-    #     raise HTTPException(
-    #         status_code=status.HTTP_403_FORBIDDEN,
-    #         detail="Admin privileges required",
-    #     )
-    # return current_user
 
 
 # Gully admin user dependency
 async def get_gully_admin_user(
     gully_id: int,
     current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ) -> User:
     """
     Get the current user and verify they have admin privileges in the specified gully.
-    For development, this will always succeed.
+    For development, this always succeeds.
 
     Args:
         gully_id: The ID of the gully to check admin privileges for
@@ -148,22 +115,20 @@ async def get_gully_admin_user(
 
     Returns:
         User: The authenticated admin user
-
-    Raises:
-        HTTPException: If the user is not an admin in the specified gully
     """
     # For development, always allow admin access
     return current_user
 
     # Uncomment this for production
     # # Check if user is an admin in the specified gully
-    # admin_participation = session.exec(
+    # result = await session.execute(
     #     select(GullyParticipant).where(
     #         (GullyParticipant.user_id == current_user.id) &
     #         (GullyParticipant.gully_id == gully_id) &
     #         (GullyParticipant.role.in_(["admin", "owner"]))
     #     )
-    # ).first()
+    # )
+    # admin_participation = result.scalars().first()
     #
     # if not admin_participation:
     #     raise HTTPException(

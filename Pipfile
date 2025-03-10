@@ -36,6 +36,7 @@ pydantic-settings = "*"
 greenlet = "*"
 alembic = "*"
 pyjwt = "*"
+pytest = "*"
 
 [dev-packages]
 black="*"

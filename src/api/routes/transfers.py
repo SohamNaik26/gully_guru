@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import select, Session
+from sqlmodel import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
 import pytz
@@ -27,12 +28,13 @@ router = APIRouter()
 
 
 @router.get("/current", response_model=TransferWindowResponse)
-async def get_current_transfer_window(session: Session = Depends(get_session)):
+async def get_current_transfer_window(session: AsyncSession = Depends(get_session)):
     """Get the current transfer window."""
     # Get the most recent transfer window
-    transfer_window = session.exec(
+    result = await session.execute(
         select(TransferWindow).order_by(TransferWindow.start_time.desc()).limit(1)
-    ).first()
+    )
+    transfer_window = result.scalars().first()
 
     if not transfer_window:
         raise HTTPException(
@@ -48,9 +50,6 @@ async def get_current_transfer_window(session: Session = Depends(get_session)):
     else:
         transfer_window.status = "pending"
 
-    session.add(transfer_window)
-    session.commit()
-
     return transfer_window
 
 
@@ -58,7 +57,7 @@ async def get_current_transfer_window(session: Session = Depends(get_session)):
 async def get_transfer_listings(
     window_id: int = None,
     status: str = "available",
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
 ):
     """Get all available transfer listings."""
     query = select(TransferListing).where(TransferListing.status == status)
@@ -67,28 +66,31 @@ async def get_transfer_listings(
         query = query.where(TransferListing.transfer_window_id == window_id)
     else:
         # Get current window
-        current_window = session.exec(
+        result = await session.execute(
             select(TransferWindow).order_by(TransferWindow.start_time.desc()).limit(1)
-        ).first()
+        )
+        current_window = result.scalars().first()
 
         if current_window:
             query = query.where(TransferListing.transfer_window_id == current_window.id)
 
-    listings = session.exec(query).all()
+    result = await session.execute(query)
+    listings = result.scalars().all()
     return listings
 
 
 @router.post("/list", response_model=TransferListingResponse)
 async def create_transfer_listing(
     listing: TransferListingCreate,
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
     """List a player for transfer."""
     # Check if transfer window is active
-    current_window = session.exec(
+    result = await session.execute(
         select(TransferWindow).order_by(TransferWindow.start_time.desc()).limit(1)
-    ).first()
+    )
+    current_window = result.scalars().first()
 
     if not current_window or current_window.status != "active":
         raise HTTPException(
@@ -96,12 +98,13 @@ async def create_transfer_listing(
         )
 
     # Check if user owns the player
-    user_player = session.exec(
+    result = await session.execute(
         select(UserPlayer).where(
             UserPlayer.user_id == current_user.id,
             UserPlayer.player_id == listing.player_id,
         )
-    ).first()
+    )
+    user_player = result.scalars().first()
 
     if not user_player:
         raise HTTPException(
@@ -109,13 +112,14 @@ async def create_transfer_listing(
         )
 
     # Check if player is already listed
-    existing_listing = session.exec(
+    result = await session.execute(
         select(TransferListing).where(
             TransferListing.player_id == listing.player_id,
             TransferListing.transfer_window_id == current_window.id,
             TransferListing.status == "available",
         )
-    ).first()
+    )
+    existing_listing = result.scalars().first()
 
     if existing_listing:
         raise HTTPException(
@@ -132,8 +136,8 @@ async def create_transfer_listing(
     )
 
     session.add(new_listing)
-    session.commit()
-    session.refresh(new_listing)
+    await session.commit()
+    await session.refresh(new_listing)
 
     return new_listing
 
@@ -141,14 +145,15 @@ async def create_transfer_listing(
 @router.post("/bid", response_model=TransferBidResponse)
 async def create_transfer_bid(
     bid: TransferBidCreate,
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
     """Place a bid on a listed player."""
     # Check if transfer window is active
-    current_window = session.exec(
+    result = await session.execute(
         select(TransferWindow).order_by(TransferWindow.start_time.desc()).limit(1)
-    ).first()
+    )
+    current_window = result.scalars().first()
 
     if not current_window or current_window.status != "active":
         raise HTTPException(
@@ -156,11 +161,12 @@ async def create_transfer_bid(
         )
 
     # Get the listing
-    listing = session.exec(
+    result = await session.execute(
         select(TransferListing).where(
             TransferListing.id == bid.listing_id, TransferListing.status == "available"
         )
-    ).first()
+    )
+    listing = result.scalars().first()
 
     if not listing:
         raise HTTPException(
@@ -213,8 +219,8 @@ async def create_transfer_bid(
         current_user.free_bids_used += 1
         session.add(current_user)
 
-    session.commit()
-    session.refresh(new_bid)
+    await session.commit()
+    await session.refresh(new_bid)
 
     return new_bid
 
@@ -222,16 +228,17 @@ async def create_transfer_bid(
 @router.post("/accept-bid/{bid_id}", response_model=Dict[str, Any])
 async def accept_transfer_bid(
     bid_id: int,
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
     """Accept a bid on a listed player."""
     # Get the bid
-    bid = session.exec(
+    result = await session.execute(
         select(TransferBid).where(
             TransferBid.id == bid_id, TransferBid.status == "pending"
         )
-    ).first()
+    )
+    bid = result.scalars().first()
 
     if not bid:
         raise HTTPException(
@@ -239,12 +246,13 @@ async def accept_transfer_bid(
         )
 
     # Get the listing
-    listing = session.exec(
+    result = await session.execute(
         select(TransferListing).where(
             TransferListing.id == bid.transfer_listing_id,
             TransferListing.status == "available",
         )
-    ).first()
+    )
+    listing = result.scalars().first()
 
     if not listing:
         raise HTTPException(
@@ -260,7 +268,8 @@ async def accept_transfer_bid(
         )
 
     # Get the bidder
-    bidder = session.exec(select(User).where(User.id == bid.bidder_id)).first()
+    result = await session.execute(select(User).where(User.id == bid.bidder_id))
+    bidder = result.scalars().first()
 
     if not bidder:
         raise HTTPException(
@@ -289,12 +298,13 @@ async def accept_transfer_bid(
 
     # 3. Transfer the player
     # First, remove from seller
-    seller_link = session.exec(
+    result = await session.execute(
         select(UserPlayer).where(
             UserPlayer.user_id == current_user.id,
             UserPlayer.player_id == listing.player_id,
         )
-    ).first()
+    )
+    seller_link = result.scalars().first()
 
     if seller_link:
         session.delete(seller_link)
@@ -313,19 +323,20 @@ async def accept_transfer_bid(
     session.add(current_user)
 
     # 5. Reject all other bids
-    other_bids = session.exec(
+    result = await session.execute(
         select(TransferBid).where(
             TransferBid.transfer_listing_id == listing.id,
             TransferBid.id != bid.id,
             TransferBid.status == "pending",
         )
-    ).all()
+    )
+    other_bids = result.scalars().all()
 
     for other_bid in other_bids:
         other_bid.status = "rejected"
         session.add(other_bid)
 
-    session.commit()
+    await session.commit()
 
     return {
         "success": True,
@@ -342,16 +353,17 @@ async def accept_transfer_bid(
 @router.post("/cancel-listing/{listing_id}", response_model=Dict[str, Any])
 async def cancel_transfer_listing(
     listing_id: int,
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
     """Cancel a transfer listing."""
     # Get the listing
-    listing = session.exec(
+    result = await session.execute(
         select(TransferListing).where(
             TransferListing.id == listing_id, TransferListing.status == "available"
         )
-    ).first()
+    )
+    listing = result.scalars().first()
 
     if not listing:
         raise HTTPException(
@@ -371,25 +383,26 @@ async def cancel_transfer_listing(
     session.add(listing)
 
     # Reject all bids
-    bids = session.exec(
+    result = await session.execute(
         select(TransferBid).where(
             TransferBid.transfer_listing_id == listing.id,
             TransferBid.status == "pending",
         )
-    ).all()
+    )
+    bids = result.scalars().all()
 
     for bid in bids:
         bid.status = "rejected"
         session.add(bid)
 
-    session.commit()
+    await session.commit()
 
     return {"success": True, "message": "Listing cancelled successfully"}
 
 
 @router.post("/create-window", response_model=TransferWindowResponse)
 async def create_transfer_window(
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
     """Create a new transfer window (admin only)."""
@@ -401,9 +414,10 @@ async def create_transfer_window(
         )
 
     # Get the latest window to determine week number
-    latest_window = session.exec(
+    result = await session.execute(
         select(TransferWindow).order_by(TransferWindow.week_number.desc()).limit(1)
-    ).first()
+    )
+    latest_window = result.scalars().first()
 
     week_number = 1
     if latest_window:
@@ -430,15 +444,15 @@ async def create_transfer_window(
     )
 
     session.add(new_window)
-    session.commit()
-    session.refresh(new_window)
+    await session.commit()
+    await session.refresh(new_window)
 
     return new_window
 
 
 @router.post("/reset-free-bids", response_model=Dict[str, Any])
 async def reset_free_bids(
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
     """Reset free bids for all users (admin only)."""
@@ -450,13 +464,14 @@ async def reset_free_bids(
         )
 
     # Reset free bids for all users
-    users = session.exec(select(User)).all()
+    result = await session.execute(select(User))
+    users = result.scalars().all()
 
     for user in users:
         user.free_bids_used = 0
         session.add(user)
 
-    session.commit()
+    await session.commit()
 
     return {"success": True, "message": f"Free bids reset for {len(users)} users"}
 
@@ -464,7 +479,7 @@ async def reset_free_bids(
 @router.post("/process-deadline", response_model=Dict[str, Any])
 async def process_transfer_deadline(
     window_id: int = None,
-    session: Session = Depends(get_session),
+    session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
     """Process all transfers at the end of the transfer window."""
@@ -477,14 +492,16 @@ async def process_transfer_deadline(
 
     # Get the transfer window
     if window_id:
-        transfer_window = session.exec(
+        result = await session.execute(
             select(TransferWindow).where(TransferWindow.id == window_id)
-        ).first()
+        )
+        transfer_window = result.scalars().first()
     else:
         # Get the most recent window
-        transfer_window = session.exec(
+        result = await session.execute(
             select(TransferWindow).order_by(TransferWindow.start_time.desc()).limit(1)
-        ).first()
+        )
+        transfer_window = result.scalars().first()
 
     if not transfer_window:
         raise HTTPException(
@@ -504,18 +521,19 @@ async def process_transfer_deadline(
     session.add(transfer_window)
 
     # Get all available listings
-    listings = session.exec(
+    result = await session.execute(
         select(TransferListing).where(
             TransferListing.transfer_window_id == transfer_window.id,
             TransferListing.status == "available",
         )
-    ).all()
+    )
+    listings = result.scalars().all()
 
     # Process each listing
     transfers_processed = 0
     for listing in listings:
         # Get highest bid for this listing
-        highest_bid = session.exec(
+        result = await session.execute(
             select(TransferBid)
             .where(
                 TransferBid.transfer_listing_id == listing.id,
@@ -523,38 +541,43 @@ async def process_transfer_deadline(
             )
             .order_by(TransferBid.bid_amount.desc())
             .limit(1)
-        ).first()
+        )
+        highest_bid = result.scalars().first()
 
         if highest_bid:
             # Process the transfer
 
             # 1. Get the player
-            player = session.exec(
+            result = await session.execute(
                 select(Player).where(Player.id == listing.player_id)
-            ).first()
+            )
+            player = result.scalars().first()
 
             if not player:
                 continue
 
             # 2. Get seller and buyer
-            seller = session.exec(
+            result = await session.execute(
                 select(User).where(User.id == listing.seller_id)
-            ).first()
+            )
+            seller = result.scalars().first()
 
-            buyer = session.exec(
+            result = await session.execute(
                 select(User).where(User.id == highest_bid.bidder_id)
-            ).first()
+            )
+            buyer = result.scalars().first()
 
             if not seller or not buyer:
                 continue
 
             # 3. Remove player from seller's team
-            seller_link = session.exec(
+            result = await session.execute(
                 select(UserPlayer).where(
                     UserPlayer.user_id == seller.id,
                     UserPlayer.player_id == player.id,
                 )
-            ).first()
+            )
+            seller_link = result.scalars().first()
 
             if seller_link:
                 session.delete(seller_link)
@@ -590,13 +613,14 @@ async def process_transfer_deadline(
             session.add(highest_bid)
 
             # 7. Reject all other bids
-            other_bids = session.exec(
+            result = await session.execute(
                 select(TransferBid).where(
                     TransferBid.transfer_listing_id == listing.id,
                     TransferBid.id != highest_bid.id,
                     TransferBid.status == "pending",
                 )
-            ).all()
+            )
+            other_bids = result.scalars().all()
 
             for bid in other_bids:
                 bid.status = "rejected"
@@ -609,12 +633,13 @@ async def process_transfer_deadline(
             session.add(listing)
 
     # Reset free bids for all users
-    users = session.exec(select(User)).all()
+    result = await session.execute(select(User))
+    users = result.scalars().all()
     for user in users:
         user.free_bids_used = 0
         session.add(user)
 
-    session.commit()
+    await session.commit()
 
     return {
         "success": True,

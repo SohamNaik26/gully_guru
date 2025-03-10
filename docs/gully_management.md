@@ -37,14 +37,21 @@ In GullyGuru, a "gully" represents a cricket community group or league. The term
 
 ### 3. Add Users to Group
 - Admin adds users to the Telegram group
-- Users are automatically added to the gully
+- Users are prompted to join the gully using the `/join_gully` command
 - Bot confirms successful joining
 
 ## Gully Participation
 
 ### Joining a Gully
-- Users can join a gully by being added to the associated Telegram group
-- The bot automatically registers new users and adds them to the gully
+- Users can join a gully by using the `/join_gully` command in the group
+- The bot automatically registers new users when they join
+- Users can also join via a deep link sent by the bot
+
+### Prompting Users to Join
+- Any group member can use the `/prompt_members` command to scan for users who haven't joined
+- The bot identifies Telegram group members who aren't registered in the gully
+- The bot mentions these users and provides a join button
+- This natural approach encourages organic community growth
 
 ## Admin Management
 
@@ -82,7 +89,7 @@ In GullyGuru, a "gully" represents a cricket community group or league. The term
 
 ## Best Practices
 
-1. **Automatic Registration**: Users should be automatically registered when added to a group
+1. **Organic User Onboarding**: Users join through the `/join_gully` command rather than being added directly
 2. **Clear Feedback**: Provide clear feedback for all gully-related actions
 3. **Permission Checks**: Always verify user permissions before allowing admin actions
 4. **Context Awareness**: Commands should be aware of the current gully context
