@@ -17,7 +17,6 @@ from telegram.ext import (
 # Import features module for handler registration
 from src.bot.features import register_handlers
 from src.bot.command_scopes import refresh_command_scopes
-from src.bot.sync_manager import sync_all_groups
 
 # Import settings
 from src.utils.config import settings
@@ -130,38 +129,6 @@ async def main_async():
 
         # Set up command scopes
         await refresh_command_scopes(application)
-
-        # Sync all groups and users using the improved sync manager
-        logger.info("Starting comprehensive group and user synchronization...")
-        try:
-            sync_results = await sync_all_groups(application.bot)
-            logger.info("Sync completed with the following results:")
-            logger.info(f"- Groups processed: {sync_results.get('processed', 0)}")
-            logger.info(f"- Gullies created: {sync_results.get('gullies_created', 0)}")
-            logger.info(f"- Users added: {sync_results.get('users_added', 0)}")
-            logger.info(f"- Errors encountered: {sync_results.get('errors', 0)}")
-
-            # Schedule periodic sync every 6 hours
-            async def periodic_sync():
-                while True:
-                    await asyncio.sleep(6 * 60 * 60)  # 6 hours
-                    logger.info("Running scheduled group synchronization...")
-                    try:
-                        sync_results = await sync_all_groups(application.bot)
-                        logger.info(
-                            f"Scheduled sync completed: {sync_results['processed']} groups processed, "
-                            f"{sync_results['users_added']} users added"
-                        )
-                    except Exception as e:
-                        logger.error(f"Error in scheduled sync: {e}")
-
-            # Start the periodic sync task
-            asyncio.create_task(periodic_sync())
-            logger.info("Scheduled periodic sync every 6 hours")
-
-        except Exception as e:
-            logger.error(f"Error during initial group synchronization: {e}")
-            logger.info("Continuing with bot startup despite sync errors")
 
         # Start the bot
         logger.info("Starting the bot...")

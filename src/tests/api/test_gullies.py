@@ -32,7 +32,6 @@ def test_get_all_gullies(test_client, mock_db, mock_response_factory):
     assert data[1]["name"] == "Gully 2"
     assert "created_at" in data[0]
     assert "updated_at" in data[0]
-    assert "status" in data[0]
 
 
 def test_get_gully_by_id(test_client, mock_db):
@@ -52,7 +51,6 @@ def test_get_gully_by_id(test_client, mock_db):
     assert data["id"] == 1
     assert data["name"] == "Test Gully"
     assert "telegram_group_id" in data
-    assert "status" in data
 
 
 def test_get_gully_by_id_not_found(test_client, mock_db):
@@ -237,15 +235,17 @@ def test_get_participants_filter_by_user(test_client, mock_db, mock_user):
     MockDBUtil.configure_get(mock_db, User, user_data)
     MockDBUtil.configure_execute(mock_db, participants_data)
 
-    # Make request
-    response = test_client.get("/api/participants?user_id=1")
+    # Mock is_system_admin to return True
+    with patch("src.api.routes.gullies.is_system_admin", AsyncMock(return_value=True)):
+        # Make request
+        response = test_client.get("/api/participants?user_id=1")
 
-    # Verify response
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data) == 2
-    assert data[0]["user_id"] == 1
-    assert data[1]["user_id"] == 1
+        # Verify response
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 2
+        assert data[0]["user_id"] == 1
+        assert data[1]["user_id"] == 1
 
 
 def test_get_participant_by_id(test_client, mock_db, mock_user):
@@ -288,57 +288,44 @@ def test_add_participant(test_client, mock_db, mock_user):
     gully_id = 1
     user_id = 2
     team_name = "Test Team"
-
-    # Create mock objects
-    gully = Gully(id=gully_id, name="Test Gully", telegram_group_id=123)
-    user = User(id=user_id, username="testuser")
+    role = "member"
 
     # Configure mocks
-    mock_db.get = AsyncMock(
-        side_effect=lambda model, id: gully if model == Gully else user
-    )
+    MockDBUtil.configure_get(mock_db, Gully, MockDataFactory.gully(id=gully_id))
+    MockDBUtil.configure_get(mock_db, User, MockDataFactory.user(id=user_id))
+    MockDBUtil.configure_execute(
+        mock_db, None, scalar_first=True
+    )  # No existing participant
 
-    # Create a MagicMock for the result of execute
-    execute_result = MagicMock()
-    execute_result.scalars.return_value.first.return_value = None
-    mock_db.execute = AsyncMock(return_value=execute_result)
-
-    # Make session.add a regular MagicMock to avoid coroutine warnings
-    mock_db.add = MagicMock()
-
-    # Mock is_gully_admin to return an awaitable that resolves to True
-    async def mock_is_gully_admin(*args, **kwargs):
-        return True
-
-    with patch("src.api.routes.gullies.is_gully_admin", mock_is_gully_admin):
-        # Mock the refresh method
+    # Mock the is_gully_admin function to return True
+    with patch("src.api.routes.gullies.is_gully_admin", return_value=True):
+        # Mock the session.add and session.refresh methods
         async def mock_refresh(obj):
-            if isinstance(obj, GullyParticipant):
-                obj.id = 1
-                obj.created_at = datetime.now(timezone.utc)
-                obj.updated_at = datetime.now(timezone.utc)
-                obj.budget = 100.0
-                obj.points = 0
-            return obj
+            # Set the ID and timestamps
+            obj.id = 1
+            obj.created_at = datetime.now(timezone.utc)
+            obj.updated_at = datetime.now(timezone.utc)
 
-        mock_db.refresh = AsyncMock(side_effect=mock_refresh)
-        mock_db.commit = AsyncMock()
+        mock_db.refresh.side_effect = mock_refresh
 
-        # Make the request
+        # Make request
         response = test_client.post(
-            f"/api/participants?gully_id={gully_id}&role=member",
+            f"/api/gullies/{gully_id}/participants/",
             json={"user_id": user_id, "team_name": team_name},
+            params={"role": role},
         )
 
-    # Assert response
+    # Verify response
     assert response.status_code == 200
-    response_data = response.json()
-    assert response_data["user_id"] == user_id
-    assert response_data["gully_id"] == gully_id
-    assert response_data["team_name"] == team_name
-    assert response_data["role"] == "member"
-    assert response_data["is_active"] is True
-    assert response_data["registration_complete"] is False
+    data = response.json()
+    assert data["user_id"] == user_id
+    assert data["gully_id"] == gully_id
+    assert data["team_name"] == team_name
+    assert data["role"] == role
+    assert "budget" in data
+    assert "points" in data
+    assert "created_at" in data
+    assert "updated_at" in data
 
 
 def test_add_participant_gully_not_found(test_client, mock_db):
@@ -454,10 +441,7 @@ def test_update_participant_status_activate(test_client, mock_db, mock_user):
     mock_db.refresh = AsyncMock()
 
     # Mock is_gully_admin to return an awaitable that resolves to True
-    async def mock_is_gully_admin(*args, **kwargs):
-        return True
-
-    with patch("src.api.routes.gullies.is_gully_admin", mock_is_gully_admin):
+    with patch("src.api.routes.gullies.is_gully_admin", AsyncMock(return_value=True)):
         # Make the request
         response = test_client.put(
             f"/api/participants/{participant_id}",
@@ -487,9 +471,7 @@ def test_update_participant_status_complete_registration(
     MockDBUtil.configure_add(mock_db)  # Configure add method
 
     # Mock the is_gully_admin function
-    with patch("src.api.routes.gullies.is_gully_admin") as mock_is_admin:
-        mock_is_admin.return_value = True  # User is an admin
-
+    with patch("src.api.routes.gullies.is_gully_admin", AsyncMock(return_value=True)):
         # Make request
         response = test_client.put(
             "/api/participants/1",
@@ -558,41 +540,37 @@ def test_update_participant_role(test_client, mock_db, mock_user):
     """Test updating a participant's role."""
     # Setup mock data
     participant_id = 1
+    new_role = "admin"
+
+    # Create a mock participant
     participant = GullyParticipant(
         id=participant_id,
         user_id=2,  # Different from mock_user.id
         gully_id=1,
         team_name="Test Team",
+        budget=100.0,
+        points=0,
         role="member",
-        is_active=True,
-        registration_complete=True,
     )
 
     # Configure mocks
-    mock_db.get = AsyncMock(return_value=participant)
+    MockDBUtil.configure_get(mock_db, GullyParticipant, participant)
 
-    # Make session.add a regular MagicMock to avoid coroutine warnings
-    mock_db.add = MagicMock()
-
-    mock_db.commit = AsyncMock()
-    mock_db.refresh = AsyncMock()
-
-    # Mock is_gully_admin to return an awaitable that resolves to True
-    async def mock_is_gully_admin(*args, **kwargs):
-        return True
-
-    with patch("src.api.routes.gullies.is_gully_admin", mock_is_gully_admin):
-        # Make the request
+    # Mock the is_gully_admin function to return True
+    with patch("src.api.routes.gullies.is_gully_admin", return_value=True):
+        # Make request
         response = test_client.put(
-            f"/api/participants/{participant_id}",
-            json={"role": "admin"},
+            f"/api/gullies/participants/{participant_id}",
+            json={"role": new_role},
         )
 
-    # Assert response
+    # Verify response
     assert response.status_code == 200
-    response_data = response.json()
-    assert response_data["id"] == participant_id
-    assert response_data["role"] == "admin"
+    data = response.json()
+    assert data["role"] == new_role
+    assert data["user_id"] == participant.user_id
+    assert data["gully_id"] == participant.gully_id
+    assert data["team_name"] == participant.team_name
 
 
 def test_update_participant_role_not_found(test_client, mock_db):
@@ -656,7 +634,7 @@ def test_update_participant_role_not_admin(test_client, mock_db, mock_user):
     # Configure mocks
     MockDBUtil.configure_get(mock_db, GullyParticipant, participant_data)
     # Mock is_gully_admin check to return False
-    with patch("src.api.routes.gullies.is_gully_admin", return_value=False):
+    with patch("src.api.routes.gullies.is_gully_admin", AsyncMock(return_value=False)):
         # Make request
         response = test_client.put(
             "/api/participants/1",

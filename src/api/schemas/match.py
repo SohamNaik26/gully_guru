@@ -1,5 +1,8 @@
+"""
+Schemas for match-related data.
+"""
+
 from datetime import datetime
-from typing import Optional
 from pydantic import BaseModel, ConfigDict
 
 
@@ -7,14 +10,16 @@ from pydantic import BaseModel, ConfigDict
 class MatchBase(BaseModel):
     """Base model for match data."""
 
-    date: datetime
+    match_id: str
+    home_team: str
+    away_team: str
+    match_date: datetime
     venue: str
-    team1: str
-    team2: str
+    match_type: str = "T20"  # T20, ODI, Test
 
 
 class MatchCreate(MatchBase):
-    """Model for creating a new match."""
+    """Create model for match data."""
 
     pass
 
@@ -23,36 +28,30 @@ class MatchResponse(MatchBase):
     """Response model for match data."""
 
     id: int
-    team1_score: Optional[str] = None
-    team2_score: Optional[str] = None
-    match_winner: Optional[str] = None
-    player_of_the_match: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    status: str = "scheduled"  # scheduled, live, completed, abandoned
 
     model_config = ConfigDict(from_attributes=True)
 
 
+# Match Performance API Models
 class MatchPerformanceResponse(BaseModel):
-    """Response model for player match performance."""
+    """Response model for player performance in a match."""
 
-    id: int
-    match_id: int
     player_id: int
-    player_name: str  # Joined from Player
-    runs: int
-    balls_faced: int
-    fours: int
-    sixes: int
-    wickets: int
-    overs_bowled: float
-    runs_conceded: int
-    economy: float
-    catches: int
-    stumpings: int
-    run_outs: int
-    fantasy_points: float
-    created_at: datetime
-    updated_at: datetime
+    player_name: str
+    match_id: int
+    runs_scored: int = 0
+    balls_faced: int = 0
+    fours: int = 0
+    sixes: int = 0
+    wickets_taken: int = 0
+    overs_bowled: float = 0.0
+    runs_conceded: int = 0
+    catches: int = 0
+    stumpings: int = 0
+    run_outs: int = 0
+    fantasy_points: float = 0.0
 
     model_config = ConfigDict(from_attributes=True)

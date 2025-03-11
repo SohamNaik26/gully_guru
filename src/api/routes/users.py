@@ -4,13 +4,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 
 from src.db.session import get_session
-from src.db.models import User
+from src.db.models import User, UserPlayer, GullyParticipant
 from src.api.schemas.user import (
     UserCreate,
     UserResponse,
+    UserResponseWithGullies,
+    UserPlayerCreate,
+    UserPlayerResponse,
 )
 from src.api.dependencies import get_current_user
 from src.api.exceptions import NotFoundException
+from src.api.factories import UserFactory, UserPlayerFactory
 
 router = APIRouter()
 
@@ -40,7 +44,7 @@ async def create_user(
     session.add(user)
     await session.commit()
     await session.refresh(user)
-    return user
+    return UserFactory.create_response(user)
 
 
 @router.get("/telegram/{telegram_id}", response_model=UserResponse)
@@ -55,7 +59,7 @@ async def get_user_by_telegram_id(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"User with telegram_id {telegram_id} not found",
         )
-    return user
+    return UserFactory.create_response(user)
 
 
 @router.get("/{user_id}", response_model=UserResponse)
@@ -67,10 +71,10 @@ async def get_user(user_id: int, session: AsyncSession = Depends(get_session)):
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"User with id {user_id} not found",
         )
-    return user
+    return UserFactory.create_response(user)
 
 
-@router.get("/", response_model=List[UserResponse])
+@router.get("/", response_model=List[UserResponseWithGullies])
 async def get_users(
     skip: int = 0,
     limit: int = 100,
@@ -86,7 +90,22 @@ async def get_users(
     query = query.offset(skip).limit(limit)
     result = await session.execute(query)
     users = result.scalars().all()
-    return users
+
+    # Get gully_ids for each user and create responses
+    user_responses = []
+    for user in users:
+        # Get the gully_ids for this user
+        gully_query = select(GullyParticipant.gully_id).where(
+            GullyParticipant.user_id == user.id
+        )
+        gully_result = await session.execute(gully_query)
+        gully_ids = gully_result.scalars().all()
+
+        # Create a response with the user data and gully_ids
+        user_response = await UserFactory.create_response_with_gullies(user, gully_ids)
+        user_responses.append(user_response)
+
+    return user_responses
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -102,7 +121,6 @@ async def delete_user(
         raise NotFoundException(resource_type="User", resource_id=user_id)
 
     # Check permissions - only allow users to delete themselves
-    # Admin check is removed since we no longer have is_admin field
     if user_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -141,3 +159,53 @@ async def delete_user_by_telegram_id(
     await session.commit()
 
     return None
+
+
+# User Player endpoints
+@router.post(
+    "/players", response_model=UserPlayerResponse, status_code=status.HTTP_201_CREATED
+)
+async def create_user_player(
+    user_player_data: UserPlayerCreate,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Create a new user player relationship."""
+    # Check if user exists
+    user = await session.get(User, user_player_data.user_id)
+    if not user:
+        raise NotFoundException(
+            resource_type="User", resource_id=user_player_data.user_id
+        )
+
+    # Create new user player
+    user_player = UserPlayer(
+        user_id=user_player_data.user_id,
+        player_id=user_player_data.player_id,
+        gully_id=user_player_data.gully_id,
+        purchase_price=user_player_data.purchase_price,
+        is_captain=user_player_data.is_captain,
+        is_vice_captain=user_player_data.is_vice_captain,
+        is_playing_xi=user_player_data.is_playing_xi,
+    )
+    session.add(user_player)
+    await session.commit()
+    await session.refresh(user_player)
+    return UserPlayerFactory.create_response(user_player)
+
+
+@router.get("/players/{user_id}", response_model=List[UserPlayerResponse])
+async def get_user_players(
+    user_id: int,
+    gully_id: Optional[int] = None,
+    session: AsyncSession = Depends(get_session),
+):
+    """Get all players owned by a user, optionally filtered by gully."""
+    query = select(UserPlayer).where(UserPlayer.user_id == user_id)
+
+    if gully_id:
+        query = query.where(UserPlayer.gully_id == gully_id)
+
+    result = await session.execute(query)
+    user_players = result.scalars().all()
+    return UserPlayerFactory.create_response_list(user_players)

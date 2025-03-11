@@ -29,10 +29,11 @@ def validate_team_composition(team_data: Dict[str, Any]) -> Dict[str, Any]:
 @router.post("/validate-team", response_model=Dict[str, Any])
 async def validate_user_team(
     user_id: int,
+    gully_id: int,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    """Validate a user's team composition."""
+    """Validate a user's team composition within a specific gully."""
     # Check if user exists
     result = await session.execute(select(User).where(User.id == user_id))
     user = result.scalars().first()
@@ -42,9 +43,11 @@ async def validate_user_team(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         )
 
-    # Get user's team
+    # Get user's team in the specific gully
     result = await session.execute(
-        select(Player).join(UserPlayer).where(UserPlayer.user_id == user_id)
+        select(Player)
+        .join(UserPlayer)
+        .where(UserPlayer.user_id == user_id, UserPlayer.gully_id == gully_id)
     )
     user_players = result.scalars().all()
 

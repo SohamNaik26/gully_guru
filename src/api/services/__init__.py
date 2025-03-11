@@ -5,7 +5,6 @@ This package contains service modules that implement the business logic for the 
 
 from src.api.services.users import UserService
 from src.api.services.players import PlayerService
-from src.api.services.transfers import TransferService
 from src.api.services.fantasy import FantasyService
 from src.api.services.admin import AdminService
 from src.api.services.gullies import GullyService

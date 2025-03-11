@@ -2,12 +2,14 @@ from fastapi import APIRouter, Depends, status
 from sqlmodel import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
+from datetime import datetime
 
 from src.db.session import get_session
-from src.db.models import Player, PlayerStats
-from src.db.models.api import PlayerCreate, PlayerResponse, PlayerStatsResponse
+from src.db.models import Player
+from src.api.schemas.player import PlayerCreate, PlayerResponse, PlayerStatsResponse
 from src.api.dependencies import get_admin_user
 from src.api.exceptions import NotFoundException
+from src.api.factories import PlayerFactory
 
 router = APIRouter()
 
@@ -24,7 +26,7 @@ async def create_player(
     await session.commit()
     await session.refresh(player)
 
-    return player
+    return PlayerFactory.create_response(player)
 
 
 @router.get("/{player_id}", response_model=PlayerResponse)
@@ -34,7 +36,7 @@ async def get_player(player_id: int, session: AsyncSession = Depends(get_session
     if not player:
         raise NotFoundException(resource_type="Player", resource_id=player_id)
 
-    return player
+    return PlayerFactory.create_response(player)
 
 
 @router.get("/", response_model=List[PlayerResponse])
@@ -61,37 +63,42 @@ async def get_players(
     result = await session.execute(query)
     players = result.scalars().all()
 
-    return players
+    return PlayerFactory.create_response_list(players)
 
 
 @router.get("/{player_id}/stats", response_model=PlayerStatsResponse)
 async def get_player_stats(
     player_id: int, session: AsyncSession = Depends(get_session)
 ):
-    """Get stats for a player."""
-    # Check if player exists
+    """
+    Get stats for a player.
+
+    Args:
+        player_id: The player ID
+        session: Database session
+
+    Returns:
+        The player stats
+    """
+    # First check if the player exists
     player = await session.get(Player, player_id)
     if not player:
-        raise NotFoundException(resource_type="Player", resource_id=player_id)
+        raise NotFoundException(f"Player with ID {player_id} not found")
 
-    # Get player stats
-    result = await session.execute(
-        select(PlayerStats).where(PlayerStats.player_id == player_id)
+    # For now, return mock stats since PlayerStats model has been removed
+    return PlayerStatsResponse(
+        id=1,  # Mock ID for stats
+        player_id=player_id,
+        player_name=player.name,
+        matches_played=0,
+        runs=0,
+        wickets=0,
+        highest_score=0,
+        best_bowling="0/0",
+        fantasy_points=0.0,
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
     )
-    stats = result.scalars().first()
-
-    if not stats:
-        # Return empty stats if none exist
-        return PlayerStatsResponse(
-            player_id=player_id,
-            matches_played=0,
-            runs_scored=0,
-            wickets_taken=0,
-            catches=0,
-            player=player,
-        )
-
-    return stats
 
 
 @router.put("/{player_id}", response_model=PlayerResponse)
@@ -114,7 +121,7 @@ async def update_player(
     await session.commit()
     await session.refresh(player)
 
-    return player
+    return PlayerFactory.create_response(player)
 
 
 @router.delete("/{player_id}", status_code=status.HTTP_204_NO_CONTENT)

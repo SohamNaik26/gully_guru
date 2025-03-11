@@ -1,13 +1,47 @@
 """
-Tests for User-related API endpoints
+Isolated tests for User-related API endpoints that don't rely on the actual application
 """
 
+import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
+from fastapi import FastAPI, HTTPException, status
+from fastapi.testclient import TestClient
 from datetime import datetime, timezone
-from fastapi import HTTPException, status
 
-from src.tests.utils.mock_data import MockDataFactory
+from src.api.routes.users import router as user_router
 from src.tests.utils.mock_models import MockUser
+from src.tests.utils.mock_data import MockDataFactory
+
+
+@pytest.fixture
+def mock_db():
+    """Create a mock database session."""
+    mock = AsyncMock()
+    return mock
+
+
+@pytest.fixture
+def isolated_app(mock_db):
+    """Create an isolated FastAPI app with mocked dependencies."""
+    app = FastAPI()
+
+    # Override the get_session dependency
+    async def get_mock_db():
+        yield mock_db
+
+    # Add the user router with the overridden dependency
+    from src.db.session import get_session
+
+    app.dependency_overrides[get_session] = get_mock_db
+    app.include_router(user_router, prefix="/api/users")
+
+    return app
+
+
+@pytest.fixture
+def test_client(isolated_app):
+    """Create a test client for the isolated app."""
+    return TestClient(isolated_app)
 
 
 def test_get_all_users(test_client, mock_db):

@@ -1,53 +1,198 @@
 ---
 description: General principles for code organization and structure
 globs: ["**/*.py"]
+alwaysApply: false
 ---
+# GullyGuru General Development Guidelines
 
-# General Principles
+Here are some best practices and rules you must follow:
 
-## Functional Programming Approach
+- You use Python 3.12
+- Frameworks:
+  - FastAPI for API development
+  - SQLModel for ORM
+  - Alembic for database migrations
+  - Pydantic for data validation
+  - python-telegram-bot for Telegram integration
+- You use pipenv for dependency management
+- You use PostgreSQL for database
+- You use pytest for testing
+- You use black and flake8 for code formatting and linting
+- You use mypy for type checking
 
-- **Prefer Functions Over Classes**: Use plain functions for business logic and route handlers. Reserve classes for:
-  - Pydantic models
-  - SQLModel ORM models
-  - Complex stateful components
+## System Architecture
 
-- **Pure Functions**: Design functions to avoid side effects when possible:
-  ```python
-  # ✅ Good: Pure function
-  def calculate_fantasy_points(runs: int, wickets: int, economy: float) -> float:
-      points = runs * 1.0 + wickets * 25.0
-      if economy < 6.0:
-          points += 5.0
-      return points
-  
-  # ❌ Bad: Function with side effects
-  def calculate_and_update_points(player_id: int, runs: int, wickets: int):
-      points = runs * 1.0 + wickets * 25.0
-      db.update_player_points(player_id, points)  # Side effect
-  ```
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│                 │     │                 │     │                 │
+│  Telegram Bot   │◄────┤   FastAPI API   │◄────┤   PostgreSQL    │
+│                 │     │                 │     │   Database      │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+```
 
-## Modularity
+# Key Components and Documentation
 
-- **Single Responsibility**: Each module, function, and class should have a single responsibility.
-- **Encapsulation**: Keep implementation details hidden behind well-defined interfaces.
-- **Loose Coupling**: Minimize dependencies between components.
+key_components = [
+    "Database Layer: PostgreSQL with SQLModel ORM - See /docs/db_model.md and /docs/db_migration.md",
+    "API Layer: FastAPI-based RESTful API - See /docs/api.md and /docs/system_architecture.md",
+    "Bot Layer: Telegram bot for user interaction - See /docs/system_architecture.md",
+    "Game Mechanics: Fantasy cricket game logic - See /docs/auction_management.md and /docs/gameplan.md",
+]
 
-## Type Annotations
+# Folder structure
 
-- **Always Use Type Hints**: Add type annotations to all function signatures and variable declarations.
-  ```python
-  # ✅ Good: With type hints
-  def get_player_by_id(player_id: int) -> Optional[Player]:
-      return db.query(Player).filter(Player.id == player_id).first()
-  
-  # ❌ Bad: Without type hints
-  def get_player_by_id(player_id):
-      return db.query(Player).filter(Player.id == player_id).first()
-  ```
+folder_structure = """
+docs/
+src/
+  api/
+    main.py
+    routes/
+    schemas/
+    dependencies/
+  bot/
+    main.py
+    handlers/
+    commands/
+  db/
+    models/
+    migrations/
+  utils/
+Pipfile
+"""
 
-## Code Organization
+# Code Organization Principles
 
-- **Logical Grouping**: Group related functionality in the same module.
-- **Separation of Concerns**: Separate business logic, data access, and API endpoints.
-- **Consistent Structure**: Follow a consistent structure across similar components. 
+code_organization_principles = [
+    "Follow the Single Responsibility Principle for all modules, functions, and classes",
+    "Keep implementation details hidden behind well-defined interfaces (Encapsulation)",
+    "Minimize dependencies between components (Loose Coupling)",
+    "Group related functionality together (High Cohesion)",
+    "Prefer functions over classes for business logic and route handlers",
+    "Design functions to avoid side effects when possible (Pure Functions)",
+    "Prefer immutable data structures",
+]
+
+# Naming Conventions
+
+naming_conventions = [
+    "Variables and Functions: Use snake_case",
+    "Classes: Use PascalCase",
+    "Constants: Use UPPER_CASE",
+    "Private Methods/Variables: Prefix with underscore _",
+    "Type Variables: Use PascalCase with descriptive names",
+    "Tables: Use plural nouns in snake_case",
+    "Columns: Use snake_case",
+    "Primary Keys: Use id or <table_name_singular>_id",
+    "Foreign Keys: Use <referenced_table_singular>_id",
+    "Junction Tables: Name as <table1_singular>_<table2_singular>",
+]
+
+# API Endpoint Naming
+
+api_endpoint_naming = """
+- Use Nouns: Represent resources, not actions
+- Use Plural: For collection endpoints
+- Use Kebab-Case: For multi-word resources
+- RESTful Patterns:
+  - GET /resources: List resources
+  - GET /resources/{id}: Get a specific resource
+  - POST /resources: Create a resource
+  - PUT /resources/{id}: Update a resource
+  - DELETE /resources/{id}: Delete a resource
+"""
+
+# Development Environment
+
+development_environment = [
+    "Use pipenv for dependency management and virtual environment",
+    "Keep Pipfile and Pipfile.lock in version control",
+    "Pin dependency versions in Pipfile",
+    "Always run Python scripts using the -m flag (module mode)",
+    "Use .env file for local development environment variables",
+    "Run the API server with: pipenv run python -m src.api.main",
+    "Run the bot with: pipenv run python -m src.bot.main",
+]
+
+# Type Annotations
+
+type_annotations = [
+    "Always Use Type Hints: Add type annotations to all function signatures",
+    "Use Optional for Nullable Types: Optional[Type] for values that might be None",
+    "Use Union for Multiple Types: Union[Type1, Type2] for values of different types",
+    "Use TypedDict for Dictionary Structures: Define structure of dictionaries",
+    "Use Generic Types: For collections and containers",
+]
+
+# Error Handling
+
+error_handling = [
+    "Create a hierarchy of custom exceptions with GullyGuruError as the base",
+    "Create specific exceptions for different error types",
+    "Map domain exceptions to appropriate HTTP status codes",
+    "Use HTTPException for API errors with consistent error response models",
+    "Register global exception handlers for custom exceptions",
+    "Be specific with exception handling (catch specific exceptions)",
+    "Avoid empty except blocks (don't swallow exceptions)",
+    "Use raise ... from to preserve exception context",
+    "Use context managers for resource cleanup",
+    "Always log exceptions with context",
+]
+
+# Asynchronous Programming
+
+async_guidelines = [
+    "Use async for I/O-bound operations (waiting for external resources)",
+    "Avoid async for CPU-intensive tasks, use thread/process pools instead",
+    "Separate I/O-bound and CPU-bound operations",
+    "Always await tasks (never ignore awaitable objects)",
+    "Handle exceptions in async code with try/except",
+    "Handle task cancellation gracefully",
+    "Use async context managers for resource management",
+    "Use semaphores for limiting concurrency",
+    "Use asyncio.gather for parallel tasks",
+    "Use asyncio.as_completed for processing results as they arrive",
+]
+
+# Testing
+
+testing_guidelines = [
+    "Write unit tests for pure functions",
+    "Use mocks for external dependencies",
+    "Use parameterized tests for testing multiple inputs",
+    "Test boundary conditions and edge cases",
+    "Write integration tests for API endpoints",
+    "Test database operations with a test database",
+    "Use async test frameworks for testing async code",
+    "Write end-to-end tests for complete user flows",
+    "Test error handling and recovery",
+]
+
+# Performance Considerations
+
+performance_guidelines = [
+    "Add indexes to frequently queried database fields",
+    "Optimize complex queries",
+    "Implement pagination for large result sets",
+    "Cache frequently accessed data",
+    "Limit response size for better API performance",
+    "Enable response compression",
+    "Implement rate limiting for public endpoints",
+    "Use response caching for read-heavy endpoints",
+    "Batch related tasks for better performance",
+    "Use connection pools for external services",
+]
+
+# Additional instructions
+
+additional_instructions = """
+1. Always follow PEP 8 style guide for Python code
+2. Add docstrings to all modules, classes, and functions
+3. Include examples in docstrings for complex functions
+4. Use FastAPI's dependency injection for shared resources
+5. Implement proper input validation using Pydantic
+6. Use FastAPI's background tasks for long-running operations
+7. Implement proper CORS handling
+8. Use FastAPI's security utilities for authentication
+9. Implement comprehensive unit and integration tests
+10. Keep functions small and focused on a single task
+"""

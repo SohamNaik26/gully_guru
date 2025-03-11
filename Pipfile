@@ -40,6 +40,7 @@ pytest = "*"
 
 [dev-packages]
 black="*"
+pytest-asyncio = "*"
 
 [requires]
 python_version = "3.13.0"

@@ -196,23 +196,25 @@ class GullyService(BaseService):
         """Get a user's participation in a specific gully.
 
         Args:
-            user_id: The ID of the user
-            gully_id: The ID of the gully
+            user_id: The user ID
+            gully_id: The gully ID
 
         Returns:
-            Gully participation data or None if not found
+            The participation data if found, None otherwise
         """
-        # First get all participations
-        participations = await self.get_user_gully_participations(user_id)
+        try:
+            # Use the participants endpoint with query parameters
+            url = f"{self._build_url()}participants/?user_id={user_id}&gully_id={gully_id}"
+            response = await self.client.get(url)
 
-        # Find the specific participation for this gully
-        for participation in participations:
-            if participation.get("gully_id") == gully_id:
-                return participation
-
-        # Not found
-        logger.debug(f"User {user_id} is not a participant in gully {gully_id}")
-        return None
+            if response.status_code == 200:
+                participants = response.json()
+                # Return the first matching participation if any
+                return participants[0] if participants else None
+            return None
+        except Exception as e:
+            logger.error(f"Error getting user participation: {e}")
+            return None
 
     async def add_user_to_gully(
         self, user_id: int, gully_id: int, role: str = "member"
@@ -220,32 +222,34 @@ class GullyService(BaseService):
         """Add a user to a gully.
 
         Args:
-            user_id: The ID of the user
-            gully_id: The ID of the gully
-            role: The role of the user in the gully
+            user_id: The user ID
+            gully_id: The gully ID
+            role: The role for the user (default: "member")
 
         Returns:
-            Gully participant data or None if addition failed
+            The created participation data if successful, None otherwise
         """
-        data = {
-            "user_id": user_id,
-            "team_name": f"User {user_id}'s Team",  # Default team name
-        }
-        params = {
-            "gully_id": gully_id,
-            "role": role,
-        }
-        url = self._build_participants_url()
-        response = await self._make_request(
-            "POST",
-            url,
-            json=data,
-            params=params,
-        )
-        if "error" in response:
-            logger.error(f"Error adding user to gully: {response['error']}")
+        try:
+            # Create participant data
+            participant_data = {
+                "user_id": user_id,
+                "gully_id": gully_id,
+                "role": role,
+            }
+
+            # Use the participants endpoint with gully_id as query parameter
+            url = f"{self._build_url()}participants/?gully_id={gully_id}"
+            response = await self.client.post(url, json=participant_data)
+
+            if response.status_code in (200, 201):
+                return response.json()
+            logger.error(
+                f"Failed to add user to gully: {response.status_code} - {response.text}"
+            )
             return None
-        return response
+        except Exception as e:
+            logger.error(f"Error adding user to gully: {e}")
+            return None
 
     async def set_active_gully(self, participant_id: int) -> Optional[Dict[str, Any]]:
         """Set a gully as active for a user.
@@ -267,19 +271,53 @@ class GullyService(BaseService):
     async def update_gully_participant_role(
         self, participant_id: int, role: str
     ) -> Optional[Dict[str, Any]]:
-        """Update a participant's role in a gully.
+        """Update a participant's role.
 
         Args:
-            participant_id: The ID of the gully participant
-            role: The new role (admin, member, owner)
+            participant_id: The participant ID
+            role: The new role
 
         Returns:
-            Result of the operation
+            The updated participation data if successful, None otherwise
         """
-        url = self._build_participants_url(str(participant_id))
-        data = {"role": role}
-        response = await self._make_request("PUT", url, json=data)
-        if "error" in response:
-            logger.error(f"Error updating participant role: {response['error']}")
+        try:
+            # Create update data
+            update_data = {
+                "role": role,
+            }
+
+            # Use the participants endpoint with participant_id
+            url = f"{self._build_url()}participants/{participant_id}"
+            response = await self.client.put(url, json=update_data)
+
+            if response.status_code == 200:
+                return response.json()
+            logger.error(
+                f"Failed to update participant role: {response.status_code} - {response.text}"
+            )
             return None
-        return response
+        except Exception as e:
+            logger.error(f"Error updating participant role: {e}")
+            return None
+
+    async def get_gully_participant(
+        self, participant_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Get a specific participant by ID.
+
+        Args:
+            participant_id: The participant ID
+
+        Returns:
+            The participant data if found, None otherwise
+        """
+        try:
+            url = f"{self._build_url()}participants/{participant_id}"
+            response = await self.client.get(url)
+
+            if response.status_code == 200:
+                return response.json()
+            return None
+        except Exception as e:
+            logger.error(f"Error getting participant: {e}")
+            return None

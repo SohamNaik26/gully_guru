@@ -8,6 +8,9 @@ from src.api.schemas.user import (
     UserCreate,
     UserResponse,
     UserWithPlayers,
+    UserPlayerBase,
+    UserPlayerCreate,
+    UserPlayerResponse,
 )
 
 # Player schemas
@@ -36,16 +39,25 @@ from src.api.schemas.gully import (
     GullyParticipantBase,
     GullyParticipantCreate,
     GullyParticipantResponse,
+    ParticipantUpdate,
     # Game mechanics schemas
     UserSquadResponse,
     AuctionBidCreate,
     AuctionBidResponse,
     LeaderboardEntry,
     LeaderboardResponse,
-    UserPlayerBase,
-    UserPlayerCreate,
-    UserPlayerRead,
     UserPlayerWithDetails,
+)
+
+# Admin schemas
+from src.api.schemas.admin import (
+    AdminPermissionBase,
+    AdminPermissionCreate,
+    AdminPermissionResponse,
+    AdminRoleBase,
+    AdminRoleCreate,
+    AdminRoleResponse,
+    AdminUserResponse,
 )
 
 # Re-export all models
@@ -55,6 +67,9 @@ __all__ = [
     "UserCreate",
     "UserResponse",
     "UserWithPlayers",
+    "UserPlayerBase",
+    "UserPlayerCreate",
+    "UserPlayerResponse",
     # Player schemas
     "PlayerBase",
     "PlayerCreate",
@@ -73,14 +88,20 @@ __all__ = [
     "GullyParticipantBase",
     "GullyParticipantCreate",
     "GullyParticipantResponse",
+    "ParticipantUpdate",
     # Game mechanics schemas
     "UserSquadResponse",
     "AuctionBidCreate",
     "AuctionBidResponse",
     "LeaderboardEntry",
     "LeaderboardResponse",
-    "UserPlayerBase",
-    "UserPlayerCreate",
-    "UserPlayerRead",
     "UserPlayerWithDetails",
+    # Admin schemas
+    "AdminPermissionBase",
+    "AdminPermissionCreate",
+    "AdminPermissionResponse",
+    "AdminRoleBase",
+    "AdminRoleCreate",
+    "AdminRoleResponse",
+    "AdminUserResponse",
 ]

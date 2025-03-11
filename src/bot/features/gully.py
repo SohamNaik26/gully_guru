@@ -4,77 +4,73 @@ Handles automatic user onboarding when they join a group.
 """
 
 import logging
-from telegram import Update
-from telegram.ext import ContextTypes
+from typing import Dict, Any, Optional
 
-from src.bot.sync_manager import add_user_to_gully, create_or_get_gully
+from telegram import Update, Bot
+from telegram.ext import ContextTypes
+from telegram.constants import ChatType
+
+from src.bot import api_client, initialize_api_client
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
 
-async def new_chat_members_handler(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def create_gully_for_group(
+    bot: Bot, group_id: int, group_name: str
+) -> Optional[Dict[str, Any]]:
     """
-    Handle new members joining a chat.
-    Automatically adds them to the gully if one exists, or creates a new gully.
+    Create a new gully for a Telegram group.
+
+    Args:
+        bot: The Telegram bot instance
+        group_id: The Telegram group ID
+        group_name: The name of the Telegram group
+
+    Returns:
+        The created gully data or None if creation failed
     """
-    chat = update.effective_chat
-    new_members = update.message.new_chat_members
+    logger.info(f"Creating gully for group: {group_name} (ID: {group_id})")
 
-    # Skip if not a group chat
-    if chat.type not in ["group", "supergroup"]:
-        logger.debug(f"Skipping new members event for non-group chat: {chat.id}")
-        return
-
-    logger.info(
-        f"Processing {len(new_members)} new members in group: {chat.title} (ID: {chat.id})"
-    )
-
-    # Get or create the gully for this group using the improved function
-    gully = await create_or_get_gully(chat)
-    if not gully:
-        logger.error(f"Failed to create or get gully for group {chat.id}")
-        return
-
-    # Check if any of the new members are admins
     try:
-        admins = await context.bot.get_chat_administrators(chat.id)
-        admin_ids = {admin.user.id for admin in admins}
-        logger.debug(f"Found {len(admin_ids)} admins in group {chat.id}")
-    except Exception as e:
-        logger.error(f"Error getting chat administrators: {e}")
-        admin_ids = set()
+        # Ensure API client is initialized
+        await initialize_api_client()
 
-    # Process each new member
-    added_count = 0
-    for member in new_members:
-        # Skip bots
-        if member.is_bot:
-            logger.debug(f"Skipping bot user {member.id}")
-            continue
+        # Check if gully already exists for this group
+        existing_gully = await api_client.gullies.get_gully_by_group(group_id)
 
-        # Check if user is an admin
-        is_admin = member.id in admin_ids
-        role = "admin" if is_admin else "member"
+        if existing_gully:
+            logger.info(f"Gully already exists for group {group_name} (ID: {group_id})")
+            return existing_gully
 
-        # Add user to gully using the improved sync manager function
-        success = await add_user_to_gully(member, gully["id"], is_admin)
-        if success:
-            added_count += 1
+        # Create new gully
+        new_gully = await api_client.gullies.create_gully(
+            name=group_name, telegram_group_id=group_id
+        )
+
+        if new_gully:
             logger.info(
-                f"Added new user {member.first_name} (ID: {member.id}) as {role} to gully {gully['id']}"
+                f"Successfully created gully for group {group_name}: {new_gully.get('id')}"
             )
 
-    # Send welcome message if users were added
-    if added_count > 0:
-        welcome_message = (
-            f"Welcome to {chat.title}! 👋\n\n"
-            f"You've been automatically added to this gully. "
-            f"Use /my_team to manage your team and participate in the fantasy league."
-        )
-        try:
-            await context.bot.send_message(chat_id=chat.id, text=welcome_message)
-        except Exception as e:
-            logger.error(f"Error sending welcome message: {e}")
+            # Send welcome message to the group
+            await bot.send_message(
+                chat_id=group_id,
+                text=f"🏏 *Welcome to GullyGuru!* 🏏\n\n"
+                f"I've created a new gully for this group: *{group_name}*\n\n"
+                f"Group admins have been automatically added as gully admins.\n\n"
+                f"Use /auction_status to check the current auction status.",
+                parse_mode="Markdown",
+            )
+
+            return new_gully
+        else:
+            logger.error(f"Failed to create gully for group {group_name}")
+            return None
+
+    except Exception as e:
+        logger.error(f"Error creating gully for group {group_name}: {e}")
+        return None
+
+
+# TODO: create a new function to to add users from user table to gullyparticipant, add owner of telegram group as admins. add by default others as members.

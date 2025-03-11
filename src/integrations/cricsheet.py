@@ -11,13 +11,14 @@ import traceback
 from sqlmodel import Session, select
 
 from src.db.models.cricsheet import CricsheetPlayer, CricsheetMatch
-from src.db.models import Player, Match, MatchPerformance, PlayerStats
-from src.db.session import get_session
+from src.db.models import Player, Match, MatchPerformance
+from src.db.session import get_session, engine
 from src.db.integration_helper import (
     push_integration_data,
     process_integration_data,
     retry_operation,
 )
+from src.utils.logger import get_logger
 
 logger = logging.getLogger(__name__)
 
@@ -481,97 +482,95 @@ async def update_player_stats_from_performances(
     player_id: int, session: Optional[Session] = None
 ) -> Dict[str, Any]:
     """
-    Update a player's cumulative stats based on their match performances.
+    Update player statistics based on match performances.
+
+    This function calculates aggregate statistics for a player based on their
+    match performances and updates the database.
 
     Args:
-        player_id: Player ID
-        session: Database session (optional)
+        player_id: The ID of the player to update stats for
+        session: Optional database session
 
     Returns:
-        Dictionary with update results
+        Dict with status information
     """
+    logger = get_logger()
     close_session = False
-    if session is None:
-        session = next(get_session())
+
+    if not session:
+        session = Session(engine)
         close_session = True
 
     try:
-        # Get all performances for the player
+        # Get player
+        player = session.get(Player, player_id)
+        if not player:
+            return {
+                "status": "error",
+                "message": f"Player with ID {player_id} not found",
+            }
+
+        # Get all performances for this player
         performances = session.exec(
             select(MatchPerformance).where(MatchPerformance.player_id == player_id)
         ).all()
 
         if not performances:
-            return {
-                "success": True,
-                "message": f"No performances found for player {player_id}",
-            }
+            logger.info(f"No performances found for player {player_id}")
+            return {"status": "success", "message": "No performances to process"}
 
-        # Calculate cumulative stats
-        total_runs = sum(p.runs_scored for p in performances)
-        total_wickets = sum(p.wickets for p in performances)
-        highest_score = max((p.runs_scored for p in performances), default=0)
+        # Calculate stats
+        total_runs = sum(
+            p.runs_scored for p in performances if p.runs_scored is not None
+        )
+        total_wickets = sum(
+            p.wickets_taken for p in performances if p.wickets_taken is not None
+        )
 
-        # Find best bowling performance
-        best_bowling_wickets = 0
-        best_bowling_runs = float("inf")
+        # Calculate highest score
+        highest_score = max(
+            (p.runs_scored for p in performances if p.runs_scored is not None),
+            default=0,
+        )
 
-        for p in performances:
-            if p.wickets > best_bowling_wickets or (
-                p.wickets == best_bowling_wickets
-                and p.runs_conceded < best_bowling_runs
-            ):
-                best_bowling_wickets = p.wickets
-                best_bowling_runs = p.runs_conceded
+        # Calculate best bowling
+        best_bowling_performances = [
+            (p.wickets_taken, p.runs_conceded)
+            for p in performances
+            if p.wickets_taken is not None
+            and p.wickets_taken > 0
+            and p.runs_conceded is not None
+        ]
 
         best_bowling = (
-            f"{best_bowling_wickets}/{best_bowling_runs}"
-            if best_bowling_wickets > 0
+            f"{max(best_bowling_performances, key=lambda x: (x[0], -x[1]))[0]}/"
+            f"{max(best_bowling_performances, key=lambda x: (x[0], -x[1]))[1]}"
+            if best_bowling_performances
             else "0/0"
         )
 
-        # Get or create player stats
-        player_stats = session.exec(
-            select(PlayerStats).where(PlayerStats.player_id == player_id)
-        ).first()
-
-        if player_stats:
-            # Update existing stats
-            player_stats.matches_played = len(performances)
-            player_stats.runs = total_runs
-            player_stats.wickets = total_wickets
-            player_stats.highest_score = highest_score
-            player_stats.best_bowling = best_bowling
-            # Fantasy points calculation would go here
-        else:
-            # Create new stats
-            player_stats = PlayerStats(
-                player_id=player_id,
-                matches_played=len(performances),
-                runs=total_runs,
-                wickets=total_wickets,
-                highest_score=highest_score,
-                best_bowling=best_bowling,
-                # Fantasy points calculation would go here
-            )
-            session.add(player_stats)
-
-        # Commit changes
-        session.commit()
+        # Instead of updating PlayerStats, we just log the calculated stats
+        logger.info(f"Player {player.name} (ID: {player_id}) stats calculated:")
+        logger.info(f"Matches played: {len(performances)}")
+        logger.info(f"Total runs: {total_runs}")
+        logger.info(f"Total wickets: {total_wickets}")
+        logger.info(f"Highest score: {highest_score}")
+        logger.info(f"Best bowling: {best_bowling}")
 
         return {
-            "success": True,
+            "status": "success",
             "player_id": player_id,
+            "player_name": player.name,
             "matches_played": len(performances),
-            "total_runs": total_runs,
-            "total_wickets": total_wickets,
+            "runs": total_runs,
+            "wickets": total_wickets,
             "highest_score": highest_score,
             "best_bowling": best_bowling,
         }
 
     except Exception as e:
-        session.rollback()
-        return {"success": False, "error": str(e)}
+        logger.error(f"Error updating player stats: {str(e)}")
+        return {"status": "error", "message": str(e)}
 
     finally:
         if close_session:

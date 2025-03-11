@@ -1,45 +1,61 @@
-from fastapi import APIRouter, Depends
-from sqlmodel import select
+"""
+Admin API routes for GullyGuru
+"""
+
+import logging
+from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.session import get_session
-from src.db.models import User, GullyParticipant
-import logging
-
-# Configure logging
-logger = logging.getLogger(__name__)
+from src.api.schemas.admin import (
+    AdminRoleResponse,
+    AdminUserResponse,
+)
+from src.api.services.admin.client import AdminServiceClient
+from src.api.factories import AdminFactory
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
-@router.get("/gully/{gully_id}/admins")
-async def get_gully_admins_endpoint(
+@router.get("/gully/{gully_id}/admins", response_model=List[AdminUserResponse])
+async def get_gully_admins(
     gully_id: int,
-    session: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_session),
 ):
     """Get all admins for a gully."""
-    # Query for all admin participants in the gully
-    query = select(GullyParticipant).where(
-        (GullyParticipant.gully_id == gully_id)
-        & (GullyParticipant.role.in_(["admin", "owner"]))
-    )
+    try:
+        admin_service = AdminServiceClient(db)
+        admins = await admin_service.get_gully_admins(gully_id)
+        return admins
+    except Exception as e:
+        logger.error(f"Error getting gully admins: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error getting gully admins",
+        )
 
-    result = await session.execute(query)
-    admin_participants = result.scalars().all()
 
-    # Get the user details for each admin
-    admin_users = []
-    for participant in admin_participants:
-        user = await session.get(User, participant.user_id)
-        if user:
-            admin_users.append(
-                {
-                    "user_id": user.id,
-                    "telegram_id": user.telegram_id,
-                    "username": user.username,
-                    "full_name": user.full_name,
-                    "role": participant.role,
-                }
-            )
+@router.post(
+    "/gully/{gully_id}/admins/{user_id}",
+    response_model=AdminRoleResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def assign_admin_role(
+    gully_id: int, user_id: int, db: AsyncSession = Depends(get_session)
+):
+    """Assign admin role to a user."""
+    try:
+        admin_service = AdminServiceClient(db)
 
-    return admin_users
+        # Assign admin role
+        admin_role = await admin_service.assign_admin_role(user_id, gully_id)
+        return admin_role
+    except Exception as e:
+        logger.error(f"Error assigning admin role: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error assigning admin role",
+        )

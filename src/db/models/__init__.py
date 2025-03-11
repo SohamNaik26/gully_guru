@@ -11,23 +11,10 @@ from src.db.models.models import (
     # Player models
     Player,
     UserPlayer,
-    PlayerStats,
-    # Match models
-    Match,
-    MatchPerformance,
-    # Game mechanics models
-    AuctionRound,
-    AuctionBid,
-    TransferWindow,
-    TransferListing,
-    TransferBid,
-    
-    
     # Gully models
     Gully,
     GullyParticipant,
-    # Admin models
-    AdminPermission,
+    # Transfer models removed
 )
 
 # Import integration models
@@ -49,19 +36,9 @@ all_models = [
     User,
     Player,
     UserPlayer,
-    PlayerStats,
-    Match,
-    MatchPerformance,
-    AuctionRound,
-    AuctionBid,
-    TransferWindow,
-    TransferListing,
-    TransferBid,
-    
-    
     Gully,
     GullyParticipant,
-    AdminPermission,
+    # Transfer models removed
     # API models - Removed from database tables but kept in code for future use
     # ApiMatch,
     # ApiPlayer,

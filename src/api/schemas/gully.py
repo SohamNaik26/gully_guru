@@ -13,8 +13,6 @@ class GullyBase(BaseModel):
 
     name: str
     telegram_group_id: int
-    start_date: Optional[datetime] = None
-    end_date: Optional[datetime] = None
 
 
 class GullyCreate(GullyBase):
@@ -27,7 +25,6 @@ class GullyResponse(GullyBase):
     """Response model for gully data."""
 
     id: int
-    status: str
     created_at: datetime
     updated_at: datetime
 
@@ -40,12 +37,15 @@ class GullyParticipantBase(BaseModel):
 
     user_id: int
     team_name: str
+    budget: Decimal = Decimal("120.0")
+    points: int = 0
+    role: str = "member"
 
 
 class GullyParticipantCreate(GullyParticipantBase):
     """Model for creating a new gully participant."""
 
-    pass
+    gully_id: int
 
 
 class GullyParticipantResponse(GullyParticipantBase):
@@ -53,23 +53,44 @@ class GullyParticipantResponse(GullyParticipantBase):
 
     id: int
     gully_id: int
-    budget: Decimal
-    points: int
-    role: str
-    is_active: bool
-    registration_complete: bool
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v):
+        """Validate that the role is one of the allowed values."""
+        allowed_roles = ["member", "admin"]
+        if v not in allowed_roles:
+            raise ValueError(f"Role must be one of: {', '.join(allowed_roles)}")
+        return v
+
+    @field_validator("budget")
+    @classmethod
+    def validate_budget(cls, v):
+        """Ensure budget is non-negative."""
+        if v < 0:
+            raise ValueError("Budget cannot be negative")
+        return v
+
+    @field_validator("points")
+    @classmethod
+    def validate_points(cls, v):
+        """Validate that points is a non-negative integer."""
+        if v < 0:
+            raise ValueError("Points must be a non-negative integer")
+        return v
+
 
 class ParticipantUpdate(BaseModel):
     """Model for updating a gully participant."""
 
-    action: Optional[str] = None  # activate, complete_registration
     role: Optional[str] = None  # admin, member
     team_name: Optional[str] = None
+    budget: Optional[Decimal] = None
+    points: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -151,8 +172,10 @@ class UserPlayerBase(BaseModel):
     user_id: int
     player_id: int
     gully_id: int
-    purchase_price: Decimal
-    purchase_date: datetime
+    purchase_price: Decimal = Decimal("0.0")
+    is_captain: bool = False
+    is_vice_captain: bool = False
+    is_playing_xi: bool = False
 
 
 class UserPlayerCreate(UserPlayerBase):
@@ -161,17 +184,26 @@ class UserPlayerCreate(UserPlayerBase):
     pass
 
 
-class UserPlayerRead(UserPlayerBase):
+class UserPlayerResponse(UserPlayerBase):
     """Response model for user player data."""
 
     id: int
+    purchase_date: datetime
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
 
+    @field_validator("purchase_price")
+    @classmethod
+    def validate_purchase_price(cls, v):
+        """Ensure purchase price is non-negative."""
+        if v < 0:
+            raise ValueError("Purchase price cannot be negative")
+        return v
 
-class UserPlayerWithDetails(UserPlayerRead):
+
+class UserPlayerWithDetails(UserPlayerResponse):
     """Response model for user player data with player details."""
 
     player: PlayerResponse
