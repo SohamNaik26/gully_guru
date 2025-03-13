@@ -13,6 +13,7 @@ from src.bot.features.admin import (
 from src.bot.features.auction import auction_status_command, handle_auction_callback
 from src.bot.features.gully import new_chat_members_handler
 from src.bot.features.team import my_team_command, handle_team_callback
+from src.bot.features.onboarding import register_onboarding_handlers
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -47,5 +48,8 @@ def register_handlers(application):
     application.add_handler(
         CallbackQueryHandler(handle_team_callback, pattern="^team_")
     )
+
+    # Onboarding feature handlers
+    register_onboarding_handlers(application)
 
     logger.info("All feature handlers registered successfully")

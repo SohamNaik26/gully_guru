@@ -13,7 +13,7 @@ from src.api.schemas.admin import (
     AdminRoleResponse,
     AdminUserResponse,
 )
-from src.api.services.admin.client import AdminServiceClient
+from src.api.services import AdminServiceClient
 from src.api.factories import AdminFactory
 
 router = APIRouter()
@@ -29,7 +29,7 @@ async def get_gully_admins(
     try:
         admin_service = AdminServiceClient(db)
         admins = await admin_service.get_gully_admins(gully_id)
-        return admins
+        return AdminFactory.create_response_list(admins)
     except Exception as e:
         logger.error(f"Error getting gully admins: {e}")
         raise HTTPException(
@@ -52,7 +52,7 @@ async def assign_admin_role(
 
         # Assign admin role
         admin_role = await admin_service.assign_admin_role(user_id, gully_id)
-        return admin_role
+        return AdminFactory.create_role_response(admin_role)
     except Exception as e:
         logger.error(f"Error assigning admin role: {e}")
         raise HTTPException(

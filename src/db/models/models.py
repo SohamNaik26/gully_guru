@@ -1,10 +1,44 @@
 from typing import Optional, TYPE_CHECKING, ForwardRef
 from datetime import datetime, timezone
 from decimal import Decimal
+from enum import Enum
 from sqlmodel import SQLModel, Field, Relationship
 from pydantic import field_validator
 from sqlalchemy import TypeDecorator, DateTime, BigInteger, event
 import sqlalchemy
+
+
+# Enum Classes
+class PlayerType(str, Enum):
+    """Enum for player types."""
+
+    BATSMAN = "BAT"
+    BOWLER = "BOWL"
+    ALL_ROUNDER = "ALL"
+    WICKET_KEEPER = "WK"
+
+
+class ParticipantRole(str, Enum):
+    """Enum for participant roles in a Gully."""
+
+    MEMBER = "member"
+    ADMIN = "admin"
+
+
+class AuctionType(str, Enum):
+    """Enum for auction types."""
+
+    NEW_PLAYER = "new_player"  # Initial auction for new players
+    TRANSFER = "transfer"  # Weekly transfer window auction
+
+
+class AuctionStatus(str, Enum):
+    """Enum for auction status."""
+
+    DRAFT = "draft"  # Player in draft stage (before submission)
+    PENDING = "pending"  # Waiting for auction to start
+    BIDDING = "bidding"  # Active bidding phase
+    COMPLETED = "completed"  # Auction has concluded
 
 
 # Custom DateTime type that ensures timezone awareness
@@ -78,9 +112,10 @@ class Player(TimeStampedModel, table=True):
     @classmethod
     def validate_player_type(cls, v):
         """Validate that player_type is one of the allowed values."""
-        valid_types = ["BAT", "BOWL", "ALL", "WK"]
-        if v not in valid_types:
-            raise ValueError(f"Player type must be one of {valid_types}")
+        if v not in [pt.value for pt in PlayerType]:
+            raise ValueError(
+                f"Player type must be one of {[pt.value for pt in PlayerType]}"
+            )
         return v
 
 
@@ -114,6 +149,8 @@ class GullyParticipant(TimeStampedModel, table=True):
         budget: Available budget for this Gully
         points: Total points earned in this Gully
         role: User's role in this Gully (member, admin, owner)
+        has_submitted_squad: Whether user has submitted their initial squad
+        submission_time: When the user submitted their squad
     """
 
     __tablename__ = "gully_participants"
@@ -129,7 +166,16 @@ class GullyParticipant(TimeStampedModel, table=True):
     )
     points: int = Field(default=0, description="Total points earned in this Gully")
     role: str = Field(
-        default="member", description="User's role in this Gully (member, admin)"
+        default=ParticipantRole.MEMBER.value,
+        description="User's role in this Gully (member, admin)",
+    )
+    has_submitted_squad: bool = Field(
+        default=False, description="Whether user has submitted their initial squad"
+    )
+    submission_time: Optional[datetime] = Field(
+        default=None,
+        sa_type=sqlalchemy.DateTime(timezone=True),
+        description="When the user submitted their squad",
     )
 
     # Define unique constraint for user_id and gully_id
@@ -138,6 +184,32 @@ class GullyParticipant(TimeStampedModel, table=True):
     )
 
     # Relationships will be defined after all classes are defined
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v):
+        """Validate that role is one of the allowed values."""
+        if v not in [role.value for role in ParticipantRole]:
+            raise ValueError(
+                f"Role must be one of {[role.value for role in ParticipantRole]}"
+            )
+        return v
+
+    @field_validator("budget")
+    @classmethod
+    def validate_budget(cls, v):
+        """Validate that budget is non-negative."""
+        if v < 0:
+            raise ValueError("Budget must be non-negative")
+        return v
+
+    @field_validator("points")
+    @classmethod
+    def validate_points(cls, v):
+        """Validate that points is non-negative."""
+        if v < 0:
+            raise ValueError("Points must be non-negative")
+        return v
 
 
 class Gully(TimeStampedModel, table=True):
@@ -164,6 +236,271 @@ class Gully(TimeStampedModel, table=True):
     )
 
     # Relationships will be defined after all classes are defined
+
+
+class UserPlayer(TimeStampedModel, table=True):
+    """
+    Model for player ownership by users in a specific Gully.
+
+    Represents the ownership relationship between a user and a player in a specific Gully,
+    including purchase details and team role information.
+
+    Attributes:
+        id: Primary key
+        user_id: Reference to the User
+        player_id: Reference to the Player
+        gully_id: Reference to the Gully context
+        purchase_price: Price paid for this player
+        purchase_date: When the player was purchased
+        is_captain: Whether this player is the team captain
+        is_vice_captain: Whether this player is the team vice-captain
+        is_playing_xi: Whether this player is in the playing XI
+    """
+
+    __tablename__ = "user_players"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    player_id: int = Field(foreign_key="players.id", index=True)
+    gully_id: int = Field(foreign_key="gullies.id", index=True)
+    purchase_price: Decimal = Field(description="Price paid for this player")
+    purchase_date: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.DateTime(timezone=True),
+    )
+    is_captain: bool = Field(default=False)
+    is_vice_captain: bool = Field(default=False)
+    is_playing_xi: bool = Field(default=True)
+
+    # Define unique constraint for player_id and gully_id
+    __table_args__ = (
+        sqlalchemy.UniqueConstraint("player_id", "gully_id", name="uq_player_gully"),
+    )
+
+    # Relationships will be defined after all classes are defined
+
+    @field_validator("purchase_price")
+    @classmethod
+    def validate_purchase_price(cls, v):
+        """Validate that purchase price is non-negative."""
+        if v < 0:
+            raise ValueError("Purchase price must be non-negative")
+        return v
+
+
+class AuctionQueue(TimeStampedModel, table=True):
+    """
+    Model for tracking players in auction queue.
+
+    Represents players that are queued for auction or transfer in a specific Gully,
+    including auction type, status, and when they were listed.
+
+    Attributes:
+        id: Primary key
+        gully_id: Reference to the Gully
+        player_id: Reference to the Player
+        seller_participant_id: Reference to the GullyParticipant who is selling the player (for transfer auctions)
+        auction_type: Type of auction (new_player or transfer)
+        status: Current status of the auction (pending, bidding, completed)
+        listed_at: When the player was listed for auction
+    """
+
+    __tablename__ = "auction_queue"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    gully_id: int = Field(foreign_key="gullies.id", index=True)
+    player_id: int = Field(foreign_key="players.id", index=True)
+    seller_participant_id: Optional[int] = Field(
+        default=None,
+        foreign_key="gully_participants.id",
+        index=True,
+        description="Seller of the player (for transfer auctions)",
+    )
+    auction_type: str = Field(
+        default=AuctionType.TRANSFER.value,
+        description="Type of auction (new_player or transfer)",
+    )
+    status: str = Field(
+        default=AuctionStatus.PENDING.value,
+        description="Status of auction (pending, bidding, completed)",
+    )
+    listed_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.DateTime(timezone=True),
+    )
+
+    # Add composite index for gully_id and status
+    __table_args__ = (
+        sqlalchemy.Index("ix_auction_queue_gully_status", "gully_id", "status"),
+        # Add CHECK constraint to ensure auction_type is valid
+        sqlalchemy.CheckConstraint(
+            f"auction_type IN {tuple(t.value for t in AuctionType)}",
+            name="ck_auction_type",
+        ),
+        # Add CHECK constraint to ensure status is valid
+        sqlalchemy.CheckConstraint(
+            f"status IN {tuple(s.value for s in AuctionStatus)}",
+            name="ck_auction_status",
+        ),
+    )
+
+    # Relationships will be defined after all classes are defined
+
+    @field_validator("auction_type")
+    @classmethod
+    def validate_auction_type(cls, v):
+        """Validate that auction_type is one of the allowed values."""
+        if v not in [t.value for t in AuctionType]:
+            raise ValueError(
+                f"Auction type must be one of {[t.value for t in AuctionType]}"
+            )
+        return v
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v):
+        """Validate that status is one of the allowed values."""
+        if v not in [s.value for s in AuctionStatus]:
+            raise ValueError(
+                f"Status must be one of {[s.value for s in AuctionStatus]}"
+            )
+        return v
+
+
+class TransferMarket(TimeStampedModel, table=True):
+    """
+    Model for tracking players in transfer market.
+
+    Represents players available for purchase in the transfer market for a specific Gully,
+    including their fair price and when they were listed.
+
+    Attributes:
+        id: Primary key
+        gully_id: Reference to the Gully
+        player_id: Reference to the Player
+        fair_price: Fair price for the player
+        listed_at: When the player was listed in the transfer market
+    """
+
+    __tablename__ = "transfer_market"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    gully_id: int = Field(foreign_key="gullies.id", index=True)
+    player_id: int = Field(foreign_key="players.id", index=True)
+    fair_price: Decimal = Field(description="Fair price for the player")
+    listed_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.DateTime(timezone=True),
+    )
+
+    # Add composite index for gully_id and listed_at
+    __table_args__ = (
+        sqlalchemy.Index("ix_transfer_market_gully_listed", "gully_id", "listed_at"),
+    )
+
+    # Relationships will be defined after all classes are defined
+
+    @field_validator("fair_price")
+    @classmethod
+    def validate_fair_price(cls, v):
+        """Validate that fair_price is non-negative."""
+        if v < 0:
+            raise ValueError("Fair price must be non-negative")
+        return v
+
+
+class BankTransaction(TimeStampedModel, table=True):
+    """
+    Model for tracking financial transactions.
+
+    Represents financial transactions related to player transfers in a specific Gully,
+    including the seller, player, and sale details.
+
+    Attributes:
+        id: Primary key
+        gully_id: Reference to the Gully
+        player_id: Reference to the Player
+        seller_participant_id: Reference to the GullyParticipant who sold the player
+        sale_price: Price at which the player was sold
+        sale_time: When the transaction occurred
+    """
+
+    __tablename__ = "bank_transactions"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    gully_id: int = Field(foreign_key="gullies.id", index=True)
+    player_id: int = Field(foreign_key="players.id", index=True)
+    seller_participant_id: int = Field(foreign_key="gully_participants.id", index=True)
+    sale_price: Decimal = Field(description="Sale price of the player")
+    sale_time: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.DateTime(timezone=True),
+    )
+
+    # Add composite index for gully_id and sale_time
+    __table_args__ = (
+        sqlalchemy.Index("ix_bank_transactions_gully_time", "gully_id", "sale_time"),
+    )
+
+    # Relationships will be defined after all classes are defined
+
+    @field_validator("sale_price")
+    @classmethod
+    def validate_sale_price(cls, v):
+        """Validate that sale_price is non-negative."""
+        if v < 0:
+            raise ValueError("Sale price must be non-negative")
+        return v
+
+
+class Bid(TimeStampedModel, table=True):
+    """
+    Model for tracking bids on auction items.
+
+    Represents a bid placed by a user on a player in the auction queue,
+    including the bid amount and when it was placed.
+
+    Attributes:
+        id: Primary key
+        auction_queue_id: Reference to the AuctionQueue item
+        gully_participant_id: Reference to the GullyParticipant who placed the bid
+        bid_amount: Amount of the bid
+        bid_time: When the bid was placed
+    """
+
+    __tablename__ = "bids"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    auction_queue_id: int = Field(foreign_key="auction_queue.id", index=True)
+    gully_participant_id: int = Field(foreign_key="gully_participants.id", index=True)
+    bid_amount: Decimal = Field(description="Bid amount")
+    bid_time: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.DateTime(timezone=True),
+    )
+
+    # Define unique constraint and composite index
+    __table_args__ = (
+        sqlalchemy.UniqueConstraint(
+            "auction_queue_id",
+            "gully_participant_id",
+            name="uq_bid_auction_participant",
+        ),
+        sqlalchemy.Index("ix_bids_auction_amount", "auction_queue_id", "bid_amount"),
+        # Note: PostgreSQL doesn't support subqueries in CHECK constraints
+        # The security check to prevent users from bidding on their own listed players
+        # will be implemented at the application level
+    )
+
+    # Relationships will be defined after all classes are defined
+
+    @field_validator("bid_amount")
+    @classmethod
+    def validate_bid_amount(cls, v):
+        """Validate that bid_amount is positive."""
+        if v <= 0:
+            raise ValueError("Bid amount must be positive")
+        return v
 
 
 # Define relationships after all classes are defined to avoid circular references
@@ -195,6 +532,9 @@ User.gully_ids = property(get_gully_ids)
 # GullyParticipant relationships
 GullyParticipant.user = Relationship(back_populates="gully_participations")
 GullyParticipant.gully = Relationship(back_populates="participants")
+GullyParticipant.bank_transactions = Relationship(
+    sa_relationship_kwargs={"lazy": "selectin"}, back_populates="seller_participant"
+)
 
 # Gully relationships
 Gully.participants = Relationship(
@@ -208,11 +548,70 @@ Gully.users = Relationship(
     sa_relationship_kwargs={"lazy": "selectin"},
     back_populates="gullies",
 )
+Gully.auction_queue_items = Relationship(
+    sa_relationship_kwargs={"lazy": "selectin"}, back_populates="gully"
+)
+Gully.transfer_market_items = Relationship(
+    sa_relationship_kwargs={"lazy": "selectin"}, back_populates="gully"
+)
+Gully.bank_transactions = Relationship(
+    sa_relationship_kwargs={"lazy": "selectin"}, back_populates="gully"
+)
 
 # Player relationships
 Player.user_player = Relationship(
     sa_relationship_kwargs={"lazy": "selectin"}, back_populates="player"
 )
+
+# UserPlayer relationships
+UserPlayer.user = Relationship(back_populates="user_players")
+UserPlayer.player = Relationship(back_populates="user_player")
+UserPlayer.gully = Relationship(back_populates="user_players")
+
+# AuctionQueue relationships
+AuctionQueue.gully = Relationship(back_populates="auction_queue_items")
+AuctionQueue.player = Relationship()
+AuctionQueue.seller_participant = Relationship()
+AuctionQueue.bids = Relationship(back_populates="auction_queue_item")
+
+# TransferMarket relationships
+TransferMarket.gully = Relationship(back_populates="transfer_market_items")
+TransferMarket.player = Relationship()
+
+# BankTransaction relationships
+BankTransaction.gully = Relationship(back_populates="bank_transactions")
+BankTransaction.player = Relationship()
+BankTransaction.seller_participant = Relationship(back_populates="bank_transactions")
+
+# Bid relationships
+Bid.auction_queue_item = Relationship(back_populates="bids")
+Bid.gully_participant = Relationship()
+
+
+# Add computed properties
+def get_highest_bid(self) -> Optional["Bid"]:
+    """Return the highest bid for this auction item."""
+    if not self.bids:
+        return None
+    return max(self.bids, key=lambda bid: (bid.bid_amount, -bid.bid_time.timestamp()))
+
+
+AuctionQueue.highest_bid = property(get_highest_bid)
+
+
+def get_current_owner_in_gully(self, gully_id: int) -> Optional["User"]:
+    """Return the current owner of this player in the specified gully."""
+    if not hasattr(self, "user_player") or self.user_player is None:
+        return None
+
+    for up in self.user_players:
+        if up.gully_id == gully_id:
+            return up.user
+    return None
+
+
+# Attach the method to the Player class
+Player.get_current_owner_in_gully = get_current_owner_in_gully
 
 
 # Event listener to update the updated_at field when a record is modified

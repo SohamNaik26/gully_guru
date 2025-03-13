@@ -1,8 +1,6 @@
 from fastapi import APIRouter, Depends, status
-from sqlmodel import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
-from datetime import datetime
 
 from src.db.session import get_session
 from src.db.models import Player
@@ -10,6 +8,7 @@ from src.api.schemas.player import PlayerCreate, PlayerResponse, PlayerStatsResp
 from src.api.dependencies import get_admin_user
 from src.api.exceptions import NotFoundException
 from src.api.factories import PlayerFactory
+from src.api.services import PlayerServiceClient
 
 router = APIRouter()
 
@@ -21,18 +20,16 @@ async def create_player(
     _: Player = Depends(get_admin_user),  # Only admins can create players
 ):
     """Create a new player (admin only)."""
-    player = Player(**player_data.dict())
-    session.add(player)
-    await session.commit()
-    await session.refresh(player)
-
+    player_service = PlayerServiceClient(session)
+    player = await player_service.create_player(player_data.dict())
     return PlayerFactory.create_response(player)
 
 
 @router.get("/{player_id}", response_model=PlayerResponse)
 async def get_player(player_id: int, session: AsyncSession = Depends(get_session)):
     """Get a player by ID."""
-    player = await session.get(Player, player_id)
+    player_service = PlayerServiceClient(session)
+    player = await player_service.get_player(player_id)
     if not player:
         raise NotFoundException(resource_type="Player", resource_id=player_id)
 
@@ -48,22 +45,11 @@ async def get_players(
     session: AsyncSession = Depends(get_session),
 ):
     """Get all players with optional filtering."""
-    query = select(Player)
-
-    # Apply filters if provided
-    if team:
-        query = query.where(Player.team == team)
-    if player_type:
-        query = query.where(Player.player_type == player_type)
-
-    # Apply pagination
-    query = query.offset(skip).limit(limit)
-
-    # Execute query
-    result = await session.execute(query)
-    players = result.scalars().all()
-
-    return PlayerFactory.create_response_list(players)
+    player_service = PlayerServiceClient(session)
+    players = await player_service.get_players(
+        skip=skip, limit=limit, team=team, player_type=player_type
+    )
+    return [PlayerFactory.create_response(player) for player in players]
 
 
 @router.get("/{player_id}/stats", response_model=PlayerStatsResponse)
@@ -80,25 +66,12 @@ async def get_player_stats(
     Returns:
         The player stats
     """
-    # First check if the player exists
-    player = await session.get(Player, player_id)
-    if not player:
-        raise NotFoundException(f"Player with ID {player_id} not found")
+    player_service = PlayerServiceClient(session)
+    stats = await player_service.get_player_stats(player_id)
+    if not stats:
+        raise NotFoundException(resource_type="Player", resource_id=player_id)
 
-    # For now, return mock stats since PlayerStats model has been removed
-    return PlayerStatsResponse(
-        id=1,  # Mock ID for stats
-        player_id=player_id,
-        player_name=player.name,
-        matches_played=0,
-        runs=0,
-        wickets=0,
-        highest_score=0,
-        best_bowling="0/0",
-        fantasy_points=0.0,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
-    )
+    return PlayerFactory.create_stats_response(stats)
 
 
 @router.put("/{player_id}", response_model=PlayerResponse)
@@ -109,17 +82,10 @@ async def update_player(
     _: Player = Depends(get_admin_user),  # Only admins can update players
 ):
     """Update a player (admin only)."""
-    player = await session.get(Player, player_id)
+    player_service = PlayerServiceClient(session)
+    player = await player_service.update_player(player_id, player_data.dict())
     if not player:
         raise NotFoundException(resource_type="Player", resource_id=player_id)
-
-    # Update player attributes
-    for key, value in player_data.dict().items():
-        setattr(player, key, value)
-
-    session.add(player)
-    await session.commit()
-    await session.refresh(player)
 
     return PlayerFactory.create_response(player)
 
@@ -131,11 +97,9 @@ async def delete_player(
     _: Player = Depends(get_admin_user),  # Only admins can delete players
 ):
     """Delete a player (admin only)."""
-    player = await session.get(Player, player_id)
-    if not player:
+    player_service = PlayerServiceClient(session)
+    success = await player_service.delete_player(player_id)
+    if not success:
         raise NotFoundException(resource_type="Player", resource_id=player_id)
-
-    await session.delete(player)
-    await session.commit()
 
     return None

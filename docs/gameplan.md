@@ -36,41 +36,134 @@
 
 ---
 
-## 2. Game Flow & Mechanics
+## 2. Game Flow & Mechanics -> User Journey after Onboarding as per onboarding.md doc.
 
-### Initial Squad Submission (Round 0)
-- **Private Submission:** Each manager submits **18 players** via the Telegram bot.
-- **Budget Validation:** Total base price must **not exceed 100 Cr**.
-- **Contested vs. Uncontested Players:**
-  - **Uncontested players** are assigned at base price.
-  - **Contested players** go into a **Round 1 Auction**.
 
-### Round 1 Auction
-- **Live Auction via Telegram Group**
-- **Bid Increments:**  
-  - **<1 Cr:** +0.10 Cr  
-  - **<2 Cr:** +0.20 Cr  
-  - **<5 Cr:** +0.50 Cr  
-  - **≥5 Cr:** (Increment rule TBD)
-- **Auction Timer:** If no new bid is received within **15 seconds**, the highest bidder wins.
-- **Budget Deduction:** Winning bid is deducted from the manager's budget.
+⸻
 
-### Weekly Transfer Windows
-- **Duration:** Every weekend for **48 hours**.
-- **Bidding System:** Managers **list players for sale** and **bid asynchronously**.
-- **Bid Limits:** Each manager gets **4 free bids**; additional bids cost **10 Lakhs**.
-- **Outcome:** Transfers are executed once bids are **accepted** or **expire**.
+🚀 Phase 1: Initial Team Selection (Week 0)
 
-### Setting Playing XI & Scoring
-- **Daily Lineup Selection:** Managers choose **11 players + Captain + Vice-Captain**.
-- **Scoring System:**  
-  - **Dream11 rules applied** (runs, wickets, strike rates, economy rate bonuses).
-  - **Leaderboards updated daily.**
+🔹 What Happens?
+	1.	User joins a Gully (Telegram Group).
+	2.	User selects between 15 to 18 players for their squad.
+	3.	Users can modify their squad freely before the auction starts.
+	4.	Once the auction begins, squads are locked.
 
-### Season Conclusion
-- **Final Outcome:**  
-  - Manager with **highest cumulative points** at season end wins.  
-  - **Tie-breakers:** Total wickets, runs, or other factors.
+✅ Impact on Tables:
+	•	user_squad_submissions → Stores player selections.
+	•	user_players → Initial squads are stored permanently.
+	•	current_teams → Stores budget & squad for quick lookups.
+
+⸻
+
+🚀 Phase 2: Weekly Transfers & Auctions (Every Weekend)
+
+🔹 When? Every Friday to Sunday (for 12 weeks).
+
+⸻
+
+1️⃣ Friday – Transfer Window Opens (Time-Aware Notification System)
+
+🔹 When? 12 PM on Friday.
+
+🔹 What Happens?
+	1.	Users must list 4+ players for sale.
+	2.	If a user does not list players, the bottom 4 players (by performance) are listed automatically.
+	3.	Fair price for each player is calculated (separate system).
+	4.	Users are notified in Telegram that the transfer window is open.
+
+✅ Impact on Tables:
+	•	auction_queue → Players enter the queue for bidding.
+
+⸻
+
+2️⃣ Saturday – Bidding Period Opens (Time-Aware Notification System)
+
+🔹 When? 12 PM on Saturday.
+
+🔹 What Happens?
+	1.	Users can bid on players listed for transfer.
+	2.	Bids remain private (users do not see other bids).
+	3.	Tiebreaker: If two users bid the same highest amount, the earliest bid wins.
+	4.	If a user does not have enough budget, they cannot bid.
+	5.	Bidding remains open until 8 PM Sunday.
+
+✅ Impact on Tables:
+	•	auction_queue → Bid status updates from pending → bidding.
+
+⸻
+
+3️⃣ Sunday – Transfer Window Closes & Player Assignments
+
+🔹 8 PM – Bidding Automatically Stops (Time-Aware Notification System)
+	•	No more bids can be placed.
+	•	The highest bid wins automatically.
+	•	Users are notified that bidding has ended.
+
+🔹 8 PM – 8:30 PM – Player Assignments & Budget Adjustments
+	•	Players are transferred to their new teams.
+	•	Budget is updated:
+	•	If a player was sold at a higher price than the fair price, the difference is credited to the seller.
+	•	If a player was sold at the fair price, the seller gets the exact fair price instantly.
+	•	Unsold players move to the transfer market for purchase at fair price.
+	•	Users are notified once all transfers are finalized.
+
+✅ Impact on Tables:
+	•	user_players → Players are assigned to new owners.
+	•	current_teams → Budget updates.
+	•	bank_transactions → Tracks bank purchases.
+	•	transfer_market → Stores unsold players available for purchase.
+
+⸻
+
+4️⃣ 9 PM - 9:30 PM – Squad Finalization Auction
+
+🔹 Why? This ensures every user has a squad of 15-18 players before the next week starts.
+
+🔹 What Happens?
+	1.	Users must finalize their squad of 15-18 players during this time.
+	2.	If a user did not win any bids, they must buy players from the transfer market.
+	3.	Transfer market is locked until 9 PM; users can only buy during this auction window.
+	4.	Users have 30 minutes to purchase players at fair price.
+	5.	If a user does not finalize their squad by 9:30 PM, players are auto-assigned.
+	6.	Auto-assignment happens in the following way:
+	•	Users with lower points get priority.
+	•	The best available player within their budget is assigned.
+	•	If no affordable player is available, the user plays with a smaller squad.
+	7.	Once finalized, squads are locked for the next week.
+
+✅ Impact on Tables:
+	•	transfer_market → Players are purchased from here.
+	•	user_players → Final squad updates happen here.
+	•	current_teams → Updates with the final squads & remaining budget.
+
+⸻
+
+🚀 Phase 3: End of Season (Week 12)
+
+🔹 When? After 12 weeks.
+🔹 What Happens?
+	1.	Final leaderboard is generated.
+	2.	All data is archived for history.
+	3.	Users can review their performance.
+
+✅ Impact on Tables:
+	•	user_players → Used for final team rankings.
+	•	current_teams → Used for budget & performance summary.
+
+⸻
+
+🚀 Finalized Rules & Confirmations
+
+Rule	Implementation
+Tiebreaker for Bids	The earliest bid wins in case of a tie.
+Bid Cancellation	Not allowed once a bid is placed.
+Budget for Sold Players	Users get immediate credit when selling at fair price.
+Restricted Market Access	Users cannot buy from transfer market before 9-9:30 PM Sunday.
+Auto-Assignment for Missing Players	Users with lower points get priority, assigned based on fair price & budget.
+
+
+
 
 ---
 

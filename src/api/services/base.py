@@ -1,6 +1,7 @@
 import logging
 import httpx
 from typing import Dict, Any
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,9 @@ class BaseService:
             Exception: If the request fails
         """
         try:
+            logger.info(
+                f"DEBUG - Making {method} request to URL: {url} with params: {params} and json: {json}"
+            )
             if method.upper() == "GET":
                 response = await self.client.get(url, params=params)
             elif method.upper() == "POST":
@@ -55,6 +59,10 @@ class BaseService:
                 response = await self.client.delete(url, params=params)
             else:
                 raise ValueError(f"Unsupported HTTP method: {method}")
+
+            logger.info(
+                f"DEBUG - Response status: {response.status_code}, URL: {response.url}"
+            )
 
             if response.status_code in (200, 201, 204):
                 if response.status_code == 204:
@@ -77,3 +85,15 @@ class BaseService:
         except Exception as e:
             logger.error(f"Error making API request: {e}")
             return {"error": str(e), "status_code": 500}
+
+
+class BaseServiceClient:
+    """Base class for all database service clients."""
+
+    def __init__(self, db: AsyncSession):
+        """Initialize the service client.
+
+        Args:
+            db: Database session
+        """
+        self.db = db

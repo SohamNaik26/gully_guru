@@ -1,12 +1,18 @@
+"""
+Admin service for the GullyGuru API.
+This module provides client methods for interacting with admin-related API endpoints and database operations.
+"""
+
 import logging
 from typing import Dict, Any, List, Optional
 import httpx
+
 from sqlmodel import select
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from src.api.services.base import BaseService, BaseServiceClient
 from src.api.schemas.admin import AdminUserResponse, AdminRoleResponse
 from src.db.models import User, GullyParticipant
-from src.api.services.base import BaseService
+from src.api.factories import AdminFactory
 
 logger = logging.getLogger(__name__)
 
@@ -84,16 +90,8 @@ class AdminService(BaseService):
         return response
 
 
-class AdminServiceClient:
+class AdminServiceClient(BaseServiceClient):
     """Client for interacting with admin-related database operations."""
-
-    def __init__(self, db: AsyncSession):
-        """Initialize the admin service client.
-
-        Args:
-            db: The database session
-        """
-        self.db = db
 
     async def get_gully_admins(self, gully_id: int) -> List[AdminUserResponse]:
         """Get all admins for a gully.
@@ -175,15 +173,8 @@ class AdminServiceClient:
             await self.db.commit()
             await self.db.refresh(participant)
 
-            # Create response
-            response = AdminRoleResponse(
-                id=participant.id,
-                user_id=participant.user_id,
-                gully_id=participant.gully_id,
-                role=participant.role,
-                created_at=participant.created_at,
-                updated_at=participant.updated_at,
-            )
+            # Use AdminFactory to create response
+            response = AdminFactory.create_response(participant)
         else:
             # Get user for team name
             user = await self.db.get(User, user_id)
@@ -201,14 +192,7 @@ class AdminServiceClient:
             await self.db.commit()
             await self.db.refresh(new_participant)
 
-            # Create response
-            response = AdminRoleResponse(
-                id=new_participant.id,
-                user_id=new_participant.user_id,
-                gully_id=new_participant.gully_id,
-                role=new_participant.role,
-                created_at=new_participant.created_at,
-                updated_at=new_participant.updated_at,
-            )
+            # Use AdminFactory to create response
+            response = AdminFactory.create_response(new_participant)
 
         return response

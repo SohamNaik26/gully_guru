@@ -7,13 +7,10 @@ from typing import Optional
 
 from telegram.ext import Application
 
-from src.api.client import APIClient
-from src.config import settings
+from src.api.api_client_instance import api_client
+from src.utils.config import settings
 
 logger = logging.getLogger(__name__)
-
-# Global API client instance
-api_client: Optional[APIClient] = None
 
 
 async def initialize_api_client():
@@ -28,7 +25,6 @@ async def initialize_api_client():
     if api_client is None:
         api_base_url = settings.API_BASE_URL
         logger.info(f"Initializing API client with base URL: {api_base_url}")
-        api_client = APIClient(api_base_url)
 
     return api_client
 

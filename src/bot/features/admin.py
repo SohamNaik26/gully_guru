@@ -47,7 +47,9 @@ async def admin_panel_command(
         return
 
     # Get all gullies where user participates
-    participations = await api_client.get_user_gully_participations(db_user["id"])
+    participations = await api_client.gullies.get_user_gully_participations(
+        db_user["id"]
+    )
 
     # Filter to only include gullies where user is admin
     admin_participations = [p for p in participations if p.get("role") == "admin"]
@@ -97,17 +99,37 @@ async def handle_admin_callback(
 ) -> None:
     """Handle callbacks for admin panel."""
     query = update.callback_query
-    await query.answer()  # Answer the callback query to stop the loading animation
+    await query.answer()
 
-    user = update.effective_user
+    user = query.from_user
     data = query.data
 
-    # Ensure user exists in database
+    # Get user from database
     db_user = await api_client.users.get_user(user.id)
     if not db_user:
         await query.edit_message_text(
             "❌ Sorry, there was an error with your account. Please try again later."
         )
+        return
+
+    # Extract gully_id from callback data if present
+    gully_id = None
+    if "_" in data:
+        parts = data.split("_")
+        if len(parts) >= 3 and parts[0] == "admin":
+            try:
+                gully_id = int(parts[2])
+            except (ValueError, IndexError):
+                pass
+
+    # Handle admin_manage callback
+    if data.startswith("admin_manage_"):
+        await handle_admin_manage_callback(query, context, db_user, gully_id)
+        return
+
+    # Handle admin_participants callback
+    if data.startswith("admin_participants_"):
+        await handle_admin_participants_callback(query, context, db_user, gully_id)
         return
 
     # Handle gully selection from private chat
@@ -121,7 +143,7 @@ async def handle_admin_callback(
             return
 
         # Check if user is admin
-        participation = await api_client.get_user_gully_participation(
+        participation = await api_client.gullies.get_user_gully_participation(
             user_id=db_user["id"], gully_id=gully_id
         )
 
@@ -164,7 +186,9 @@ async def handle_admin_callback(
     # Handle back to gully list
     if data == "admin_back_to_gullies":
         # Get all gullies where user participates
-        participations = await api_client.get_user_gully_participations(db_user["id"])
+        participations = await api_client.gullies.get_user_gully_participations(
+            db_user["id"]
+        )
 
         # Filter to only include gullies where user is admin
         admin_participations = [p for p in participations if p.get("role") == "admin"]
@@ -217,7 +241,7 @@ async def handle_admin_callback(
         return
 
     # Check if user is admin
-    participation = await api_client.get_user_gully_participation(
+    participation = await api_client.gullies.get_user_gully_participation(
         user_id=db_user["id"], gully_id=gully_id
     )
 
@@ -260,11 +284,7 @@ async def handle_admin_callback(
         if not members:
             # Back button
             keyboard = [
-                [
-                    InlineKeyboardButton(
-                        "Back to Admin Panel", callback_data=f"admin_back_{gully_id}"
-                    )
-                ],
+                [InlineKeyboardButton("Back", callback_data=f"admin_back_{gully_id}")]
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -298,11 +318,7 @@ async def handle_admin_callback(
 
         # Back button
         keyboard = [
-            [
-                InlineKeyboardButton(
-                    "Back to Admin Panel", callback_data=f"admin_back_{gully_id}"
-                )
-            ],
+            [InlineKeyboardButton("Back", callback_data=f"admin_back_{gully_id}")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -360,3 +376,104 @@ async def handle_admin_callback(
             reply_markup=reply_markup,
             parse_mode="Markdown",
         )
+
+
+async def handle_admin_manage_callback(query, context, db_user, gully_id):
+    """Handle admin_manage callback."""
+    if not gully_id:
+        await query.edit_message_text("Invalid gully selection. Please try again.")
+        return
+
+    # Get gully
+    gully = await api_client.gullies.get_gully(gully_id)
+    if not gully:
+        await query.edit_message_text("This gully no longer exists.")
+        return
+
+    # Check if user is admin
+    participation = await api_client.gullies.get_user_gully_participation(
+        user_id=db_user["id"], gully_id=gully_id
+    )
+
+    if not participation or participation.get("role") != "admin":
+        await query.edit_message_text("You are not an admin of this gully.")
+        return
+
+    # Show gully management options
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "Edit Gully Name", callback_data=f"admin_edit_name_{gully_id}"
+            ),
+        ],
+        [InlineKeyboardButton("Back", callback_data=f"admin_back_{gully_id}")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.edit_message_text(
+        f"🔧 *Manage Gully: {gully['name']}*\n\n"
+        f"Telegram Group ID: {gully['telegram_group_id']}\n"
+        f"Created: {gully.get('created_at', 'Unknown')}\n\n"
+        f"Select an option:",
+        reply_markup=reply_markup,
+        parse_mode="Markdown",
+    )
+
+
+async def handle_admin_participants_callback(query, context, db_user, gully_id):
+    """Handle admin_participants callback."""
+    if not gully_id:
+        await query.edit_message_text("Invalid gully selection. Please try again.")
+        return
+
+    # Get gully
+    gully = await api_client.gullies.get_gully(gully_id)
+    if not gully:
+        await query.edit_message_text("This gully no longer exists.")
+        return
+
+    # Check if user is admin
+    participation = await api_client.gullies.get_user_gully_participation(
+        user_id=db_user["id"], gully_id=gully_id
+    )
+
+    if not participation or participation.get("role") != "admin":
+        await query.edit_message_text("You are not an admin of this gully.")
+        return
+
+    # Get all participants
+    participants = await api_client.gullies.get_gully_participants(gully_id)
+
+    if not participants:
+        # Back button
+        keyboard = [
+            [InlineKeyboardButton("Back", callback_data=f"admin_back_{gully_id}")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await query.edit_message_text(
+            f"No participants found in gully '{gully['name']}'.",
+            reply_markup=reply_markup,
+        )
+        return
+
+    # Format participants list
+    participants_text = ""
+    for i, p in enumerate(participants, 1):
+        role_emoji = "👑" if p.get("role") == "admin" else "👤"
+        team_name = p.get("team_name", "No team yet")
+        budget = p.get("budget", 0)
+
+        participants_text += f"{i}. {role_emoji} {team_name} - Budget: {budget}\n"
+
+    # Back button
+    keyboard = [[InlineKeyboardButton("Back", callback_data=f"admin_back_{gully_id}")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await query.edit_message_text(
+        f"👥 *Participants in {gully['name']}*\n\n"
+        f"{participants_text}\n"
+        f"Total: {len(participants)} participants",
+        reply_markup=reply_markup,
+        parse_mode="Markdown",
+    )

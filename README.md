@@ -381,6 +381,37 @@ The following API services need to be implemented to complete the bot refactorin
 
 [License information here]
 
+## Remaining Questions
+
+The following questions need to be addressed in future development:
+
+### Auction & Transfer System
+
+1. **Bid Management**
+   - How should we handle bid cancellations? Currently, the plan is to not allow cancellations once a bid is placed.
+   - Should we implement a minimum bid increment? If so, what should it be?
+   - How should we handle tie-breaking for bids with the same amount? Current plan is to use the earliest bid time.
+
+2. **Performance Tracking**
+   - How should we calculate player performance for automatic listing of bottom performers?
+   - What metrics should be used to determine player performance (points, average, recent form)?
+   - How frequently should performance data be updated?
+
+3. **Squad Constraints**
+   - How should we enforce squad composition rules (e.g., minimum number of batsmen, bowlers)?
+   - Should these constraints be enforced at the database level or in application logic?
+   - What should happen if a user's squad falls below the minimum required size?
+
+4. **Auto-Assignment Logic**
+   - What specific algorithm should be used for auto-assigning players to users who don't complete their squads?
+   - How should we prioritize player assignments when multiple users need auto-assignment?
+   - Should auto-assigned players have a different purchase price than market price?
+
+5. **Fair Price Calculation**
+   - What formula should be used to calculate the fair price of a player?
+   - Should fair price be based on performance, original price, or a combination?
+   - How often should fair prices be recalculated?
+
 # GullyGuru
 
 A fantasy cricket platform for IPL enthusiasts.

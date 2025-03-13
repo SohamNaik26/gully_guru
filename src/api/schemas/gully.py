@@ -42,10 +42,14 @@ class GullyParticipantBase(BaseModel):
     role: str = "member"
 
 
-class GullyParticipantCreate(GullyParticipantBase):
+class GullyParticipantCreate(BaseModel):
     """Model for creating a new gully participant."""
 
-    gully_id: int
+    user_id: int
+    team_name: str = ""
+    budget: Decimal = Decimal("120.0")
+    points: int = 0
+    role: str = "member"
 
 
 class GullyParticipantResponse(GullyParticipantBase):

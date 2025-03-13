@@ -8,6 +8,13 @@ from src.api.factories.gully import (
 from src.api.factories.user import UserFactory, UserPlayerFactory
 from src.api.factories.player import PlayerFactory
 from src.api.factories.admin import AdminFactory
+from src.api.factories.fantasy import (
+    DraftPlayerResponseFactory,
+    DraftSquadResponseFactory,
+    SubmissionStatusResponseFactory,
+    AuctionStartResponseFactory,
+    ContestPlayerResponseFactory,
+)
 
 __all__ = [
     "ResponseFactory",
@@ -17,4 +24,9 @@ __all__ = [
     "UserPlayerFactory",
     "PlayerFactory",
     "AdminFactory",
+    "DraftPlayerResponseFactory",
+    "DraftSquadResponseFactory",
+    "SubmissionStatusResponseFactory",
+    "AuctionStartResponseFactory",
+    "ContestPlayerResponseFactory",
 ]

@@ -14,7 +14,16 @@ from src.db.models.models import (
     # Gully models
     Gully,
     GullyParticipant,
-    # Transfer models removed
+    # Enum classes
+    PlayerType,
+    ParticipantRole,
+    AuctionType,
+    AuctionStatus,
+    # Auction & Transfer models
+    AuctionQueue,
+    TransferMarket,
+    BankTransaction,
+    Bid,
 )
 
 # Import integration models
@@ -38,12 +47,16 @@ all_models = [
     UserPlayer,
     Gully,
     GullyParticipant,
-    # Transfer models removed
-    # API models - Removed from database tables but kept in code for future use
-    # ApiMatch,
-    # ApiPlayer,
-    # ApiPlayerStats,
-    # ApiTeam,
+    # Enum classes
+    PlayerType,
+    ParticipantRole,
+    AuctionType,
+    AuctionStatus,
+    # Auction & Transfer models
+    AuctionQueue,
+    TransferMarket,
+    BankTransaction,
+    Bid,
     # Cricsheet models
     CricsheetMatch,
     CricsheetPlayer,

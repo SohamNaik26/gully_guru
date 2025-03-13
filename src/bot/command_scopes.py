@@ -33,6 +33,7 @@ async def setup_command_scopes(application: Application) -> None:
     # Define commands for private chats
     private_commands = [
         # Core user commands
+        BotCommand("start", "Start the bot and register your team"),
         BotCommand("my_team", "View your current team composition"),
         BotCommand("submit_squad", "Create or update your team"),
         # Admin commands

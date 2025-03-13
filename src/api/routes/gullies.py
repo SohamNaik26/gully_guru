@@ -15,6 +15,7 @@ from src.api.schemas.gully import (
     ParticipantUpdate,
 )
 from src.api.factories import GullyFactory, GullyParticipantFactory
+from src.api.services import GullyServiceClient
 
 # Configure logging
 import logging
@@ -135,6 +136,9 @@ async def create_gully(
     Returns:
         The created gully
     """
+    # Initialize the gully service client
+    gully_service = GullyServiceClient(session)
+
     # Check if a gully with this telegram_group_id already exists
     result = await session.execute(
         select(Gully).where(Gully.telegram_group_id == gully_data.telegram_group_id)
@@ -146,26 +150,18 @@ async def create_gully(
             detail=f"Gully with telegram_group_id {gully_data.telegram_group_id} already exists",
         )
 
-    # Create the gully
-    gully = Gully(
-        name=gully_data.name,
-        telegram_group_id=gully_data.telegram_group_id,
-    )
-    session.add(gully)
-    await session.commit()
-    await session.refresh(gully)
+    # Create the gully using the service client
+    gully = await gully_service.create_gully(gully_data.dict())
 
-    # Add the creator as an admin
-    participant = GullyParticipant(
-        user_id=current_user.id,
-        gully_id=gully.id,
-        team_name=f"{current_user.username}'s Team",
-        role="admin",
-    )
-    session.add(participant)
-    await session.commit()
+    # Create the owner participant
+    participant_data = {
+        "user_id": current_user.id,
+        "gully_id": gully.id,
+        "role": "owner",
+        "team_name": f"{current_user.username}'s Team",
+    }
+    await gully_service.add_participant(gully.id, participant_data)
 
-    # Return the created gully
     return GullyFactory.create_response(gully)
 
 
@@ -271,11 +267,10 @@ async def get_participant(
     return GullyParticipantFactory.create_response(participant)
 
 
-@participants_router.post("/", response_model=GullyParticipantResponse)
+@participants_router.post("/{gully_id}", response_model=GullyParticipantResponse)
 async def add_participant(
-    participant_data: GullyParticipantCreate,
     gully_id: int,
-    role: str = "member",
+    participant_data: GullyParticipantCreate,
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
@@ -283,9 +278,8 @@ async def add_participant(
     Add a user to a gully.
 
     Args:
+        gully_id: The gully ID (from path)
         participant_data: Participant data
-        gully_id: The gully ID
-        role: The role of the user in the gully (member, admin)
         session: Database session
         current_user: The current authenticated user
 
@@ -294,7 +288,7 @@ async def add_participant(
     """
     # Validate role
     valid_roles = ["member", "admin"]
-    if role not in valid_roles:
+    if participant_data.role not in valid_roles:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid role. Must be one of: {', '.join(valid_roles)}",
@@ -329,7 +323,9 @@ async def add_participant(
         user_id=participant_data.user_id,
         gully_id=gully_id,
         team_name=participant_data.team_name,
-        role=role,
+        role=participant_data.role,
+        budget=participant_data.budget,
+        points=participant_data.points,
     )
     session.add(new_participant)
     await session.commit()
