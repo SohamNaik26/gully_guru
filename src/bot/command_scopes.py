@@ -33,17 +33,7 @@ async def setup_command_scopes(application: Application) -> None:
     # Define commands for private chats
     private_commands = [
         # Core user commands
-        BotCommand("start", "Start the bot and register your team"),
-        BotCommand("my_team", "View your current team composition"),
-        BotCommand("submit_squad", "Create or update your team"),
-        # Admin commands
-        BotCommand("admin_panel", "Access admin controls for your gullies"),
-    ]
-
-    # Define commands for gully chats
-    gully_commands = [
-        # Gully commands
-        BotCommand("auction_status", "Check current auction status"),
+        BotCommand("start", "Start the bot and show the main menu"),
     ]
 
     # Set commands for private chats
@@ -51,12 +41,6 @@ async def setup_command_scopes(application: Application) -> None:
         private_commands, scope=BotCommandScopeAllPrivateChats()
     )
     logger.info("Private chat commands set successfully")
-
-    # Set commands for gully chats
-    await application.bot.set_my_commands(
-        gully_commands, scope=BotCommandScopeAllGroupChats()
-    )
-    logger.info("Gully chat commands set successfully")
 
     # Set default commands (visible to all users in all contexts)
     default_commands = []  # No default commands

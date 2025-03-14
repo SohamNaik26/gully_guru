@@ -1,5 +1,10 @@
+"""
+Schemas for fantasy-related data.
+"""
+
 from typing import List, Dict, Any, Optional
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+from datetime import datetime
 
 
 class PlayerBase(BaseModel):
@@ -12,77 +17,104 @@ class PlayerBase(BaseModel):
     base_price: Optional[float] = None
 
 
+class DraftPlayerBase(BaseModel):
+    """Base schema for draft player."""
+
+    gully_participant_id: int = Field(..., description="Gully participant ID")
+    player_id: int = Field(..., description="Player ID")
+    status: str = Field(
+        default="draft", description="Player status (draft, locked, contested, owned)"
+    )
+
+
 class DraftPlayerCreate(BaseModel):
     """Schema for adding a player to draft squad."""
 
-    player_id: int
-    gully_id: int
+    gully_id: int = Field(..., description="Gully ID")
+    player_id: int = Field(..., description="Player ID")
+
+
+class DraftPlayerResponse(DraftPlayerBase):
+    """Schema for draft player response."""
+
+    id: int = Field(..., description="Draft player ID")
+    created_at: datetime = Field(..., description="When the draft player was created")
+    updated_at: datetime = Field(
+        ..., description="When the draft player was last updated"
+    )
+    player: Dict[str, Any] = Field(..., description="Player details")
 
     model_config = ConfigDict(from_attributes=True)
 
 
-class DraftPlayerResponse(BaseModel):
-    """Response schema for draft player operations."""
+class SquadResponse(BaseModel):
+    """Schema for squad response."""
 
-    success: bool
-    message: str
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class DraftSquadResponse(BaseModel):
-    """Response schema for draft squad."""
-
-    players: List[PlayerBase] = []
-    total_price: float = 0.0
-    player_count: int = 0
+    gully_participant_id: int = Field(..., description="Gully participant ID")
+    gully_id: int = Field(..., description="Gully ID")
+    user_id: int = Field(..., description="User ID")
+    username: Optional[str] = Field(None, description="Username")
+    players: List[DraftPlayerResponse] = Field(
+        default_factory=list, description="Players in squad"
+    )
+    player_count: int = Field(default=0, description="Number of players in squad")
 
     model_config = ConfigDict(from_attributes=True)
 
 
-class SquadSubmit(BaseModel):
-    """Schema for submitting a squad."""
+class SubmitSquadResponse(BaseModel):
+    """Schema for submit squad response."""
 
-    gully_id: int
+    success: bool = Field(..., description="Whether the operation was successful")
+    message: str = Field(..., description="Success or error message")
+    gully_participant_id: int = Field(..., description="Gully participant ID")
+    player_count: int = Field(..., description="Number of players in squad")
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class SubmissionStatusResponse(BaseModel):
-    """Response schema for submission status."""
+    """Schema for submission status response."""
 
-    all_submitted: bool
-    total_participants: int
-    submitted_count: int
-    pending_users: List[Dict[str, Any]] = []
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class PendingUser(BaseModel):
-    """Schema for pending user information."""
-
-    id: int
-    username: str
-    telegram_id: int
+    all_submitted: bool = Field(
+        ..., description="Whether all participants have submitted"
+    )
+    total_participants: int = Field(..., description="Total number of participants")
+    submitted_count: int = Field(
+        ..., description="Number of participants who have submitted"
+    )
+    pending_users: List[Dict[str, Any]] = Field(
+        default_factory=list, description="List of users who have not submitted"
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class AuctionStartResponse(BaseModel):
-    """Response schema for starting an auction."""
+    """Schema for auction start response."""
 
-    success: bool
-    message: str
-    contested_count: Optional[int] = None
-    uncontested_count: Optional[int] = None
+    success: bool = Field(..., description="Whether the operation was successful")
+    message: str = Field(..., description="Success or error message")
+    contested_count: int = Field(..., description="Number of contested players")
+    uncontested_count: int = Field(..., description="Number of uncontested players")
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class ContestPlayerResponse(BaseModel):
-    """Response schema for contested players."""
+    """Schema for contest player response."""
 
-    players: List[PlayerBase] = []
+    players: List[Dict[str, Any]] = Field(
+        default_factory=list, description="List of players"
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SuccessResponse(BaseModel):
+    """Schema for success response."""
+
+    success: bool = Field(..., description="Whether the operation was successful")
+    message: str = Field(..., description="Success or error message")
 
     model_config = ConfigDict(from_attributes=True)

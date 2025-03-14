@@ -1,32 +1,27 @@
-"""Factory classes for creating response objects from database models."""
+"""
+Factories package for the GullyGuru API.
+This package contains factory classes for creating response objects.
+"""
 
-from src.api.factories.base import ResponseFactory
-from src.api.factories.gully import (
-    GullyFactory,
-    GullyParticipantFactory,
+from src.api.factories.base import ResponseFactory, SuccessResponseFactory
+from src.api.factories.user import (
+    UserFactory,
+    UserResponseFactory,
+    ParticipantPlayerFactory,
 )
-from src.api.factories.user import UserFactory, UserPlayerFactory
-from src.api.factories.player import PlayerFactory
+from src.api.factories.gully import GullyResponseFactory
+from src.api.factories.player import PlayerResponseFactory
 from src.api.factories.admin import AdminFactory
-from src.api.factories.fantasy import (
-    DraftPlayerResponseFactory,
-    DraftSquadResponseFactory,
-    SubmissionStatusResponseFactory,
-    AuctionStartResponseFactory,
-    ContestPlayerResponseFactory,
-)
+from src.api.factories.participant import ParticipantResponseFactory
 
 __all__ = [
     "ResponseFactory",
-    "GullyFactory",
-    "GullyParticipantFactory",
+    "SuccessResponseFactory",
     "UserFactory",
-    "UserPlayerFactory",
-    "PlayerFactory",
+    "UserResponseFactory",
+    "GullyResponseFactory",
+    "PlayerResponseFactory",
     "AdminFactory",
-    "DraftPlayerResponseFactory",
-    "DraftSquadResponseFactory",
-    "SubmissionStatusResponseFactory",
-    "AuctionStartResponseFactory",
-    "ContestPlayerResponseFactory",
+    "ParticipantResponseFactory",
+    "ParticipantPlayerFactory",
 ]

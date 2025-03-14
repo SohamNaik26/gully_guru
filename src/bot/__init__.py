@@ -1,42 +1,61 @@
 """
-Bot module for the GullyGuru application.
+Bot package for the GullyGuru application.
+This package contains the Telegram bot implementation focused on onboarding.
 """
 
 import logging
-from typing import Optional
-
 from telegram.ext import Application
-
-from src.api.api_client_instance import api_client
+from src.bot.api_client.base import initialize_api_client as initialize_client
+from src.bot.api_client.base import get_api_client
 from src.utils.config import settings
+
+# Configure logging
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
 
 logger = logging.getLogger(__name__)
 
+# Make API functions available from the bot package
+from src.bot.api_client.onboarding import (  # noqa
+    handle_complete_onboarding,
+    create_gully_for_group,
+    add_admin_to_gully,
+)
 
+__all__ = [
+    "initialize_api_client",
+    "close_api_client",
+    "create_bot_application",
+    "get_user",
+    "create_user",
+    "get_gully",
+    "get_gully_by_telegram_id",
+    "join_gully",
+    "get_user_gullies",
+    "get_user_gully_participation",
+    "create_gully",
+    "handle_complete_onboarding",
+    "create_gully_for_group",
+    "add_admin_to_gully",
+]
+
+
+# Initialize API client
 async def initialize_api_client():
-    """
-    Initialize the API client.
-
-    Returns:
-        The initialized API client
-    """
-    global api_client
-
-    if api_client is None:
-        api_base_url = settings.API_BASE_URL
-        logger.info(f"Initializing API client with base URL: {api_base_url}")
-
-    return api_client
+    """Initialize the API client."""
+    logger.info("Initializing API client")
+    return await initialize_client()
 
 
+# Close API client
 async def close_api_client():
     """Close the API client."""
-    global api_client
-
-    if api_client is not None:
-        logger.info("Closing API client")
-        await api_client.close()
-        api_client = None
+    logger.info("Closing API client")
+    client = await get_api_client()
+    if client:
+        await client.close()
 
 
 async def create_bot_application():
@@ -44,15 +63,14 @@ async def create_bot_application():
     Create and configure the bot application.
 
     Returns:
-        The configured Application instance
+        Application: The configured bot application
     """
-    # Initialize API client
-    await initialize_api_client()
+    # Create application
+    application = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
 
-    # Create bot application
-    application = Application.builder().token(settings.BOT_TOKEN).build()
+    # Register handlers
+    from src.bot.features import register_handlers
 
-    # Configure application
-    # ... (existing configuration code)
+    register_handlers(application)
 
     return application

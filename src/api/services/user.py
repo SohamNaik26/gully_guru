@@ -1,255 +1,280 @@
 """
 User service for the GullyGuru API.
-This module provides client methods for interacting with user-related API endpoints and database operations.
+This module provides methods for interacting with user-related database operations.
 """
 
 import logging
-from typing import Dict, Any, Optional, List
-import httpx
+from typing import Dict, Any, Optional, List, Tuple
 
 from sqlmodel import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func
 
-from src.api.services.base import BaseService, BaseServiceClient
-from src.db.models.models import User, UserPlayer
+from src.api.services.base import BaseService
+from src.db.models.models import User, ParticipantPlayer, GullyParticipant
 
 logger = logging.getLogger(__name__)
 
 
 class UserService(BaseService):
-    """Client for interacting with user-related API endpoints."""
+    """Service for user-related operations."""
 
-    def __init__(self, base_url: str, client: httpx.AsyncClient = None):
-        """Initialize the user service client.
-
-        Args:
-            base_url: The base URL for the API
-            client: An optional httpx AsyncClient instance
+    def __init__(self, db: AsyncSession):
         """
-        super().__init__(base_url, client)
-        self.endpoint = f"{self.base_url}/users"
-
-    async def get_user(self, telegram_id: int) -> Optional[Dict[str, Any]]:
-        """Get a user by Telegram ID.
+        Initialize the user service.
 
         Args:
-            telegram_id: The Telegram ID of the user
+            db: Database session
+        """
+        super().__init__(None, None)
+        self.db = db
+
+    async def create_user(self, user_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a new user.
+
+        Args:
+            user_data: Dictionary containing user data
 
         Returns:
-            User data or None if not found
-        """
-        response = await self._make_request(
-            "GET", f"{self.endpoint}/telegram/{telegram_id}"
-        )
-        if "error" in response:
-            logger.error(f"Error getting user: {response['error']}")
-            return None
-        return response
-
-    async def create_user(self, user_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Create a new user.
-
-        Args:
-            user_data: User data to create
-
-        Returns:
-            Created user data or None if creation failed
+            Dictionary with created user data
         """
         # Map 'name' to 'full_name' if it exists
         if "name" in user_data and "full_name" not in user_data:
             user_data["full_name"] = user_data.pop("name")
 
-        response = await self._make_request("POST", self.endpoint, json=user_data)
-        if "error" in response:
-            logger.error(f"Error creating user: {response['error']}")
-            return None
-        return response
+        # Check if user with telegram_id already exists
+        stmt = select(User).where(User.telegram_id == user_data["telegram_id"])
+        result = await self.db.execute(stmt)
+        existing_user = result.scalars().first()
 
-    async def update_user(
-        self, telegram_id: int, user_data: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
-        """Update a user.
+        if existing_user:
+            # Return existing user instead of raising an error
+            logger.info(
+                f"User with telegram_id {user_data['telegram_id']} already exists, returning existing user"
+            )
+            return await self.get_user(existing_user.id)
 
-        Args:
-            telegram_id: The Telegram ID of the user to update
-            user_data: User data to update
-
-        Returns:
-            Updated user data or None if update failed
-        """
-        # Map 'name' to 'full_name' if it exists
-        if "name" in user_data and "full_name" not in user_data:
-            user_data["full_name"] = user_data.pop("name")
-
-        response = await self._make_request(
-            "PUT", f"{self.endpoint}/telegram/{telegram_id}", json=user_data
-        )
-        if "error" in response:
-            logger.error(f"Error updating user: {response['error']}")
-            return None
-        return response
-
-    async def delete_user(self, telegram_id: int) -> bool:
-        """Delete a user.
-
-        Args:
-            telegram_id: The Telegram ID of the user to delete
-
-        Returns:
-            True if deletion was successful, False otherwise
-        """
-        response = await self._make_request(
-            "DELETE", f"{self.endpoint}/telegram/{telegram_id}"
-        )
-        if "error" in response:
-            logger.error(f"Error deleting user: {response['error']}")
-            return False
-        return True
-
-    async def get_user_by_id(self, user_id: int) -> Optional[Dict[str, Any]]:
-        """Get a user by ID.
-
-        Args:
-            user_id: The ID of the user
-
-        Returns:
-            User data or None if not found
-        """
-        response = await self._make_request("GET", f"{self.endpoint}/{user_id}")
-        if "error" in response:
-            logger.error(f"Error getting user: {response['error']}")
-            return None
-        return response
-
-    async def get_user_players(
-        self, user_id: int, gully_id: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
-        """Get players owned by a user.
-
-        Args:
-            user_id: The ID of the user
-            gully_id: Optional gully ID to filter by
-
-        Returns:
-            List of players owned by the user
-        """
-        params = {}
-        if gully_id:
-            params["gully_id"] = gully_id
-
-        response = await self._make_request(
-            "GET", f"{self.endpoint}/{user_id}/players", params=params
-        )
-        if "error" in response:
-            logger.error(f"Error getting user players: {response['error']}")
-            return []
-        return response
-
-    async def create_user_player(
-        self, user_player_data: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
-        """Create a new user player.
-
-        Args:
-            user_player_data: User player data to create
-
-        Returns:
-            Created user player data or None if creation failed
-        """
-        user_id = user_player_data.get("user_id")
-        if not user_id:
-            logger.error("User ID is required to create a user player")
-            return None
-
-        response = await self._make_request(
-            "POST", f"{self.endpoint}/{user_id}/players", json=user_player_data
-        )
-        if "error" in response:
-            logger.error(f"Error creating user player: {response['error']}")
-            return None
-        return response
-
-
-class UserServiceClient(BaseServiceClient):
-    """Client for interacting with user-related database operations."""
-
-    async def get_user_by_telegram_id(self, telegram_id: int) -> Optional[User]:
-        """Get a user by Telegram ID.
-
-        Args:
-            telegram_id: The Telegram ID of the user
-
-        Returns:
-            User object or None if not found
-        """
-        query = select(User).where(User.telegram_id == telegram_id)
-        result = await self.db.execute(query)
-        return result.scalars().first()
-
-    async def get_user(self, user_id: int) -> Optional[User]:
-        """Get a user by ID.
-
-        Args:
-            user_id: The ID of the user
-
-        Returns:
-            User object or None if not found
-        """
-        return await self.db.get(User, user_id)
-
-    async def create_user(self, user_data: Dict[str, Any]) -> User:
-        """Create a new user.
-
-        Args:
-            user_data: User data to create
-
-        Returns:
-            Created user object
-        """
-        # Map 'name' to 'full_name' if it exists
-        if "name" in user_data and "full_name" not in user_data:
-            user_data["full_name"] = user_data.pop("name")
-
+        # Create new user
         user = User(**user_data)
         self.db.add(user)
         await self.db.commit()
         await self.db.refresh(user)
-        return user
 
-    async def update_user(
-        self, user_id: int, user_data: Dict[str, Any]
-    ) -> Optional[User]:
-        """Update a user.
+        # Convert SQLModel to dict and add gully_ids
+        user_dict = {
+            "id": user.id,
+            "telegram_id": user.telegram_id,
+            "username": user.username,
+            "full_name": user.full_name,
+            "created_at": user.created_at,
+            "updated_at": user.updated_at,
+        }
+
+        return user_dict
+
+    async def get_user(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get a user by ID.
 
         Args:
-            user_id: The ID of the user to update
-            user_data: User data to update
+            user_id: ID of the user to retrieve
 
         Returns:
-            Updated user object or None if not found
+            Dictionary with user data or None if not found
+        """
+        user = await self.db.get(User, user_id)
+        if not user:
+            return None
+
+        # Convert SQLModel to dict and add gully_ids
+        user_dict = {
+            "id": user.id,
+            "telegram_id": user.telegram_id,
+            "username": user.username,
+            "full_name": user.full_name,
+            "created_at": user.created_at,
+            "updated_at": user.updated_at,
+        }
+
+        return user_dict
+
+    async def get_user_by_telegram_id(
+        self, telegram_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get a user by Telegram ID.
+
+        Args:
+            telegram_id: Telegram ID of the user to retrieve
+
+        Returns:
+            Dictionary with user data or None if not found
+        """
+        stmt = select(User).where(User.telegram_id == telegram_id)
+        result = await self.db.execute(stmt)
+        user = result.scalars().first()
+
+        if not user:
+            return None
+
+        # Convert SQLModel to dict and add gully_ids
+        user_dict = {
+            "id": user.id,
+            "telegram_id": user.telegram_id,
+            "username": user.username,
+            "full_name": user.full_name,
+            "created_at": user.created_at,
+            "updated_at": user.updated_at,
+        }
+
+        return user_dict
+
+    async def get_users_by_telegram_id(
+        self, telegram_id: int, limit: int = 10, offset: int = 0
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """
+        Get users filtered by Telegram ID.
+
+        This method is specifically optimized for bot integration, providing a direct
+        way to filter users by their Telegram ID.
+
+        Args:
+            telegram_id: Telegram ID to filter by
+            limit: Maximum number of users to return
+            offset: Number of users to skip
+
+        Returns:
+            Tuple of (list of user dictionaries, total count)
+        """
+        # Build query with telegram_id filter
+        query = select(User).where(User.telegram_id == telegram_id)
+
+        # Get total count
+        count_query = select(func.count()).select_from(query.subquery())
+        total_result = await self.db.execute(count_query)
+        total = total_result.scalar() or 0
+
+        # Apply pagination
+        query = query.offset(offset).limit(limit)
+
+        # Execute query
+        result = await self.db.execute(query)
+        users = result.scalars().all()
+
+        # Convert SQLModels to dicts
+        user_dicts = []
+        for user in users:
+            user_dict = {
+                "id": user.id,
+                "telegram_id": user.telegram_id,
+                "username": user.username,
+                "full_name": user.full_name,
+                "created_at": user.created_at,
+                "updated_at": user.updated_at,
+            }
+            user_dicts.append(user_dict)
+
+        return user_dicts, total
+
+    async def get_users(
+        self, limit: int = 10, offset: int = 0, filters: Dict[str, Any] = None
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """
+        Get a list of users with optional filtering.
+
+        Args:
+            limit: Maximum number of users to return
+            offset: Number of users to skip
+            filters: Dictionary of field names and values to filter by
+
+        Returns:
+            Tuple of (list of user dictionaries, total count)
+        """
+        # Build query with filters
+        query = select(User)
+        if filters:
+            for field, value in filters.items():
+                if hasattr(User, field) and value is not None:
+                    query = query.where(getattr(User, field) == value)
+
+        # Get total count
+        count_query = select(func.count()).select_from(query.subquery())
+        total_result = await self.db.execute(count_query)
+        total = total_result.scalar() or 0
+
+        # Apply pagination
+        query = query.offset(offset).limit(limit)
+
+        # Execute query
+        result = await self.db.execute(query)
+        users = result.scalars().all()
+
+        # Convert SQLModels to dicts and add gully_ids
+        user_dicts = []
+        for user in users:
+            user_dict = {
+                "id": user.id,
+                "telegram_id": user.telegram_id,
+                "username": user.username,
+                "full_name": user.full_name,
+                "created_at": user.created_at,
+                "updated_at": user.updated_at,
+            }
+            user_dicts.append(user_dict)
+
+        return user_dicts, total
+
+    async def update_user(
+        self, user_id: int, update_data: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Update a user.
+
+        Args:
+            user_id: ID of the user to update
+            update_data: Dictionary containing fields to update
+
+        Returns:
+            Dictionary with updated user data or None if not found
         """
         user = await self.db.get(User, user_id)
         if not user:
             return None
 
         # Map 'name' to 'full_name' if it exists
-        if "name" in user_data and "full_name" not in user_data:
-            user_data["full_name"] = user_data.pop("name")
+        if "name" in update_data and "full_name" not in update_data:
+            update_data["full_name"] = update_data.pop("name")
 
-        for key, value in user_data.items():
-            setattr(user, key, value)
+        # Update user attributes
+        for key, value in update_data.items():
+            if hasattr(user, key):
+                setattr(user, key, value)
 
         await self.db.commit()
         await self.db.refresh(user)
-        return user
+
+        # Convert SQLModel to dict and add gully_ids
+        user_dict = {
+            "id": user.id,
+            "telegram_id": user.telegram_id,
+            "username": user.username,
+            "full_name": user.full_name,
+            "created_at": user.created_at,
+            "updated_at": user.updated_at,
+        }
+
+        return user_dict
 
     async def delete_user(self, user_id: int) -> bool:
-        """Delete a user.
+        """
+        Delete a user.
 
         Args:
-            user_id: The ID of the user to delete
+            user_id: ID of the user to delete
 
         Returns:
-            True if deletion was successful, False otherwise
+            True if user was deleted, False if not found
         """
         user = await self.db.get(User, user_id)
         if not user:
@@ -257,38 +282,81 @@ class UserServiceClient(BaseServiceClient):
 
         await self.db.delete(user)
         await self.db.commit()
+
         return True
 
-    async def get_user_players(
+    async def get_participant_players(
         self, user_id: int, gully_id: Optional[int] = None
-    ) -> List[UserPlayer]:
-        """Get players owned by a user.
+    ) -> List[Dict[str, Any]]:
+        """
+        Get players owned by a user.
 
         Args:
             user_id: The ID of the user
             gully_id: Optional gully ID to filter by
 
         Returns:
-            List of user player objects
+            List of participant player dictionaries
         """
-        query = select(UserPlayer).where(UserPlayer.user_id == user_id)
+        # First get the gully_participant_id
+        query = select(GullyParticipant.id).where(GullyParticipant.user_id == user_id)
         if gully_id:
-            query = query.where(UserPlayer.gully_id == gully_id)
+            query = query.where(GullyParticipant.gully_id == gully_id)
 
         result = await self.db.execute(query)
-        return result.scalars().all()
+        participant_ids = result.scalars().all()
 
-    async def create_user_player(self, user_player_data: Dict[str, Any]) -> UserPlayer:
-        """Create a new user player.
+        if not participant_ids:
+            return []
+
+        # Now get the participant players
+        query = select(ParticipantPlayer).where(
+            ParticipantPlayer.gully_participant_id.in_(participant_ids)
+        )
+
+        result = await self.db.execute(query)
+        participant_players = result.scalars().all()
+
+        # Convert to dictionaries
+        player_dicts = []
+        for player in participant_players:
+            player_dict = {
+                "id": player.id,
+                "gully_participant_id": player.gully_participant_id,
+                "player_id": player.player_id,
+                "status": player.status,
+                "created_at": player.created_at,
+                "updated_at": player.updated_at,
+            }
+            player_dicts.append(player_dict)
+
+        return player_dicts
+
+    async def create_participant_player(
+        self, participant_player_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Create a new participant player.
 
         Args:
-            user_player_data: User player data to create
+            participant_player_data: Participant player data to create
 
         Returns:
-            Created user player object
+            Dictionary with created participant player data
         """
-        user_player = UserPlayer(**user_player_data)
-        self.db.add(user_player)
+        participant_player = ParticipantPlayer(**participant_player_data)
+        self.db.add(participant_player)
         await self.db.commit()
-        await self.db.refresh(user_player)
-        return user_player
+        await self.db.refresh(participant_player)
+
+        # Convert to dictionary
+        player_dict = {
+            "id": participant_player.id,
+            "gully_participant_id": participant_player.gully_participant_id,
+            "player_id": participant_player.player_id,
+            "status": participant_player.status,
+            "created_at": participant_player.created_at,
+            "updated_at": participant_player.updated_at,
+        }
+
+        return player_dict

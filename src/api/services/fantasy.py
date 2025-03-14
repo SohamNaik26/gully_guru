@@ -1,789 +1,545 @@
 """
 Fantasy service for the GullyGuru API.
-This module provides client methods for interacting with fantasy-related API endpoints and database operations.
+This module provides methods for interacting with fantasy-related database operations.
 """
 
 import logging
-from typing import Dict, Any
-from datetime import datetime, timezone
-import httpx
+from typing import Dict, Any, List, Optional, Tuple
+from datetime import datetime
 
-from sqlalchemy import update, func
-from sqlmodel import select
+from sqlmodel import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func, and_, or_
 
-from src.api.services.base import BaseService, BaseServiceClient
+from src.api.services.base import BaseService
 from src.db.models.models import (
-    AuctionQueue,
+    ParticipantPlayer,
     Player,
     GullyParticipant,
     User,
     AuctionStatus,
-    AuctionType,
+    UserPlayerStatus,
 )
 
 logger = logging.getLogger(__name__)
 
 
 class FantasyService(BaseService):
-    """Client for interacting with fantasy-related API endpoints."""
+    """Service for fantasy-related operations."""
 
-    def __init__(self, base_url: str, client: httpx.AsyncClient = None):
-        """Initialize the fantasy service client.
-
-        Args:
-            base_url: The base URL for the API
-            client: An optional httpx AsyncClient instance
+    def __init__(self, db: AsyncSession):
         """
-        super().__init__(base_url, client)
-        self.endpoint = f"{self.base_url}/fantasy"
-
-    async def add_to_draft_squad(
-        self, user_id: int, player_id: int, gully_id: int
-    ) -> Dict[str, Any]:
-        """Add a player to user's draft squad.
+        Initialize the fantasy service.
 
         Args:
-            user_id: The ID of the user
-            player_id: The ID of the player to add
-            gully_id: The ID of the gully
+            db: Database session
+        """
+        super().__init__(None, None)
+        self.db = db
+
+    async def get_gully_participant(
+        self, user_id: int, gully_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get a gully participant by user_id and gully_id.
+
+        Args:
+            user_id: ID of the user
+            gully_id: ID of the gully
 
         Returns:
-            Response with success status and message
+            Dictionary with participant data or None if not found
         """
-        response = await self._make_request(
-            "POST",
-            f"{self.endpoint}/draft-player",
-            json={"user_id": user_id, "player_id": player_id, "gully_id": gully_id},
-        )
-        if "error" in response:
-            logger.error(f"Error adding player to draft: {response['error']}")
-            return {"success": False, "message": response["error"]}
-        return response
-
-    async def remove_from_draft_squad(
-        self, user_id: int, player_id: int, gully_id: int
-    ) -> Dict[str, Any]:
-        """Remove a player from user's draft squad.
-
-        Args:
-            user_id: The ID of the user
-            player_id: The ID of the player to remove
-            gully_id: The ID of the gully
-
-        Returns:
-            Response with success status and message
-        """
-        response = await self._make_request(
-            "DELETE",
-            f"{self.endpoint}/draft-player/{player_id}",
-            params={"user_id": user_id, "gully_id": gully_id},
-        )
-        if "error" in response:
-            logger.error(f"Error removing player from draft: {response['error']}")
-            return {"success": False, "message": response["error"]}
-        return response
-
-    async def get_draft_squad(self, user_id: int, gully_id: int) -> Dict[str, Any]:
-        """Get user's draft squad.
-
-        Args:
-            user_id: The ID of the user
-            gully_id: The ID of the gully
-
-        Returns:
-            Draft squad data including players, total price, and player count
-        """
-        response = await self._make_request(
-            "GET",
-            f"{self.endpoint}/draft-squad",
-            params={"user_id": user_id, "gully_id": gully_id},
-        )
-        if "error" in response:
-            logger.error(f"Error getting draft squad: {response['error']}")
-            return {"players": [], "total_price": 0.0, "player_count": 0}
-        return response
-
-    async def submit_squad(self, user_id: int, gully_id: int) -> Dict[str, Any]:
-        """Submit user's final squad.
-
-        Args:
-            user_id: The ID of the user
-            gully_id: The ID of the gully
-
-        Returns:
-            Response with success status and message
-        """
-        response = await self._make_request(
-            "POST",
-            f"{self.endpoint}/submit-squad",
-            json={"user_id": user_id, "gully_id": gully_id},
-        )
-        if "error" in response:
-            logger.error(f"Error submitting squad: {response['error']}")
-            return {"success": False, "message": response["error"]}
-        return response
-
-    async def get_submission_status(self, gully_id: int) -> Dict[str, Any]:
-        """Check submission status for a Gully.
-
-        Args:
-            gully_id: The ID of the gully
-
-        Returns:
-            Dictionary with submission status information
-        """
-        # Get all participants
-        stmt = select(GullyParticipant).where(GullyParticipant.gully_id == gully_id)
-        result = await self.db.execute(stmt)
-        participants = result.scalars().all()
-
-        # Count submissions
-        total = len(participants)
-        submitted = sum(1 for p in participants if p.has_submitted_squad)
-
-        # Get pending users
-        pending_users = []
-        for p in participants:
-            if not p.has_submitted_squad:
-                # Get user details
-                user_stmt = select(User).where(User.id == p.user_id)
-                user_result = await self.db.execute(user_stmt)
-                user = user_result.scalars().first()
-
-                if user:
-                    pending_users.append(
-                        {
-                            "id": user.id,
-                            "username": user.username,
-                            "telegram_id": user.telegram_id,
-                        }
-                    )
-
-        return {
-            "all_submitted": (submitted == total),
-            "total_participants": total,
-            "submitted_count": submitted,
-            "pending_users": pending_users,
-        }
-
-    async def start_auction(self, gully_id: int) -> Dict[str, Any]:
-        """Start auction for a Gully.
-
-        Args:
-            gully_id: The ID of the gully
-
-        Returns:
-            Dictionary with success status, message, and counts of contested/uncontested players
-        """
-        # Check if all users have submitted
-        status = await self.get_submission_status(gully_id)
-
-        if not status["all_submitted"]:
-            return {
-                "success": False,
-                "message": "Not all users have submitted their squads",
-            }
-
-        # Identify contested players
-        # First, get all pending players
-        stmt = (
-            select(AuctionQueue.player_id, func.count(AuctionQueue.id).label("count"))
-            .where(
-                AuctionQueue.gully_id == gully_id,
-                AuctionQueue.status == AuctionStatus.PENDING.value,
-            )
-            .group_by(AuctionQueue.player_id)
-        )
-
-        result = await self.db.execute(stmt)
-        player_counts = result.all()
-
-        # Process each player
-        contested_count = 0
-        uncontested_count = 0
-
-        for player_id, count in player_counts:
-            if count > 1:
-                # Contested - update status to bidding
-                contested_count += 1
-                update_stmt = (
-                    update(AuctionQueue)
-                    .where(
-                        AuctionQueue.gully_id == gully_id,
-                        AuctionQueue.player_id == player_id,
-                        AuctionQueue.status == AuctionStatus.PENDING.value,
-                    )
-                    .values(status=AuctionStatus.BIDDING.value)
-                )
-                await self.db.execute(update_stmt)
-            else:
-                # Uncontested - update status to completed
-                uncontested_count += 1
-                update_stmt = (
-                    update(AuctionQueue)
-                    .where(
-                        AuctionQueue.gully_id == gully_id,
-                        AuctionQueue.player_id == player_id,
-                        AuctionQueue.status == AuctionStatus.PENDING.value,
-                    )
-                    .values(status=AuctionStatus.COMPLETED.value)
-                )
-                await self.db.execute(update_stmt)
-
-        await self.db.commit()
-
-        return {
-            "success": True,
-            "message": "Auction started successfully",
-            "contested_count": contested_count,
-            "uncontested_count": uncontested_count,
-        }
-
-    async def get_contested_players(self, gully_id: int) -> Dict[str, Any]:
-        """Get contested players for a Gully.
-
-        Args:
-            gully_id: The ID of the gully
-
-        Returns:
-            Dictionary with list of contested players
-        """
-        stmt = select(Player).join(
-            AuctionQueue,
-            (AuctionQueue.player_id == Player.id)
-            & (AuctionQueue.gully_id == gully_id)
-            & (AuctionQueue.status == AuctionStatus.BIDDING.value),
-        )
-        result = await self.db.execute(stmt)
-        players = result.scalars().all()
-
-        player_list = []
-        for player in players:
-            player_list.append(
-                {
-                    "id": player.id,
-                    "name": player.name,
-                    "team": player.team,
-                    "player_type": player.player_type,
-                    "base_price": (
-                        float(player.base_price) if player.base_price else 0.0
-                    ),
-                }
-            )
-
-        return {"players": player_list}
-
-    async def get_uncontested_players(self, gully_id: int) -> Dict[str, Any]:
-        """Get uncontested players for a Gully.
-
-        Args:
-            gully_id: The ID of the gully
-
-        Returns:
-            Dictionary with list of uncontested players
-        """
-        stmt = select(Player).join(
-            AuctionQueue,
-            (AuctionQueue.player_id == Player.id)
-            & (AuctionQueue.gully_id == gully_id)
-            & (AuctionQueue.status == AuctionStatus.COMPLETED.value),
-        )
-        result = await self.db.execute(stmt)
-        players = result.scalars().all()
-
-        player_list = []
-        for player in players:
-            player_list.append(
-                {
-                    "id": player.id,
-                    "name": player.name,
-                    "team": player.team,
-                    "player_type": player.player_type,
-                    "base_price": (
-                        float(player.base_price) if player.base_price else 0.0
-                    ),
-                }
-            )
-
-        return {"players": player_list}
-
-    async def place_bid(
-        self, user_id: int, player_id: int, gully_id: int, bid_amount: float
-    ) -> Dict[str, Any]:
-        """Place a bid on a contested player during auction.
-
-        Args:
-            user_id: The ID of the user placing the bid
-            player_id: The ID of the player being bid on
-            gully_id: The ID of the gully
-            bid_amount: The amount of the bid
-
-        Returns:
-            Dictionary with success status and message
-        """
-        # Check if player is in bidding status
-        stmt = select(AuctionQueue).where(
-            AuctionQueue.gully_id == gully_id,
-            AuctionQueue.player_id == player_id,
-            AuctionQueue.status == AuctionStatus.BIDDING.value,
-        )
-        result = await self.db.execute(stmt)
-        auction_item = result.scalars().first()
-
-        if not auction_item:
-            return {
-                "success": False,
-                "message": "Player is not available for bidding",
-            }
-
-        # Check user's remaining budget
-        # This would require additional logic to calculate remaining budget
-
-        # Record the bid
-        # This would require a new model for tracking bids
-
-        return {
-            "success": True,
-            "message": f"Bid of {bid_amount} Cr placed successfully",
-            "user_id": user_id,
-            "player_id": player_id,
-            "bid_amount": bid_amount,
-        }
-
-    async def get_team_analysis(self, user_id: int, gully_id: int) -> Dict[str, Any]:
-        """Get analysis of a user's team.
-
-        Args:
-            user_id: The ID of the user
-            gully_id: The ID of the gully
-
-        Returns:
-            Dictionary with team analysis data
-        """
-        # Get the user's team
-        draft_squad = await self.get_draft_squad(user_id, gully_id)
-
-        # Count players by role
-        role_counts = {
-            "batsman": 0,
-            "bowler": 0,
-            "all-rounder": 0,
-            "wicketkeeper": 0,
-        }
-
-        # Count players by team
-        team_counts = {}
-
-        for player in draft_squad.get("players", []):
-            # Count by role
-            player_type = player["player_type"]
-            if player_type in role_counts:
-                role_counts[player_type] += 1
-
-            # Count by team
-            team = player["team"]
-            if team in team_counts:
-                team_counts[team] += 1
-            else:
-                team_counts[team] = 1
-
-        return {
-            "role_distribution": role_counts,
-            "team_composition": team_counts,
-            "total_players": len(draft_squad.get("players", [])),
-            "total_price": draft_squad.get("total_price", 0.0),
-        }
-
-
-class FantasyServiceClient(BaseServiceClient):
-    """Client for interacting with fantasy-related database operations."""
-
-    async def add_to_draft_squad(
-        self, user_id: int, player_id: int, gully_id: int
-    ) -> Dict[str, Any]:
-        """Add a player to user's draft squad.
-
-        Args:
-            user_id: The ID of the user
-            player_id: The ID of the player to add
-            gully_id: The ID of the gully
-
-        Returns:
-            Dictionary with success status and message
-        """
-        # Check if player already exists in draft
-        stmt = select(AuctionQueue).where(
-            AuctionQueue.gully_id == gully_id,
-            AuctionQueue.player_id == player_id,
-            AuctionQueue.status == AuctionStatus.DRAFT.value,
-        )
-        result = await self.db.execute(stmt)
-        existing = result.scalars().first()
-
-        if existing:
-            # Return a dictionary with failure message
-            return {"success": False, "message": "Player already in draft"}
-
-        # Add player to auction queue with draft status
-        auction_queue = AuctionQueue(
-            gully_id=gully_id,
-            player_id=player_id,
-            auction_type=AuctionType.NEW_PLAYER.value,
-            status=AuctionStatus.DRAFT.value,
-        )
-        self.db.add(auction_queue)
-        await self.db.commit()
-        await self.db.refresh(auction_queue)
-
-        # Return a dictionary with success message
-        return {"success": True, "message": "Player added to draft"}
-
-    async def remove_from_draft_squad(
-        self, user_id: int, player_id: int, gully_id: int
-    ) -> Dict[str, Any]:
-        """Remove a player from user's draft squad.
-
-        Args:
-            user_id: The ID of the user
-            player_id: The ID of the player to remove
-            gully_id: The ID of the gully
-
-        Returns:
-            Dictionary with success status and message
-        """
-        stmt = select(AuctionQueue).where(
-            AuctionQueue.gully_id == gully_id,
-            AuctionQueue.player_id == player_id,
-            AuctionQueue.status == AuctionStatus.DRAFT.value,
-        )
-        result = await self.db.execute(stmt)
-        draft_item = result.scalars().first()
-
-        if not draft_item:
-            return {"success": False, "message": "Player not found in draft"}
-
-        await self.db.delete(draft_item)
-        await self.db.commit()
-
-        return {"success": True, "message": "Player removed from draft"}
-
-    async def get_draft_squad(self, user_id: int, gully_id: int) -> Dict[str, Any]:
-        """Get user's draft squad.
-
-        Args:
-            user_id: The ID of the user
-            gully_id: The ID of the gully
-
-        Returns:
-            Dictionary with draft squad data including players, total price, and player count
-        """
-        # Get all players in draft for this gully
-        stmt = select(Player).join(
-            AuctionQueue,
-            (AuctionQueue.player_id == Player.id)
-            & (AuctionQueue.gully_id == gully_id)
-            & (AuctionQueue.status == AuctionStatus.DRAFT.value),
-        )
-        result = await self.db.execute(stmt)
-        players = result.scalars().all()
-
-        # Format response
-        player_list = []
-        total_price = 0.0
-
-        for player in players:
-            player_dict = {
-                "id": player.id,
-                "name": player.name,
-                "team": player.team,
-                "player_type": player.player_type,
-                "base_price": float(player.base_price) if player.base_price else 0.0,
-            }
-            player_list.append(player_dict)
-            if player.base_price:
-                total_price += float(player.base_price)
-
-        return {
-            "players": player_list,
-            "total_price": total_price,
-            "player_count": len(player_list),
-        }
-
-    async def submit_squad(self, user_id: int, gully_id: int) -> Dict[str, Any]:
-        """Submit user's final squad.
-
-        Args:
-            user_id: The ID of the user
-            gully_id: The ID of the gully
-
-        Returns:
-            Dictionary with success status and message
-        """
-        # Get draft squad
-        draft_squad = await self.get_draft_squad(user_id, gully_id)
-
-        # Validate squad
-        if draft_squad["player_count"] < 18:
-            return {
-                "success": False,
-                "message": f"Squad must have 18 players. Currently has {draft_squad['player_count']}.",
-            }
-
-        if draft_squad["total_price"] > 120:
-            return {
-                "success": False,
-                "message": f"Squad exceeds budget of 120 Cr. Current total: {draft_squad['total_price']} Cr.",
-            }
-
-        # Update all draft players to pending status
-        stmt = (
-            update(AuctionQueue)
-            .where(
-                AuctionQueue.gully_id == gully_id,
-                AuctionQueue.status == AuctionStatus.DRAFT.value,
-            )
-            .values(status=AuctionStatus.PENDING.value)
-        )
-        await self.db.execute(stmt)
-
-        # Update gully participant
         stmt = select(GullyParticipant).where(
-            GullyParticipant.user_id == user_id, GullyParticipant.gully_id == gully_id
+            and_(
+                GullyParticipant.user_id == user_id,
+                GullyParticipant.gully_id == gully_id,
+            )
         )
         result = await self.db.execute(stmt)
         participant = result.scalars().first()
 
-        if participant:
-            participant.has_submitted_squad = True
-            participant.submission_time = datetime.now(timezone.utc)
-            await self.db.commit()
+        if not participant:
+            return None
 
-        return {"success": True, "message": "Squad submitted successfully"}
+        # Convert SQLModel to dict
+        participant_dict = {
+            "id": participant.id,
+            "gully_id": participant.gully_id,
+            "user_id": participant.user_id,
+            "created_at": participant.created_at,
+            "updated_at": participant.updated_at,
+        }
 
-    async def start_auction(self, gully_id: int) -> Dict[str, Any]:
-        """Start auction for a Gully.
+        return participant_dict
+
+    async def add_to_draft_squad(
+        self, gully_participant_id: int, player_id: int
+    ) -> Dict[str, Any]:
+        """
+        Add a player to a participant's draft squad.
 
         Args:
-            gully_id: The ID of the gully
+            gully_participant_id: ID of the gully participant
+            player_id: ID of the player to add
 
         Returns:
-            Dictionary with success status, message, and counts of contested/uncontested players
+            Dictionary with added player data
         """
-        # Check if all users have submitted
-        status = await self.get_submission_status(gully_id)
+        # Check if player exists
+        player = await self.db.get(Player, player_id)
+        if not player:
+            raise ValueError(f"Player with ID {player_id} not found")
 
-        if not status["all_submitted"]:
-            return {
-                "success": False,
-                "message": "Not all users have submitted their squads",
-            }
+        # Check if participant exists
+        participant = await self.db.get(GullyParticipant, gully_participant_id)
+        if not participant:
+            raise ValueError(f"Participant with ID {gully_participant_id} not found")
 
-        # Identify contested players
-        # First, get all pending players
-        stmt = (
-            select(AuctionQueue.player_id, func.count(AuctionQueue.id).label("count"))
-            .where(
-                AuctionQueue.gully_id == gully_id,
-                AuctionQueue.status == AuctionStatus.PENDING.value,
+        # Check if player is already in squad
+        stmt = select(ParticipantPlayer).where(
+            and_(
+                ParticipantPlayer.gully_participant_id == gully_participant_id,
+                ParticipantPlayer.player_id == player_id,
             )
-            .group_by(AuctionQueue.player_id)
         )
-
         result = await self.db.execute(stmt)
-        player_counts = result.all()
+        existing_player = result.scalars().first()
 
-        # Process each player
-        contested_count = 0
-        uncontested_count = 0
+        if existing_player:
+            raise ValueError(f"Player with ID {player_id} is already in squad")
 
-        for player_id, count in player_counts:
-            if count > 1:
-                # Contested - update status to bidding
-                contested_count += 1
-                update_stmt = (
-                    update(AuctionQueue)
-                    .where(
-                        AuctionQueue.gully_id == gully_id,
-                        AuctionQueue.player_id == player_id,
-                        AuctionQueue.status == AuctionStatus.PENDING.value,
-                    )
-                    .values(status=AuctionStatus.BIDDING.value)
-                )
-                await self.db.execute(update_stmt)
-            else:
-                # Uncontested - update status to completed
-                uncontested_count += 1
-                update_stmt = (
-                    update(AuctionQueue)
-                    .where(
-                        AuctionQueue.gully_id == gully_id,
-                        AuctionQueue.player_id == player_id,
-                        AuctionQueue.status == AuctionStatus.PENDING.value,
-                    )
-                    .values(status=AuctionStatus.COMPLETED.value)
-                )
-                await self.db.execute(update_stmt)
+        # Count players in squad
+        stmt = (
+            select(func.count())
+            .select_from(ParticipantPlayer)
+            .where(ParticipantPlayer.gully_participant_id == gully_participant_id)
+        )
+        result = await self.db.execute(stmt)
+        player_count = result.scalar() or 0
 
+        # Check if squad is full (max 11 players)
+        if player_count >= 11:
+            raise ValueError("Squad is full (max 11 players)")
+
+        # Add player to squad
+        participant_player = ParticipantPlayer(
+            gully_participant_id=gully_participant_id,
+            player_id=player_id,
+            status=UserPlayerStatus.DRAFT,
+        )
+        self.db.add(participant_player)
+        await self.db.commit()
+        await self.db.refresh(participant_player)
+
+        # Get player details
+        player = await self.db.get(Player, player_id)
+
+        # Convert SQLModel to dict
+        player_dict = {
+            "id": participant_player.id,
+            "gully_participant_id": participant_player.gully_participant_id,
+            "player_id": participant_player.player_id,
+            "status": participant_player.status,
+            "created_at": participant_player.created_at,
+            "updated_at": participant_player.updated_at,
+            "player": {
+                "id": player.id,
+                "name": player.name,
+                "team": player.team,
+                "role": player.role,
+                "price": player.price,
+            },
+        }
+
+        return player_dict
+
+    async def remove_from_draft_squad(
+        self, gully_participant_id: int, player_id: int
+    ) -> bool:
+        """
+        Remove a player from a participant's draft squad.
+
+        Args:
+            gully_participant_id: ID of the gully participant
+            player_id: ID of the player to remove
+
+        Returns:
+            True if player was removed, False if not found
+        """
+        # Find the participant player
+        stmt = select(ParticipantPlayer).where(
+            and_(
+                ParticipantPlayer.gully_participant_id == gully_participant_id,
+                ParticipantPlayer.player_id == player_id,
+            )
+        )
+        result = await self.db.execute(stmt)
+        participant_player = result.scalars().first()
+
+        if not participant_player:
+            return False
+
+        # Check if player can be removed (only DRAFT status)
+        if participant_player.status != UserPlayerStatus.DRAFT:
+            raise ValueError(
+                f"Cannot remove player with status {participant_player.status}"
+            )
+
+        # Remove player from squad
+        await self.db.delete(participant_player)
+        await self.db.commit()
+
+        return True
+
+    async def get_draft_squad(self, gully_participant_id: int) -> Dict[str, Any]:
+        """
+        Get a participant's draft squad.
+
+        Args:
+            gully_participant_id: ID of the gully participant
+
+        Returns:
+            Dictionary with squad data
+        """
+        # Check if participant exists
+        participant = await self.db.get(GullyParticipant, gully_participant_id)
+        if not participant:
+            raise ValueError(f"Participant with ID {gully_participant_id} not found")
+
+        # Get players in squad
+        stmt = (
+            select(ParticipantPlayer, Player)
+            .join(Player, ParticipantPlayer.player_id == Player.id)
+            .where(ParticipantPlayer.gully_participant_id == gully_participant_id)
+        )
+        result = await self.db.execute(stmt)
+        squad = result.all()
+
+        # Convert SQLModels to dicts
+        players = []
+        for participant_player, player in squad:
+            player_dict = {
+                "id": participant_player.id,
+                "gully_participant_id": participant_player.gully_participant_id,
+                "player_id": participant_player.player_id,
+                "status": participant_player.status,
+                "created_at": participant_player.created_at,
+                "updated_at": participant_player.updated_at,
+                "player": {
+                    "id": player.id,
+                    "name": player.name,
+                    "team": player.team,
+                    "role": player.role,
+                    "price": player.price,
+                },
+            }
+            players.append(player_dict)
+
+        # Get user and gully details
+        user = await self.db.get(User, participant.user_id)
+
+        # Build squad dict
+        squad_dict = {
+            "gully_participant_id": gully_participant_id,
+            "gully_id": participant.gully_id,
+            "user_id": participant.user_id,
+            "username": user.username if user else None,
+            "players": players,
+            "player_count": len(players),
+        }
+
+        return squad_dict
+
+    async def submit_squad(self, gully_participant_id: int) -> Dict[str, Any]:
+        """
+        Submit a participant's draft squad.
+
+        Args:
+            gully_participant_id: ID of the gully participant
+
+        Returns:
+            Dictionary with submission result
+        """
+        # Check if participant exists
+        participant = await self.db.get(GullyParticipant, gully_participant_id)
+        if not participant:
+            raise ValueError(f"Participant with ID {gully_participant_id} not found")
+
+        # Get players in squad
+        stmt = select(ParticipantPlayer).where(
+            ParticipantPlayer.gully_participant_id == gully_participant_id
+        )
+        result = await self.db.execute(stmt)
+        squad = result.scalars().all()
+
+        # Check if squad has enough players (min 11)
+        if len(squad) < 11:
+            raise ValueError(
+                f"Squad must have at least 11 players (currently has {len(squad)})"
+            )
+
+        # Update player statuses to LOCKED
+        for player in squad:
+            if player.status == UserPlayerStatus.DRAFT:
+                player.status = UserPlayerStatus.LOCKED
+                player.updated_at = datetime.utcnow()
+
+        await self.db.commit()
+
+        # Update participant has_submitted_squad flag
+        participant.has_submitted_squad = True
+        participant.updated_at = datetime.utcnow()
         await self.db.commit()
 
         return {
             "success": True,
-            "message": "Auction started successfully",
+            "message": "Squad submitted successfully",
+            "gully_participant_id": gully_participant_id,
+            "player_count": len(squad),
+        }
+
+    async def update_participant_player_status(
+        self, player_id: int, new_status: UserPlayerStatus
+    ) -> Dict[str, Any]:
+        """
+        Update the status of a participant player.
+
+        Args:
+            player_id: ID of the participant player
+            new_status: New status to set
+
+        Returns:
+            Dictionary with updated player data
+        """
+        # Check if participant player exists
+        participant_player = await self.db.get(ParticipantPlayer, player_id)
+        if not participant_player:
+            raise ValueError(f"Participant player with ID {player_id} not found")
+
+        # Validate status transition
+        if not self._is_valid_player_status_transition(
+            participant_player.status, new_status
+        ):
+            raise ValueError(
+                f"Invalid status transition from {participant_player.status} to {new_status}"
+            )
+
+        # Update status
+        participant_player.status = new_status
+        participant_player.updated_at = datetime.utcnow()
+        await self.db.commit()
+        await self.db.refresh(participant_player)
+
+        # Get player details
+        player = await self.db.get(Player, participant_player.player_id)
+
+        # Convert SQLModel to dict
+        player_dict = {
+            "id": participant_player.id,
+            "gully_participant_id": participant_player.gully_participant_id,
+            "player_id": participant_player.player_id,
+            "status": participant_player.status,
+            "created_at": participant_player.created_at,
+            "updated_at": participant_player.updated_at,
+            "player": {
+                "id": player.id,
+                "name": player.name,
+                "team": player.team,
+                "role": player.role,
+                "price": player.price,
+            },
+        }
+
+        return player_dict
+
+    def _is_valid_player_status_transition(
+        self, current_status: UserPlayerStatus, new_status: UserPlayerStatus
+    ) -> bool:
+        """
+        Check if a status transition is valid.
+
+        Args:
+            current_status: Current status
+            new_status: New status
+
+        Returns:
+            True if transition is valid, False otherwise
+        """
+        # Define valid transitions
+        valid_transitions = {
+            UserPlayerStatus.DRAFT: [UserPlayerStatus.LOCKED],
+            UserPlayerStatus.LOCKED: [
+                UserPlayerStatus.CONTESTED,
+                UserPlayerStatus.OWNED,
+            ],
+            UserPlayerStatus.CONTESTED: [UserPlayerStatus.OWNED],
+            UserPlayerStatus.OWNED: [],
+        }
+
+        # Allow same status
+        if current_status == new_status:
+            return True
+
+        # Check if transition is valid
+        return new_status in valid_transitions.get(current_status, [])
+
+    async def mark_contested_players(self, gully_id: int) -> Dict[str, Any]:
+        """
+        Mark players as contested if they are selected by multiple users.
+
+        Args:
+            gully_id: ID of the gully
+
+        Returns:
+            Dictionary with counts of contested and uncontested players
+        """
+        # Find players selected by multiple users
+        subquery = (
+            select(ParticipantPlayer.player_id, func.count().label("count"))
+            .join(
+                GullyParticipant,
+                ParticipantPlayer.gully_participant_id == GullyParticipant.id,
+            )
+            .where(
+                and_(
+                    GullyParticipant.gully_id == gully_id,
+                    ParticipantPlayer.status == UserPlayerStatus.LOCKED,
+                )
+            )
+            .group_by(ParticipantPlayer.player_id)
+            .having(func.count() > 1)
+            .subquery()
+        )
+
+        # Get participant players for contested players
+        stmt = (
+            select(ParticipantPlayer)
+            .join(
+                GullyParticipant,
+                ParticipantPlayer.gully_participant_id == GullyParticipant.id,
+            )
+            .join(subquery, ParticipantPlayer.player_id == subquery.c.player_id)
+            .where(
+                and_(
+                    GullyParticipant.gully_id == gully_id,
+                    ParticipantPlayer.status == UserPlayerStatus.LOCKED,
+                )
+            )
+        )
+
+        result = await self.db.execute(stmt)
+        contested_players = result.scalars().all()
+
+        # Update status to CONTESTED
+        contested_count = 0
+        for player in contested_players:
+            player.status = UserPlayerStatus.CONTESTED
+            player.updated_at = datetime.utcnow()
+            contested_count += 1
+
+        # Find uncontested players
+        stmt = (
+            select(ParticipantPlayer)
+            .join(
+                GullyParticipant,
+                ParticipantPlayer.gully_participant_id == GullyParticipant.id,
+            )
+            .where(
+                and_(
+                    GullyParticipant.gully_id == gully_id,
+                    ParticipantPlayer.status == UserPlayerStatus.LOCKED,
+                    ~ParticipantPlayer.player_id.in_(select(subquery.c.player_id)),
+                )
+            )
+        )
+
+        result = await self.db.execute(stmt)
+        uncontested_players = result.scalars().all()
+
+        # Update status to OWNED
+        uncontested_count = 0
+        for player in uncontested_players:
+            player.status = UserPlayerStatus.OWNED
+            player.updated_at = datetime.utcnow()
+            uncontested_count += 1
+
+        await self.db.commit()
+
+        return {
             "contested_count": contested_count,
             "uncontested_count": uncontested_count,
+            "total_count": contested_count + uncontested_count,
         }
 
-    async def get_contested_players(self, gully_id: int) -> Dict[str, Any]:
-        """Get contested players for a Gully.
-
-        Args:
-            gully_id: The ID of the gully
-
-        Returns:
-            Dictionary with list of contested players
-        """
-        stmt = select(Player).join(
-            AuctionQueue,
-            (AuctionQueue.player_id == Player.id)
-            & (AuctionQueue.gully_id == gully_id)
-            & (AuctionQueue.status == AuctionStatus.BIDDING.value),
-        )
-        result = await self.db.execute(stmt)
-        players = result.scalars().all()
-
-        player_list = []
-        for player in players:
-            player_list.append(
-                {
-                    "id": player.id,
-                    "name": player.name,
-                    "team": player.team,
-                    "player_type": player.player_type,
-                    "base_price": (
-                        float(player.base_price) if player.base_price else 0.0
-                    ),
-                }
-            )
-
-        return {"players": player_list}
-
-    async def get_uncontested_players(self, gully_id: int) -> Dict[str, Any]:
-        """Get uncontested players for a Gully.
-
-        Args:
-            gully_id: The ID of the gully
-
-        Returns:
-            Dictionary with list of uncontested players
-        """
-        stmt = select(Player).join(
-            AuctionQueue,
-            (AuctionQueue.player_id == Player.id)
-            & (AuctionQueue.gully_id == gully_id)
-            & (AuctionQueue.status == AuctionStatus.COMPLETED.value),
-        )
-        result = await self.db.execute(stmt)
-        players = result.scalars().all()
-
-        player_list = []
-        for player in players:
-            player_list.append(
-                {
-                    "id": player.id,
-                    "name": player.name,
-                    "team": player.team,
-                    "player_type": player.player_type,
-                    "base_price": (
-                        float(player.base_price) if player.base_price else 0.0
-                    ),
-                }
-            )
-
-        return {"players": player_list}
-
-    async def place_bid(
-        self, user_id: int, player_id: int, gully_id: int, bid_amount: float
+    async def resolve_contested_player(
+        self, player_id: int, winning_participant_id: int
     ) -> Dict[str, Any]:
-        """Place a bid on a contested player during auction.
+        """
+        Resolve a contested player by assigning it to the winning participant.
 
         Args:
-            user_id: The ID of the user placing the bid
-            player_id: The ID of the player being bid on
-            gully_id: The ID of the gully
-            bid_amount: The amount of the bid
+            player_id: ID of the player
+            winning_participant_id: ID of the winning participant
 
         Returns:
-            Dictionary with success status and message
+            Dictionary with updated player data
         """
-        # Check if player is in bidding status
-        stmt = select(AuctionQueue).where(
-            AuctionQueue.gully_id == gully_id,
-            AuctionQueue.player_id == player_id,
-            AuctionQueue.status == AuctionStatus.BIDDING.value,
+        # Find all participant players for this player
+        stmt = select(ParticipantPlayer).where(
+            and_(
+                ParticipantPlayer.player_id == player_id,
+                ParticipantPlayer.status == UserPlayerStatus.CONTESTED,
+            )
         )
         result = await self.db.execute(stmt)
-        auction_item = result.scalars().first()
+        contested_players = result.scalars().all()
 
-        if not auction_item:
-            return {
-                "success": False,
-                "message": "Player is not available for bidding",
-            }
+        if not contested_players:
+            raise ValueError(f"No contested players found with player ID {player_id}")
 
-        # Check user's remaining budget
-        # This would require additional logic to calculate remaining budget
+        # Find winning participant player
+        winning_player = None
+        for player in contested_players:
+            if player.gully_participant_id == winning_participant_id:
+                winning_player = player
+                break
 
-        # Record the bid
-        # This would require a new model for tracking bids
+        if not winning_player:
+            raise ValueError(
+                f"Winning participant with ID {winning_participant_id} not found among contested players"
+            )
 
-        return {
-            "success": True,
-            "message": f"Bid of {bid_amount} Cr placed successfully",
-            "user_id": user_id,
-            "player_id": player_id,
-            "bid_amount": bid_amount,
+        # Update winning player status to OWNED
+        winning_player.status = UserPlayerStatus.OWNED
+        winning_player.updated_at = datetime.utcnow()
+
+        # Delete losing participant players
+        for player in contested_players:
+            if player.id != winning_player.id:
+                await self.db.delete(player)
+
+        await self.db.commit()
+        await self.db.refresh(winning_player)
+
+        # Get player details
+        player = await self.db.get(Player, winning_player.player_id)
+
+        # Convert SQLModel to dict
+        player_dict = {
+            "id": winning_player.id,
+            "gully_participant_id": winning_player.gully_participant_id,
+            "player_id": winning_player.player_id,
+            "status": winning_player.status,
+            "created_at": winning_player.created_at,
+            "updated_at": winning_player.updated_at,
+            "player": {
+                "id": player.id,
+                "name": player.name,
+                "team": player.team,
+                "role": player.role,
+                "price": player.price,
+            },
         }
 
-    async def get_team_analysis(self, user_id: int, gully_id: int) -> Dict[str, Any]:
-        """Get analysis of a user's team.
-
-        Args:
-            user_id: The ID of the user
-            gully_id: The ID of the gully
-
-        Returns:
-            Dictionary with team analysis data
-        """
-        # Get the user's team
-        draft_squad = await self.get_draft_squad(user_id, gully_id)
-
-        # Count players by role
-        role_counts = {
-            "batsman": 0,
-            "bowler": 0,
-            "all-rounder": 0,
-            "wicketkeeper": 0,
-        }
-
-        # Count players by team
-        team_counts = {}
-
-        for player in draft_squad.get("players", []):
-            # Count by role
-            player_type = player["player_type"]
-            if player_type in role_counts:
-                role_counts[player_type] += 1
-
-            # Count by team
-            team = player["team"]
-            if team in team_counts:
-                team_counts[team] += 1
-            else:
-                team_counts[team] = 1
-
-        return {
-            "role_distribution": role_counts,
-            "team_composition": team_counts,
-            "total_players": len(draft_squad.get("players", [])),
-            "total_price": draft_squad.get("total_price", 0.0),
-        }
+        return player_dict

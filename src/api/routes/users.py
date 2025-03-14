@@ -1,164 +1,144 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 
 from src.db.session import get_session
-from src.db.models import User
-from src.api.schemas.user import (
+from src.api.schemas import (
     UserCreate,
     UserResponse,
     UserResponseWithGullies,
-    UserPlayerCreate,
-    UserPlayerResponse,
+    ParticipantPlayerCreate,
+    ParticipantPlayerResponse,
+    UserUpdate,
 )
-from src.api.dependencies import get_current_user
 from src.api.exceptions import NotFoundException
-from src.api.factories import UserFactory, UserPlayerFactory
-from src.api.services import UserServiceClient
+from src.api.factories import UserFactory, ParticipantPlayerFactory
+from src.api.services.user import UserService
+from src.api.schemas.pagination import PaginatedResponse
+from src.api.dependencies.pagination import pagination_params, PaginationParams
+from src.api.factories.user import UserResponseFactory
 
-router = APIRouter()
+router = APIRouter(prefix="/users", tags=["Users"])
 
 
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-async def create_user(
-    user_data: UserCreate, session: AsyncSession = Depends(get_session)
-):
-    """Create a new user."""
-    user_service = UserServiceClient(session)
+async def create_user(user: UserCreate, db: AsyncSession = Depends(get_session)):
+    """
+    Create a new user.
 
-    # Check if user with telegram_id already exists
-    existing_user = await user_service.get_user_by_telegram_id(user_data.telegram_id)
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"User with telegram_id {user_data.telegram_id} already exists",
+    Args:
+        user: User data including telegram_id, first_name, last_name, and username
+
+    Returns:
+        UserResponse: Created user with ID and timestamps
+    """
+    user_service = UserService(db)
+    user_data = await user_service.create_user(user.dict())
+    return UserResponseFactory.create_response(user_data)
+
+
+@router.get("/", response_model=PaginatedResponse[UserResponse])
+async def get_users(
+    telegram_id: Optional[int] = Query(None, description="Filter by Telegram ID"),
+    pagination: PaginationParams = Depends(pagination_params),
+    db: AsyncSession = Depends(get_session),
+):
+    """
+    Get a paginated list of users with optional filtering.
+
+    Args:
+        telegram_id: Optional filter by Telegram ID
+        pagination: Pagination parameters
+
+    Returns:
+        PaginatedResponse[UserResponse]: Paginated list of users
+    """
+    user_service = UserService(db)
+
+    # Prioritize telegram_id filtering for bot integration
+    if telegram_id is not None:
+        users, total = await user_service.get_users_by_telegram_id(
+            telegram_id=telegram_id,
+            limit=pagination.limit,
+            offset=pagination.skip,
+        )
+    else:
+        users, total = await user_service.get_users(
+            limit=pagination.limit,
+            offset=pagination.skip,
         )
 
-    # Create new user
-    user = await user_service.create_user(user_data.dict())
-    return UserFactory.create_response(user)
-
-
-@router.get("/telegram/{telegram_id}", response_model=UserResponse)
-async def get_user_by_telegram_id(
-    telegram_id: int, session: AsyncSession = Depends(get_session)
-):
-    """Get a user by Telegram ID."""
-    user_service = UserServiceClient(session)
-    user = await user_service.get_user_by_telegram_id(telegram_id)
-    if not user:
-        raise NotFoundException(f"User with telegram_id {telegram_id} not found")
-    return UserFactory.create_response(user)
+    return {
+        "items": [UserResponseFactory.create_response(user) for user in users],
+        "total": total,
+        "page": pagination.page,
+        "size": pagination.size,
+        "limit": pagination.limit,
+        "offset": pagination.offset,
+    }
 
 
 @router.get("/{user_id}", response_model=UserResponse)
-async def get_user(user_id: int, session: AsyncSession = Depends(get_session)):
-    """Get a user by ID."""
-    user_service = UserServiceClient(session)
+async def get_user(user_id: int, db: AsyncSession = Depends(get_session)):
+    """
+    Get a user by ID.
+
+    Args:
+        user_id: User ID
+
+    Returns:
+        UserResponse: User details
+
+    Raises:
+        NotFoundException: If user not found
+    """
+    user_service = UserService(db)
     user = await user_service.get_user(user_id)
     if not user:
         raise NotFoundException(resource_type="User", resource_id=user_id)
-    return UserFactory.create_response(user)
+    return UserResponseFactory.create_response(user)
 
 
-@router.get("/", response_model=List[UserResponseWithGullies])
-async def get_users(
-    skip: int = 0,
-    limit: int = 100,
-    telegram_id: Optional[int] = None,
-    session: AsyncSession = Depends(get_session),
+@router.put("/{user_id}", response_model=UserResponse)
+async def update_user(
+    user_id: int, user_update: UserUpdate, db: AsyncSession = Depends(get_session)
 ):
-    """Get all users with optional filtering."""
-    user_service = UserServiceClient(session)
-    users_with_gullies = await user_service.get_users_with_gullies(
-        skip=skip, limit=limit, telegram_id=telegram_id
-    )
-    return users_with_gullies
+    """
+    Update a user by ID.
+
+    Args:
+        user_id: User ID
+        user_update: User data to update
+
+    Returns:
+        UserResponse: Updated user details
+
+    Raises:
+        NotFoundException: If user not found
+    """
+    user_service = UserService(db)
+    user = await user_service.update_user(user_id, user_update.dict(exclude_unset=True))
+    if not user:
+        raise NotFoundException(resource_type="User", resource_id=user_id)
+    return UserResponseFactory.create_response(user)
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_user(
-    user_id: int,
-    session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    """Delete a user (can only delete yourself or admin can delete anyone)."""
-    user_service = UserServiceClient(session)
+async def delete_user(user_id: int, db: AsyncSession = Depends(get_session)):
+    """
+    Delete a user by ID.
 
-    # Check if user exists
-    user = await user_service.get_user(user_id)
-    if not user:
+    Args:
+        user_id: User ID
+
+    Returns:
+        None
+
+    Raises:
+        NotFoundException: If user not found
+    """
+    user_service = UserService(db)
+    success = await user_service.delete_user(user_id)
+    if not success:
         raise NotFoundException(resource_type="User", resource_id=user_id)
-
-    # Check if user is trying to delete themselves or is an admin
-    if current_user.id != user_id and not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only delete your own account unless you are an admin",
-        )
-
-    # Delete the user
-    await user_service.delete_user(user_id)
     return None
-
-
-@router.delete("/telegram/{telegram_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_user_by_telegram_id(
-    telegram_id: int,
-    session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    """Delete a user by Telegram ID (can only delete yourself or admin can delete anyone)."""
-    user_service = UserServiceClient(session)
-
-    # Check if user exists
-    user = await user_service.get_user_by_telegram_id(telegram_id)
-    if not user:
-        raise NotFoundException(resource_type="User", resource_id=telegram_id)
-
-    # Check permissions - only allow users to delete themselves or admins to delete anyone
-    if user.id != current_user.id and not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only delete your own account unless you are an admin",
-        )
-
-    # Delete user
-    await user_service.delete_user(user.id)
-    return None
-
-
-# User Player endpoints
-@router.post(
-    "/players", response_model=UserPlayerResponse, status_code=status.HTTP_201_CREATED
-)
-async def create_user_player(
-    user_player_data: UserPlayerCreate,
-    session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
-):
-    """Create a new user player relationship."""
-    user_service = UserServiceClient(session)
-
-    # Check if user exists
-    user = await user_service.get_user(user_player_data.user_id)
-    if not user:
-        raise NotFoundException(
-            resource_type="User", resource_id=user_player_data.user_id
-        )
-
-    # Create new user player
-    user_player = await user_service.create_user_player(user_player_data.dict())
-    return UserPlayerFactory.create_response(user_player)
-
-
-@router.get("/players/{user_id}", response_model=List[UserPlayerResponse])
-async def get_user_players(
-    user_id: int,
-    gully_id: Optional[int] = None,
-    session: AsyncSession = Depends(get_session),
-):
-    """Get all players owned by a user, optionally filtered by gully."""
-    user_service = UserServiceClient(session)
-    user_players = await user_service.get_user_players(user_id, gully_id)
-    return UserPlayerFactory.create_response_list(user_players)

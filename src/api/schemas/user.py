@@ -2,10 +2,11 @@
 Schemas for user-related data.
 """
 
+from pydantic import BaseModel, Field, ConfigDict
+from typing import List, Optional
 from datetime import datetime
 from decimal import Decimal
-from typing import List
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import field_validator
 
 # Forward reference for PlayerResponse to avoid circular imports
 from src.api.schemas.player import PlayerResponse
@@ -13,25 +14,28 @@ from src.api.schemas.player import PlayerResponse
 
 # User API Models
 class UserBase(BaseModel):
-    """Base model for user data."""
+    """Base schema for User model."""
 
-    telegram_id: int
-    username: str
-    full_name: str
+    telegram_id: int = Field(..., description="Telegram user ID")
+    username: str = Field(..., description="Telegram username")
+    full_name: str = Field(..., description="User's full name")
 
 
 class UserCreate(UserBase):
-    """Create model for user data."""
+    """Schema for creating a new user."""
 
     pass
 
 
 class UserResponse(UserBase):
-    """Response model for user data."""
+    """Schema for user response."""
 
-    id: int
-    created_at: datetime
-    updated_at: datetime
+    id: int = Field(..., description="User ID")
+    created_at: datetime = Field(..., description="When the user was created")
+    updated_at: datetime = Field(..., description="When the user was last updated")
+    gully_ids: Optional[List[int]] = Field(
+        None, description="IDs of gullies the user is part of"
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -97,27 +101,27 @@ class GullyParticipantResponse(GullyParticipantBase):
         return v
 
 
-# UserPlayer API Models
-class UserPlayerBase(BaseModel):
-    """Base model for user player data."""
+# ParticipantPlayer API Models
+class ParticipantPlayerBase(BaseModel):
+    """Base model for participant player data."""
 
-    user_id: int
+    gully_participant_id: int
     player_id: int
-    gully_id: int
     purchase_price: Decimal = Decimal("0.0")
     is_captain: bool = False
     is_vice_captain: bool = False
     is_playing_xi: bool = False
+    status: str = "draft"
 
 
-class UserPlayerCreate(UserPlayerBase):
-    """Create model for user player data."""
+class ParticipantPlayerCreate(ParticipantPlayerBase):
+    """Create model for participant player data."""
 
     pass
 
 
-class UserPlayerResponse(UserPlayerBase):
-    """Response model for user player data."""
+class ParticipantPlayerResponse(ParticipantPlayerBase):
+    """Response model for participant player data."""
 
     id: int
     purchase_date: datetime
@@ -129,13 +133,21 @@ class UserPlayerResponse(UserPlayerBase):
     @field_validator("purchase_price")
     @classmethod
     def validate_purchase_price(cls, v):
-        """Ensure purchase price is non-negative."""
+        """Validate that purchase price is non-negative."""
         if v < 0:
-            raise ValueError("Purchase price cannot be negative")
+            raise ValueError("Purchase price must be non-negative")
+        return v
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v):
+        """Validate that status is one of the allowed values."""
+        allowed_values = ["draft", "locked", "contested", "owned"]
+        if v not in allowed_values:
+            raise ValueError(f"Status must be one of {allowed_values}")
         return v
 
 
-# Note: We're using string type annotation to avoid circular imports
 class UserWithPlayers(UserResponse):
     """User model with owned players."""
 
@@ -146,3 +158,15 @@ class UserWithPlayers(UserResponse):
 
 # No need to rebuild the model, Pydantic will handle the string type annotation
 # UserWithPlayers.model_rebuild()
+
+
+class UserUpdate(BaseModel):
+    """Schema for updating a user."""
+
+    username: Optional[str] = Field(None, description="Telegram username")
+    full_name: Optional[str] = Field(None, description="User's full name")
+
+    class Config:
+        """Pydantic config."""
+
+        extra = "forbid"  # Forbid extra fields

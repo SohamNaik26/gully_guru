@@ -12,9 +12,10 @@ This document provides a comprehensive overview of the database models used in t
 6. [Entity Relationship Diagram](#entity-relationship-diagram)
 7. [Validation Rules](#validation-rules)
 8. [Security Loopholes & Fixes](#security-loopholes--fixes)
-9. [API Integration](#api-integration)
-10. [Implemented Changes](#implemented-changes)
-11. [Implementation Action Items](#implementation-action-items)
+9. [State Flow](#state-flow)
+10. [API Integration](#api-integration)
+11. [Implemented Changes](#implemented-changes)
+12. [Implementation Action Items](#implementation-action-items)
 
 ## Base Components
 
@@ -43,7 +44,6 @@ Represents a fantasy cricket manager (user of the application).
 - `full_name`: User's full name
 
 **Relationships**:
-- `user_players`: One-to-many relationship with `UserPlayer` (players owned by this user)
 - `gully_participations`: One-to-many relationship with `GullyParticipant` (participations in gullies)
 - `gullies`: Many-to-many relationship with `Gully` through the `GullyParticipant` link model
 
@@ -77,42 +77,45 @@ Represents a fantasy cricket league (called a "Gully").
 - `id`: Primary key
 - `name`: Name of the Gully (indexed)
 - `telegram_group_id`: Telegram group ID associated with this Gully (unique, indexed)
+- `status`: Current status of the Gully (draft, auction, transfers, completed) (indexed, defaults to "draft")
 
 **Relationships**:
 - `participants`: One-to-many relationship with `GullyParticipant` (users participating in this Gully)
-- `user_players`: One-to-many relationship with `UserPlayer` (players assigned to this Gully)
 - `users`: Many-to-many relationship with `User` through the `GullyParticipant` link model
 - `auction_queue_items`: One-to-many relationship with `AuctionQueue` (players in auction queue for this Gully)
 - `transfer_market_items`: One-to-many relationship with `TransferMarket` (players in transfer market for this Gully)
 - `bank_transactions`: One-to-many relationship with `BankTransaction` (transactions in this Gully)
 
+**Validations**:
+- `status` must be one of: "draft", "auction", "transfers", "completed"
+
 ## Relationship Models
 
-### UserPlayer
+### ParticipantPlayer
 
-Represents the ownership relationship between a user and a player in a specific Gully.
+Represents the ownership relationship between a participant and a player.
 
 **Key Fields**:
 - `id`: Primary key
-- `user_id`: Reference to the User (indexed)
+- `gully_participant_id`: Reference to the GullyParticipant (link between User and Gully) (indexed)
 - `player_id`: Reference to the Player (indexed)
-- `gully_id`: Reference to the Gully context (indexed)
 - `purchase_price`: Price paid for this player
 - `purchase_date`: When the player was purchased
 - `is_captain`: Whether this player is the team captain
 - `is_vice_captain`: Whether this player is the team vice-captain
 - `is_playing_xi`: Whether this player is in the playing XI
+- `status`: Current status of player ownership (draft, locked, contested, owned) (indexed, defaults to "draft")
 
 **Relationships**:
-- `user`: Many-to-one relationship with `User` (back_populates="user_players")
-- `player`: One-to-one relationship with `Player` (back_populates="user_player")
-- `gully`: Many-to-one relationship with `Gully` (back_populates="user_players")
+- `gully_participant`: Many-to-one relationship with `GullyParticipant` (back_populates="participant_players")
+- `player`: One-to-one relationship with `Player` (back_populates="participant_player")
 
 **Validations**:
 - `purchase_price` must be non-negative
+- `status` must be one of: "draft", "locked", "contested", "owned"
 
 **Constraints**:
-- Unique constraint on the combination of `player_id` and `gully_id` to ensure a player can only be owned by one user per Gully
+- Unique constraint on the combination of `player_id` and `gully_participant_id` to ensure a player can only be owned by one participant
 
 ### GullyParticipant
 
@@ -131,6 +134,7 @@ Represents a user's participation in a specific Gully.
 - `gully`: Many-to-one relationship with `Gully` (back_populates="participants")
 - `user`: Many-to-one relationship with `User` (back_populates="gully_participations")
 - `bank_transactions`: One-to-many relationship with `BankTransaction` (transactions where this participant is the seller)
+- `participant_players`: One-to-many relationship with `ParticipantPlayer` (players owned by this participant)
 
 **Validations**:
 - `role` must be one of: "member", "admin"
@@ -253,9 +257,28 @@ Used in the `AuctionQueue.auction_type` field to distinguish between different t
 
 Used in the `AuctionQueue.status` field to track the current state of an auction item.
 
+- `DRAFT` = "draft" (Player in draft stage before submission)
 - `PENDING` = "pending" (Waiting for auction to start)
 - `BIDDING` = "bidding" (Active bidding phase)
 - `COMPLETED` = "completed" (Auction has concluded)
+
+### GullyStatus Enum
+
+Used in the `Gully.status` field to track the current state of a fantasy cricket league.
+
+- `DRAFT` = "draft" (Round 0 in progress, participants picking initial squads)
+- `AUCTION` = "auction" (Auction round is live for contested players from Round 0)
+- `TRANSFERS` = "transfers" (Mid-season transfer window is open)
+- `COMPLETED` = "completed" (League is finished, no further actions allowed)
+
+### UserPlayerStatus Enum
+
+Used in the `UserPlayer.status` field to track the current state of player ownership.
+
+- `DRAFT` = "draft" (User selected this player in Round 0, squad not yet finalized)
+- `LOCKED` = "locked" (User submitted Round 0 squad, player is uncontested)
+- `CONTESTED` = "contested" (User submitted Round 0 squad, player is contested by others)
+- `OWNED` = "owned" (User definitively owns this player, won auction or uncontested)
 
 ## Entity Relationship Diagram
 
@@ -266,24 +289,24 @@ Used in the `AuctionQueue.status` field to track the current state of an auction
 | id             |<----->| user_id           |<----->| id             |
 | telegram_id    |       | gully_id          |       | name           |
 | username       |       | team_name         |       | telegram_group_|
-| full_name      |       | budget            |       +----------------+
-+----------------+       | points            |               |
-        |                | role              |               |
-        |                +-------------------+               |
-        |                        |                           |
-        v                        v                           v
+| full_name      |       | budget            |       | status         |
++----------------+       | points            |       +----------------+
+                         | role              |               |
+                         +-------------------+               |
+                                  |                          |
+                                  v                          v
 +----------------+      +-------------------+      +-------------------+
-|   UserPlayer   |      | BankTransaction   |      |   AuctionQueue    |
+|ParticipantPlayer|     | BankTransaction   |      |   AuctionQueue    |
 +----------------+      +-------------------+      +-------------------+
 | id             |      | id                |      | id                |
-| user_id        |<-----| seller_participant_id |  | gully_id          |
+| gully_participant_id |<| seller_participant_id |  | gully_id          |
 | player_id      |      | player_id         |      | player_id         |
-| gully_id       |<-----| gully_id          |<-----| auction_type      |
-| purchase_price |      | sale_price        |      | status            |
-| purchase_date  |      | sale_time         |      | listed_at         |
-| is_captain     |      +-------------------+      +-------------------+
-| is_vice_captain|                                          |
+| purchase_price |      | gully_id          |<-----| auction_type      |
+| purchase_date  |      | sale_price        |      | status            |
+| is_captain     |      | sale_time         |      | listed_at         |
+| is_vice_captain|      +-------------------+      +-------------------+
 | is_playing_xi  |                                          |
+| status         |                                          |
 +----------------+                                          |
         |                                                   |
         v                                                   v
@@ -318,15 +341,17 @@ The models implement several validation rules to ensure data integrity:
 1. **Player Type Validation**: Player types must be one of: "BAT", "BOWL", "ALL", "WK"
 2. **Role Validation**: GullyParticipant roles must be one of: "member", "admin"
 3. **Auction Type Validation**: AuctionQueue auction_type must be one of: "new_player", "transfer"
-4. **Auction Status Validation**: AuctionQueue status must be one of: "pending", "bidding", "completed"
-5. **Non-negative Values**: 
+4. **Auction Status Validation**: AuctionQueue status must be one of: "draft", "pending", "bidding", "completed"
+5. **Gully Status Validation**: Gully status must be one of: "draft", "auction", "transfers", "completed"
+6. **UserPlayer Status Validation**: UserPlayer status must be one of: "draft", "locked", "contested", "owned"
+7. **Non-negative Values**: 
    - Purchase price must be non-negative
    - Budget must be non-negative
    - Points must be non-negative
    - Bid amount must be non-negative
    - Fair price must be non-negative
    - Sale price must be non-negative
-6. **Unique Constraints**:
+8. **Unique Constraints**:
    - User's telegram_id must be unique
    - Gully's telegram_group_id must be unique
    - Player can only be owned by one user per Gully (unique combination of player_id and gully_id)
@@ -359,6 +384,84 @@ The following security loopholes have been identified and fixed to ensure fair p
 - Ensures fair play by preventing price manipulation
 - Maintains market integrity in the transfer system
 - Prevents users from exploiting the system to increase their budget
+
+## State Flow
+
+The GullyStatus and UserPlayerStatus enums define the possible states for Gullies and UserPlayers, respectively. This section describes the typical flow of states for these entities.
+
+### Gully Status Flow
+
+The Gully status represents the overall phase of the fantasy cricket league:
+
+```
+DRAFT  -->  AUCTION  -->  TRANSFERS  -->  COMPLETED
+```
+
+1. **DRAFT**:
+   - Round 0 is in progress.
+   - Participants can pick their initial squads.
+   - UserPlayers are created with status DRAFT.
+
+2. **AUCTION**:
+   - When everyone has submitted or the Round 0 deadline passes, the league enters Auction.
+   - An auction round is live for any contested players from Round 0.
+   - Bids occur, winners get their players.
+
+3. **TRANSFERS**:
+   - When the auction concludes, the league moves into the Transfer window.
+   - A mid-season transfer window is open.
+   - Users can buy/sell players, pick up free agents, etc.
+
+4. **COMPLETED**:
+   - The league is finished.
+   - No further actions are allowed.
+   - This state is set at season's end or whenever the league is closed.
+
+### UserPlayer Status Flow
+
+The UserPlayer status represents the ownership state of a player by a user:
+
+```
+DRAFT  -->  LOCKED  -->  OWNED
+       \->  CONTESTED  -->  OWNED (if won auction)
+                       \->  (deleted) (if lost auction)
+```
+
+1. **DRAFT**:
+   - The user has selected this player in Round 0, but the user's squad is not yet finalized.
+   - The user can still remove this player or continue adding more.
+
+2. **LOCKED**:
+   - The user submitted their Round 0 squad for this player, and no other participant selected the same player.
+   - In essence, the user's ownership is uncontested from Round 0.
+   - This state is set when the user finalizes their Round 0 squad and no other user has selected the same player.
+
+3. **CONTESTED**:
+   - The user submitted their Round 0 squad, but another participant also selected this same player.
+   - Ownership will be decided via an auction when the Gully transitions to AUCTION.
+   - This state is set when the user finalizes their Round 0 squad and another user has also selected the same player.
+
+4. **OWNED**:
+   - The user definitively owns this player.
+   - This state is reached either by:
+     - Being uncontested from the start (LOCKED → OWNED after Round 0 is fully done)
+     - Winning the auction if it was CONTESTED
+   - Once set to OWNED, that record stays unless the user sells or transfers the player.
+
+### State Transitions
+
+The following table summarizes the key state transitions and their triggers:
+
+| Entity | From State | To State | Trigger |
+|--------|------------|----------|---------|
+| Gully | DRAFT | AUCTION | All participants submit squads or deadline passes |
+| Gully | AUCTION | TRANSFERS | All auctions are completed |
+| Gully | TRANSFERS | COMPLETED | Season ends or league is closed |
+| UserPlayer | DRAFT | LOCKED | User submits squad and player is uncontested |
+| UserPlayer | DRAFT | CONTESTED | User submits squad and player is contested |
+| UserPlayer | LOCKED | OWNED | Round 0 is fully closed |
+| UserPlayer | CONTESTED | OWNED | User wins auction for player |
+| UserPlayer | CONTESTED | (deleted) | User loses auction for player |
 
 ## API Integration
 

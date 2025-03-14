@@ -1,0 +1,96 @@
+2025-03-14 23:50:04,733 - __main__ - INFO - Starting GullyGuru bot...
+2025-03-14 23:50:04,733 - __main__ - INFO - Checking if API is running...
+2025-03-14 23:50:04,733 - __main__ - INFO - Checking API availability at http://localhost:8000/health
+2025-03-14 23:50:04,844 - __main__ - INFO - API and database are available and healthy!
+2025-03-14 23:50:04,844 - __main__ - INFO - API is available. Initializing bot...
+2025-03-14 23:50:04,844 - src.bot.api_client.base - INFO - Initializing API client...
+2025-03-14 23:50:04,844 - src.bot.api_client.base - INFO - Initialized API client with base URL: http://localhost:8000
+2025-03-14 23:50:04,844 - src.bot.api_client.base - INFO - API client initialized successfully
+2025-03-14 23:50:04,844 - __main__ - INFO - API client initialized successfully
+2025-03-14 23:50:04,858 - src.bot.features - INFO - Registering onboarding feature handlers...
+2025-03-14 23:50:04,858 - src.bot.features.onboarding - INFO - Onboarding handlers registered successfully
+2025-03-14 23:50:04,858 - src.bot.features - INFO - Onboarding handlers registered successfully
+2025-03-14 23:50:05,278 - __main__ - INFO - Starting the bot...
+2025-03-14 23:50:05,419 - __main__ - INFO - Bot started successfully
+2025-03-14 23:51:00,041 - src.bot.features - INFO - Bot was added to group: jay and anagha (ID: -1002444881555)
+2025-03-14 23:51:00,042 - src.bot.features - INFO - Bot was added by user: naik_jay (ID: 1211254392)
+2025-03-14 23:51:00,762 - src.bot.api_client.onboarding - INFO - Creating gully for group -1002444881555 (jay and anagha)
+2025-03-14 23:51:00,846 - src.bot.api_client.base - INFO - API GET request to http://localhost:8000/api/gullies/ - Status: 200
+2025-03-14 23:51:00,846 - src.bot.api_client.base - INFO - Request was redirected to: http://localhost:8000/api/gullies/?telegram_group_id=-1002444881555
+2025-03-14 23:51:00,847 - src.bot.api_client.onboarding - INFO - Found gully with telegram_group_id -1002444881555
+2025-03-14 23:51:00,847 - src.bot.api_client.onboarding - INFO - Gully already exists for group -1002444881555, returning existing gully
+2025-03-14 23:51:00,847 - src.bot.api_client.onboarding - INFO - Adding user with telegram_id 1211254392 as admin to gully 4
+2025-03-14 23:51:00,927 - src.bot.api_client.base - INFO - API GET request to http://localhost:8000/api/users/ - Status: 200
+2025-03-14 23:51:00,927 - src.bot.api_client.base - INFO - Request was redirected to: http://localhost:8000/api/users/?telegram_id=1211254392
+2025-03-14 23:51:00,928 - src.bot.api_client.onboarding - INFO - Found user with telegram_id 1211254392
+2025-03-14 23:51:00,928 - src.bot.api_client.onboarding - INFO - Adding user 20 as admin to gully 4
+2025-03-14 23:51:01,002 - src.bot.api_client.base - INFO - API GET request to http://localhost:8000/api/participants/ - Status: 200
+2025-03-14 23:51:01,002 - src.bot.api_client.base - INFO - Request was redirected to: http://localhost:8000/api/participants/?user_id=20&gully_id=4
+2025-03-14 23:51:01,002 - src.bot.api_client.onboarding - INFO - Found participation for user 20 in gully 4
+2025-03-14 23:51:01,002 - src.bot.api_client.onboarding - INFO - User 20 is already a participant in gully 4
+2025-03-14 23:51:01,002 - src.bot.api_client.onboarding - INFO - Successfully added user 20 as admin to gully 4
+2025-03-14 23:51:01,141 - src.bot.api_client.base - INFO - API GET request to http://localhost:8000/api/users/ - Status: 200
+2025-03-14 23:51:01,141 - src.bot.api_client.base - INFO - Request was redirected to: http://localhost:8000/api/users/?telegram_id=1211254392
+2025-03-14 23:51:01,142 - src.bot.api_client.onboarding - INFO - Found user with telegram_id 1211254392
+2025-03-14 23:51:01,142 - src.bot.features - INFO - Successfully completed onboarding for group jay and anagha
+2025-03-14 23:51:15,770 - src.bot.features.onboarding - INFO - User 1211254392 started registration from group -1002444881555
+2025-03-14 23:51:15,850 - src.bot.api_client.base - INFO - API GET request to http://localhost:8000/api/users/ - Status: 200
+2025-03-14 23:51:15,850 - src.bot.api_client.base - INFO - Request was redirected to: http://localhost:8000/api/users/?telegram_id=1211254392
+2025-03-14 23:51:15,850 - src.bot.api_client.onboarding - INFO - Found user with telegram_id 1211254392
+2025-03-14 23:51:15,918 - src.bot.api_client.base - INFO - API GET request to http://localhost:8000/api/gullies/ - Status: 200
+2025-03-14 23:51:15,918 - src.bot.api_client.base - INFO - Request was redirected to: http://localhost:8000/api/gullies/?telegram_group_id=-1002444881555
+2025-03-14 23:51:15,918 - src.bot.api_client.onboarding - INFO - Found gully with telegram_group_id -1002444881555
+2025-03-14 23:51:15,983 - src.bot.api_client.base - INFO - API GET request to http://localhost:8000/api/participants/ - Status: 200
+2025-03-14 23:51:15,983 - src.bot.api_client.base - INFO - Request was redirected to: http://localhost:8000/api/participants/?user_id=20&gully_id=4
+2025-03-14 23:51:15,983 - src.bot.api_client.onboarding - INFO - Found participation for user 20 in gully 4
+2025-03-14 23:51:16,650 - __main__ - ERROR - Exception while handling an update: No module named 'src.bot.features.main_menu'
+2025-03-14 23:51:53,178 - src.bot.api_client.base - INFO - API GET request to http://localhost:8000/api/users/ - Status: 200
+2025-03-14 23:51:53,178 - src.bot.api_client.base - INFO - Request was redirected to: http://localhost:8000/api/users/?telegram_id=1211254392
+2025-03-14 23:51:53,178 - src.bot.api_client.onboarding - INFO - Found user with telegram_id 1211254392
+2025-03-14 23:51:53,246 - src.bot.api_client.base - INFO - API GET request to http://localhost:8000/api/participants/ - Status: 200
+2025-03-14 23:51:53,246 - src.bot.api_client.base - INFO - Request was redirected to: http://localhost:8000/api/participants/?user_id=20
+2025-03-14 23:51:53,246 - src.bot.api_client.onboarding - INFO - Found 2 participations for user 20
+2025-03-14 23:51:53,323 - src.bot.api_client.base - INFO - API GET request to http://localhost:8000/api/gullies/ - Status: 200
+2025-03-14 23:51:53,324 - src.bot.api_client.base - INFO - Request was redirected to: http://localhost:8000/api/gullies/?id=5
+2025-03-14 23:51:53,324 - src.bot.api_client.onboarding - INFO - Found gully with ID 5
+2025-03-14 23:51:53,393 - src.bot.api_client.base - INFO - API GET request to http://localhost:8000/api/gullies/ - Status: 200
+2025-03-14 23:51:53,394 - src.bot.api_client.base - INFO - Request was redirected to: http://localhost:8000/api/gullies/?id=4
+2025-03-14 23:51:53,394 - src.bot.api_client.onboarding - INFO - Found gully with ID 4
+2025-03-14 23:56:55,078 - src.bot.api_client.base - INFO - API GET request to http://localhost:8000/api/users/ - Status: 200
+2025-03-14 23:56:55,078 - src.bot.api_client.base - INFO - Request was redirected to: http://localhost:8000/api/users/?telegram_id=1211254392
+2025-03-14 23:56:55,078 - src.bot.api_client.onboarding - INFO - Found user with telegram_id 1211254392
+2025-03-14 23:56:55,153 - src.bot.api_client.base - INFO - API GET request to http://localhost:8000/api/participants/ - Status: 200
+2025-03-14 23:56:55,153 - src.bot.api_client.base - INFO - Request was redirected to: http://localhost:8000/api/participants/?user_id=20
+2025-03-14 23:56:55,153 - src.bot.api_client.onboarding - INFO - Found 2 participations for user 20
+2025-03-14 23:56:55,226 - src.bot.api_client.base - INFO - API GET request to http://localhost:8000/api/gullies/ - Status: 200
+2025-03-14 23:56:55,226 - src.bot.api_client.base - INFO - Request was redirected to: http://localhost:8000/api/gullies/?id=5
+2025-03-14 23:56:55,226 - src.bot.api_client.onboarding - INFO - Found gully with ID 5
+2025-03-14 23:56:55,300 - src.bot.api_client.base - INFO - API GET request to http://localhost:8000/api/gullies/ - Status: 200
+2025-03-14 23:56:55,301 - src.bot.api_client.base - INFO - Request was redirected to: http://localhost:8000/api/gullies/?id=4
+2025-03-14 23:56:55,301 - src.bot.api_client.onboarding - INFO - Found gully with ID 4
+2025-03-14 23:57:08,182 - __main__ - INFO - Starting GullyGuru bot...
+2025-03-14 23:57:08,182 - __main__ - INFO - Checking if API is running...
+2025-03-14 23:57:08,182 - __main__ - INFO - Checking API availability at http://localhost:8000/health
+2025-03-14 23:57:08,287 - __main__ - INFO - API and database are available and healthy!
+2025-03-14 23:57:08,287 - __main__ - INFO - API is available. Initializing bot...
+2025-03-14 23:57:08,287 - src.bot.api_client.base - INFO - Initializing API client...
+2025-03-14 23:57:08,287 - src.bot.api_client.base - INFO - Initialized API client with base URL: http://localhost:8000
+2025-03-14 23:57:08,287 - src.bot.api_client.base - INFO - API client initialized successfully
+2025-03-14 23:57:08,287 - __main__ - INFO - API client initialized successfully
+2025-03-14 23:57:08,301 - src.bot.features - INFO - Registering onboarding feature handlers...
+2025-03-14 23:57:08,301 - src.bot.features.onboarding - INFO - Onboarding handlers registered successfully
+2025-03-14 23:57:08,301 - src.bot.features - INFO - Onboarding handlers registered successfully
+2025-03-14 23:57:08,775 - __main__ - INFO - Starting the bot...
+2025-03-14 23:57:08,937 - __main__ - INFO - Bot started successfully
+2025-03-14 23:57:15,620 - src.bot.api_client.base - INFO - API GET request to http://localhost:8000/api/users/ - Status: 200
+2025-03-14 23:57:15,620 - src.bot.api_client.base - INFO - Request was redirected to: http://localhost:8000/api/users/?telegram_id=1211254392
+2025-03-14 23:57:15,621 - src.bot.api_client.onboarding - INFO - Found user with telegram_id 1211254392
+2025-03-14 23:57:15,699 - src.bot.api_client.base - INFO - API GET request to http://localhost:8000/api/gullies/user/20 - Status: 200
+2025-03-14 23:57:15,700 - src.bot.api_client.onboarding - INFO - Found 2 gullies for user 20
+2025-03-14 23:57:15,700 - __main__ - ERROR - Exception while handling an update: 'gully_id'
+2025-03-14 23:57:50,826 - src.bot.api_client.base - INFO - API GET request to http://localhost:8000/api/users/ - Status: 200
+2025-03-14 23:57:50,826 - src.bot.api_client.base - INFO - Request was redirected to: http://localhost:8000/api/users/?telegram_id=1211254392
+2025-03-14 23:57:50,826 - src.bot.api_client.onboarding - INFO - Found user with telegram_id 1211254392
+2025-03-14 23:57:50,895 - src.bot.api_client.base - INFO - API GET request to http://localhost:8000/api/gullies/user/20 - Status: 200
+2025-03-14 23:57:50,895 - src.bot.api_client.onboarding - INFO - Found 2 gullies for user 20
+2025-03-14 23:57:50,895 - __main__ - ERROR - Exception while handling an update: 'gully_id'

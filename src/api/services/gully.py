@@ -1,240 +1,57 @@
 """
 Gully service for the GullyGuru API.
-This module provides client methods for interacting with gully-related API endpoints and database operations.
+This module provides methods for interacting with gully-related database operations.
 """
 
 import logging
-from typing import Dict, Any, Optional, List
-import httpx
-
+from typing import Dict, Any, Optional, List, Tuple
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from src.api.services.base import BaseService, BaseServiceClient
-from src.db.models.models import Gully, GullyParticipant
+from src.api.services.base import BaseService
+from src.db.models.models import (
+    Gully,
+    GullyParticipant,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class GullyService(BaseService):
-    """Client for interacting with gully-related API endpoints."""
+    """Service for gully-related operations."""
 
-    def __init__(self, base_url: str, client: httpx.AsyncClient = None):
-        """Initialize the gully service client.
+    def __init__(self, db: AsyncSession):
+        """
+        Initialize the gully service.
 
         Args:
-            base_url: The base URL for the API
-            client: An optional httpx AsyncClient instance
+            db: Database session
         """
-        super().__init__(base_url, client)
-        # Main resources endpoints
-        self.gullies_endpoint = f"{self.base_url}/gullies"
-        self.participants_endpoint = f"{self.base_url}/gullies/participants/"
-
-    def _build_gullies_url(self, *path_segments: str) -> str:
-        """Build a URL for gullies endpoints with proper formatting.
-
-        Args:
-            *path_segments: Path segments to append to the gullies endpoint
-
-        Returns:
-            Properly formatted URL without double slashes
-        """
-        # Start with the base endpoint without trailing slash
-        base = self.gullies_endpoint.rstrip("/")
-
-        # Join all path segments, ensuring each has no leading/trailing slashes
-        path = "/".join(segment.strip("/") for segment in path_segments if segment)
-
-        # Return the combined URL
-        return f"{base}/{path}" if path else base
-
-    def _build_participants_url(self, *path_segments: str) -> str:
-        """Build a URL for participants endpoints with proper formatting.
-
-        Args:
-            *path_segments: Path segments to append to the participants endpoint
-
-        Returns:
-            Properly formatted URL without double slashes
-        """
-        # Start with the base endpoint without trailing slash
-        base = self.participants_endpoint.rstrip("/")
-
-        # Join all path segments, ensuring each has no leading/trailing slashes
-        path = "/".join(segment.strip("/") for segment in path_segments if segment)
-
-        # Return the combined URL
-        return f"{base}/{path}" if path else base
+        super().__init__(None, None)
+        self.db = db
 
     async def get_gullies(
-        self, skip: int = 0, limit: int = 10, user_id: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
-        """Get a list of gullies with optional filtering.
+        self,
+        name: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 10,
+        offset: int = 0,
+        user_id: Optional[int] = None,
+        telegram_group_id: Optional[int] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """
+        Get a list of gullies with optional filtering.
 
         Args:
-            skip: Number of gullies to skip
+            name: Optional filter by gully name
+            status: Optional filter by gully status
             limit: Maximum number of gullies to return
+            offset: Number of gullies to skip
             user_id: Filter by user ID (gullies the user is participating in)
+            telegram_group_id: Filter by Telegram group ID
 
         Returns:
-            List of gullies
-        """
-        params = {"skip": skip, "limit": limit}
-        if user_id:
-            params["user_id"] = user_id
-
-        response = await self._make_request("GET", self.gullies_endpoint, params=params)
-        if "error" in response:
-            logger.error(f"Error getting gullies: {response['error']}")
-            return []
-        return response
-
-    async def get_gully(self, gully_id: int) -> Optional[Dict[str, Any]]:
-        """Get a gully by ID.
-
-        Args:
-            gully_id: The ID of the gully
-
-        Returns:
-            Gully data or None if not found
-        """
-        response = await self._make_request(
-            "GET", self._build_gullies_url(str(gully_id))
-        )
-        if "error" in response:
-            logger.error(f"Error getting gully: {response['error']}")
-            return None
-        return response
-
-    async def create_gully(
-        self, gully_data: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
-        """Create a new gully.
-
-        Args:
-            gully_data: Gully data to create
-
-        Returns:
-            Created gully data or None if creation failed
-        """
-        response = await self._make_request(
-            "POST", self.gullies_endpoint, json=gully_data
-        )
-        if "error" in response:
-            logger.error(f"Error creating gully: {response['error']}")
-            return None
-        return response
-
-    async def update_gully(
-        self, gully_id: int, gully_data: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
-        """Update a gully.
-
-        Args:
-            gully_id: The ID of the gully to update
-            gully_data: Gully data to update
-
-        Returns:
-            Updated gully data or None if update failed
-        """
-        response = await self._make_request(
-            "PUT", self._build_gullies_url(str(gully_id)), json=gully_data
-        )
-        if "error" in response:
-            logger.error(f"Error updating gully: {response['error']}")
-            return None
-        return response
-
-    async def delete_gully(self, gully_id: int) -> bool:
-        """Delete a gully.
-
-        Args:
-            gully_id: The ID of the gully to delete
-
-        Returns:
-            True if deletion was successful, False otherwise
-        """
-        response = await self._make_request(
-            "DELETE", self._build_gullies_url(str(gully_id))
-        )
-        if "error" in response:
-            logger.error(f"Error deleting gully: {response['error']}")
-            return False
-        return True
-
-    async def get_participants(self, gully_id: int) -> List[Dict[str, Any]]:
-        """Get participants of a gully.
-
-        Args:
-            gully_id: The ID of the gully
-
-        Returns:
-            List of participants
-        """
-        response = await self._make_request(
-            "GET", self._build_participants_url(str(gully_id))
-        )
-        if "error" in response:
-            logger.error(f"Error getting participants: {response['error']}")
-            return []
-        return response
-
-    async def add_participant(
-        self, gully_id: int, participant_data: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
-        """Add a participant to a gully.
-
-        Args:
-            gully_id: The ID of the gully
-            participant_data: Participant data to add
-
-        Returns:
-            Added participant data or None if addition failed
-        """
-        response = await self._make_request(
-            "POST",
-            self._build_participants_url(str(gully_id)),
-            json=participant_data,
-        )
-        if "error" in response:
-            logger.error(f"Error adding participant: {response['error']}")
-            return None
-        return response
-
-    async def remove_participant(self, gully_id: int, user_id: int) -> bool:
-        """Remove a participant from a gully.
-
-        Args:
-            gully_id: The ID of the gully
-            user_id: The ID of the user to remove
-
-        Returns:
-            True if removal was successful, False otherwise
-        """
-        response = await self._make_request(
-            "DELETE", self._build_participants_url(str(gully_id), str(user_id))
-        )
-        if "error" in response:
-            logger.error(f"Error removing participant: {response['error']}")
-            return False
-        return True
-
-
-class GullyServiceClient(BaseServiceClient):
-    """Client for interacting with gully-related database operations."""
-
-    async def get_gullies(
-        self, skip: int = 0, limit: int = 10, user_id: Optional[int] = None
-    ) -> List[Gully]:
-        """Get a list of gullies with optional filtering.
-
-        Args:
-            skip: Number of gullies to skip
-            limit: Maximum number of gullies to return
-            user_id: Filter by user ID (gullies the user is participating in)
-
-        Returns:
-            List of gullies
+            Tuple of (list of gullies, total count)
         """
         if user_id:
             # Get gullies the user is participating in
@@ -245,53 +62,158 @@ class GullyServiceClient(BaseServiceClient):
                     GullyParticipant.gully_id == Gully.id,
                 )
                 .where(GullyParticipant.user_id == user_id)
-                .offset(skip)
-                .limit(limit)
             )
         else:
             # Get all gullies
-            stmt = select(Gully).offset(skip).limit(limit)
+            stmt = select(Gully)
+
+        # Apply additional filters if provided
+        if name:
+            stmt = stmt.where(Gully.name.contains(name))
+        if status:
+            stmt = stmt.where(Gully.status == status)
+        if telegram_group_id:
+            stmt = stmt.where(Gully.telegram_group_id == telegram_group_id)
+
+        # Get total count before pagination
+        count_stmt = stmt
+        count_result = await self.db.execute(count_stmt)
+        total = len(count_result.scalars().all())
+
+        # Apply pagination
+        stmt = stmt.offset(offset).limit(limit)
 
         result = await self.db.execute(stmt)
-        return result.scalars().all()
+        gullies = result.scalars().all()
 
-    async def get_gully(self, gully_id: int) -> Optional[Gully]:
-        """Get a gully by ID.
+        # Convert to dictionaries
+        gully_dicts = []
+        for gully in gullies:
+            gully_dict = {
+                "id": gully.id,
+                "name": gully.name,
+                "status": gully.status,
+                "telegram_group_id": gully.telegram_group_id,
+                "created_at": gully.created_at,
+                "updated_at": gully.updated_at,
+            }
+            gully_dicts.append(gully_dict)
+
+        return gully_dicts, total
+
+    async def get_gully(self, gully_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get a gully by ID.
 
         Args:
             gully_id: The ID of the gully
 
         Returns:
-            Gully object or None if not found
+            Gully data or None if not found
         """
-        return await self.db.get(Gully, gully_id)
+        gully = await self.db.get(Gully, gully_id)
+        if not gully:
+            return None
 
-    async def create_gully(self, gully_data: Dict[str, Any]) -> Gully:
-        """Create a new gully.
+        return {
+            "id": gully.id,
+            "name": gully.name,
+            "status": gully.status,
+            "telegram_group_id": gully.telegram_group_id,
+            "created_at": gully.created_at,
+            "updated_at": gully.updated_at,
+        }
+
+    async def get_gully_by_group(
+        self, telegram_group_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get a gully by Telegram group ID.
 
         Args:
-            gully_data: Gully data to create
+            telegram_group_id: The Telegram group ID
 
         Returns:
-            Created gully object
+            Gully data or None if not found
         """
+        stmt = select(Gully).where(Gully.telegram_group_id == telegram_group_id)
+        result = await self.db.execute(stmt)
+        gully = result.scalars().first()
+
+        if not gully:
+            return None
+
+        return {
+            "id": gully.id,
+            "name": gully.name,
+            "status": gully.status,
+            "telegram_group_id": gully.telegram_group_id,
+            "created_at": gully.created_at,
+            "updated_at": gully.updated_at,
+        }
+
+    async def get_gully_by_telegram_id(
+        self, telegram_group_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get a gully by Telegram group ID (alias for get_gully_by_group).
+
+        Args:
+            telegram_group_id: The Telegram group ID
+
+        Returns:
+            Gully data or None if not found
+        """
+        return await self.get_gully_by_group(telegram_group_id)
+
+    async def create_gully(self, **gully_data) -> Dict[str, Any]:
+        """
+        Create a new gully.
+
+        Args:
+            **gully_data: Gully data to create
+
+        Returns:
+            Created gully data
+        """
+        # Check if a gully with the same telegram_group_id already exists
+        if "telegram_group_id" in gully_data and gully_data["telegram_group_id"]:
+            existing_gully = await self.get_gully_by_group(
+                gully_data["telegram_group_id"]
+            )
+            if existing_gully:
+                logger.info(
+                    f"Gully with telegram_group_id {gully_data['telegram_group_id']} already exists, "
+                    "returning existing gully"
+                )
+                return existing_gully
+
         gully = Gully(**gully_data)
         self.db.add(gully)
         await self.db.commit()
         await self.db.refresh(gully)
-        return gully
+
+        return {
+            "id": gully.id,
+            "name": gully.name,
+            "status": gully.status,
+            "telegram_group_id": gully.telegram_group_id,
+            "created_at": gully.created_at,
+            "updated_at": gully.updated_at,
+        }
 
     async def update_gully(
         self, gully_id: int, gully_data: Dict[str, Any]
-    ) -> Optional[Gully]:
-        """Update a gully.
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Update a gully.
 
         Args:
             gully_id: The ID of the gully to update
             gully_data: Gully data to update
 
         Returns:
-            Updated gully object or None if not found
+            Updated gully data or None if not found
         """
         gully = await self.db.get(Gully, gully_id)
         if not gully:
@@ -302,10 +224,48 @@ class GullyServiceClient(BaseServiceClient):
 
         await self.db.commit()
         await self.db.refresh(gully)
-        return gully
+
+        return {
+            "id": gully.id,
+            "name": gully.name,
+            "status": gully.status,
+            "telegram_group_id": gully.telegram_group_id,
+            "created_at": gully.created_at,
+            "updated_at": gully.updated_at,
+        }
+
+    async def update_gully_status(self, gully_id: int, status: str) -> Dict[str, Any]:
+        """
+        Update a gully's status.
+
+        Args:
+            gully_id: The ID of the gully to update
+            status: New status
+
+        Returns:
+            Dictionary with success status and message
+        """
+        gully = await self.db.get(Gully, gully_id)
+        if not gully:
+            return {"success": False, "message": f"Gully with ID {gully_id} not found"}
+
+        # Validate status
+        valid_statuses = ["draft", "active", "completed", "cancelled"]
+        if status not in valid_statuses:
+            return {
+                "success": False,
+                "message": f"Invalid status: {status}. Must be one of {valid_statuses}",
+            }
+
+        gully.status = status
+        await self.db.commit()
+        await self.db.refresh(gully)
+
+        return {"success": True, "message": f"Gully status updated to {status}"}
 
     async def delete_gully(self, gully_id: int) -> bool:
-        """Delete a gully.
+        """
+        Delete a gully.
 
         Args:
             gully_id: The ID of the gully to delete
@@ -321,60 +281,73 @@ class GullyServiceClient(BaseServiceClient):
         await self.db.commit()
         return True
 
-    async def get_participants(self, gully_id: int) -> List[GullyParticipant]:
-        """Get participants of a gully.
+    async def get_user_gullies(self, user_id: int) -> List[Dict[str, Any]]:
+        """
+        Get all gullies a user participates in.
 
         Args:
-            gully_id: The ID of the gully
+            user_id: The ID of the user
 
         Returns:
-            List of participants
+            List of gullies
         """
-        stmt = select(GullyParticipant).where(GullyParticipant.gully_id == gully_id)
-        result = await self.db.execute(stmt)
-        return result.scalars().all()
-
-    async def add_participant(
-        self, gully_id: int, participant_data: Dict[str, Any]
-    ) -> GullyParticipant:
-        """Add a participant to a gully.
-
-        Args:
-            gully_id: The ID of the gully
-            participant_data: Participant data to add
-
-        Returns:
-            Added participant object
-        """
-        # Ensure gully_id is set
-        participant_data["gully_id"] = gully_id
-
-        participant = GullyParticipant(**participant_data)
-        self.db.add(participant)
-        await self.db.commit()
-        await self.db.refresh(participant)
-        return participant
-
-    async def remove_participant(self, gully_id: int, user_id: int) -> bool:
-        """Remove a participant from a gully.
-
-        Args:
-            gully_id: The ID of the gully
-            user_id: The ID of the user to remove
-
-        Returns:
-            True if removal was successful, False otherwise
-        """
-        stmt = select(GullyParticipant).where(
-            GullyParticipant.gully_id == gully_id,
-            GullyParticipant.user_id == user_id,
+        stmt = (
+            select(Gully)
+            .join(
+                GullyParticipant,
+                GullyParticipant.gully_id == Gully.id,
+            )
+            .where(GullyParticipant.user_id == user_id)
         )
+
         result = await self.db.execute(stmt)
-        participant = result.scalars().first()
+        gullies = result.scalars().all()
 
-        if not participant:
-            return False
+        # Convert to dictionaries
+        gully_dicts = []
+        for gully in gullies:
+            gully_dict = {
+                "id": gully.id,
+                "name": gully.name,
+                "status": gully.status,
+                "telegram_group_id": gully.telegram_group_id,
+                "created_at": gully.created_at,
+                "updated_at": gully.updated_at,
+            }
+            gully_dicts.append(gully_dict)
 
-        await self.db.delete(participant)
-        await self.db.commit()
-        return True
+        return gully_dicts
+
+    async def get_gullies_by_telegram_ids(
+        self, telegram_group_ids: List[int]
+    ) -> List[Dict[str, Any]]:
+        """
+        Get gullies by a list of Telegram group IDs.
+
+        This method is useful for bot operations where we need to find
+        multiple gullies by their Telegram group IDs.
+
+        Args:
+            telegram_group_ids: List of Telegram group IDs
+
+        Returns:
+            List of gully data matching the Telegram group IDs
+        """
+        stmt = select(Gully).where(Gully.telegram_group_id.in_(telegram_group_ids))
+        result = await self.db.execute(stmt)
+        gullies = result.scalars().all()
+
+        # Convert to dictionaries
+        gully_dicts = []
+        for gully in gullies:
+            gully_dict = {
+                "id": gully.id,
+                "name": gully.name,
+                "status": gully.status,
+                "telegram_group_id": gully.telegram_group_id,
+                "created_at": gully.created_at,
+                "updated_at": gully.updated_at,
+            }
+            gully_dicts.append(gully_dict)
+
+        return gully_dicts

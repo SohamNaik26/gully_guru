@@ -1,6 +1,6 @@
 """Base factory classes for creating response objects from database models."""
 
-from typing import Generic, List, Type, TypeVar
+from typing import Generic, List, Type, TypeVar, Dict, Any, Optional
 
 from pydantic import BaseModel
 from sqlmodel import SQLModel
@@ -40,3 +40,34 @@ class ResponseFactory(Generic[ModelT, ResponseT]):
             List of response schema instances
         """
         return [cls.create_response(model) for model in models]
+
+
+class SuccessResponseFactory:
+    """Factory for creating success response objects."""
+
+    @staticmethod
+    def create_response(
+        success: bool = True,
+        message: str = "Operation successful",
+        data: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Create a success response.
+
+        Args:
+            success: Whether the operation was successful
+            message: Success message
+            data: Additional data to include in the response
+
+        Returns:
+            Dictionary with success response
+        """
+        response = {
+            "success": success,
+            "message": message,
+        }
+
+        if data:
+            response.update(data)
+
+        return response

@@ -10,7 +10,7 @@ from src.db.models.models import (
     User,
     # Player models
     Player,
-    UserPlayer,
+    ParticipantPlayer,
     # Gully models
     Gully,
     GullyParticipant,
@@ -19,6 +19,8 @@ from src.db.models.models import (
     ParticipantRole,
     AuctionType,
     AuctionStatus,
+    GullyStatus,
+    UserPlayerStatus,
     # Auction & Transfer models
     AuctionQueue,
     TransferMarket,
@@ -44,7 +46,7 @@ all_models = [
     # Domain models
     User,
     Player,
-    UserPlayer,
+    ParticipantPlayer,
     Gully,
     GullyParticipant,
     # Enum classes
@@ -52,6 +54,8 @@ all_models = [
     ParticipantRole,
     AuctionType,
     AuctionStatus,
+    GullyStatus,
+    UserPlayerStatus,
     # Auction & Transfer models
     AuctionQueue,
     TransferMarket,

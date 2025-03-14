@@ -7,17 +7,18 @@ from src.api.schemas.user import (
     UserBase,
     UserCreate,
     UserResponse,
+    UserResponseWithGullies,
     UserWithPlayers,
-    UserPlayerBase,
-    UserPlayerCreate,
-    UserPlayerResponse,
+    ParticipantPlayerBase,
+    ParticipantPlayerCreate,
+    ParticipantPlayerResponse,
+    UserUpdate,
 )
 
 # Player schemas
 from src.api.schemas.player import (
     PlayerBase,
     PlayerCreate,
-    PlayerRead,
     PlayerResponse,
     PlayerStatsResponse,
 )
@@ -30,23 +31,33 @@ from src.api.schemas.match import (
     MatchPerformanceResponse,
 )
 
-# Gully and Game mechanics schemas
+# Gully schemas
 from src.api.schemas.gully import (
-    # Gully schemas
     GullyBase,
     GullyCreate,
     GullyResponse,
-    GullyParticipantBase,
-    GullyParticipantCreate,
-    GullyParticipantResponse,
+    GullyUpdate,
+    SuccessResponse,
+)
+
+# Participant schemas
+from src.api.schemas.participant import (
+    ParticipantBase,
+    ParticipantCreate,
+    ParticipantResponse,
     ParticipantUpdate,
-    # Game mechanics schemas
-    UserSquadResponse,
-    AuctionBidCreate,
-    AuctionBidResponse,
-    LeaderboardEntry,
-    LeaderboardResponse,
-    UserPlayerWithDetails,
+)
+
+# Game mechanics schemas
+from src.api.schemas.fantasy import (
+    DraftPlayerBase,
+    DraftPlayerCreate,
+    DraftPlayerResponse,
+    SquadResponse,
+    SubmitSquadResponse,
+    SubmissionStatusResponse,
+    AuctionStartResponse,
+    ContestPlayerResponse,
 )
 
 # Admin schemas
@@ -66,14 +77,15 @@ __all__ = [
     "UserBase",
     "UserCreate",
     "UserResponse",
+    "UserResponseWithGullies",
     "UserWithPlayers",
-    "UserPlayerBase",
-    "UserPlayerCreate",
-    "UserPlayerResponse",
+    "ParticipantPlayerBase",
+    "ParticipantPlayerCreate",
+    "ParticipantPlayerResponse",
+    "UserUpdate",
     # Player schemas
     "PlayerBase",
     "PlayerCreate",
-    "PlayerRead",
     "PlayerResponse",
     "PlayerStatsResponse",
     # Match schemas
@@ -85,17 +97,22 @@ __all__ = [
     "GullyBase",
     "GullyCreate",
     "GullyResponse",
-    "GullyParticipantBase",
-    "GullyParticipantCreate",
-    "GullyParticipantResponse",
+    "GullyUpdate",
+    "SuccessResponse",
+    # Participant schemas
+    "ParticipantBase",
+    "ParticipantCreate",
+    "ParticipantResponse",
     "ParticipantUpdate",
     # Game mechanics schemas
-    "UserSquadResponse",
-    "AuctionBidCreate",
-    "AuctionBidResponse",
-    "LeaderboardEntry",
-    "LeaderboardResponse",
-    "UserPlayerWithDetails",
+    "DraftPlayerBase",
+    "DraftPlayerCreate",
+    "DraftPlayerResponse",
+    "SquadResponse",
+    "SubmitSquadResponse",
+    "SubmissionStatusResponse",
+    "AuctionStartResponse",
+    "ContestPlayerResponse",
     # Admin schemas
     "AdminPermissionBase",
     "AdminPermissionCreate",

@@ -35,10 +35,29 @@ class AuctionType(str, Enum):
 class AuctionStatus(str, Enum):
     """Enum for auction status."""
 
-    DRAFT = "draft"  # Player in draft stage (before submission)
     PENDING = "pending"  # Waiting for auction to start
     BIDDING = "bidding"  # Active bidding phase
     COMPLETED = "completed"  # Auction has concluded
+
+
+class GullyStatus(str, Enum):
+    """Enum for Gully (league) status."""
+
+    DRAFT = "draft"  # Round 0 in progress, participants picking initial squads
+    AUCTION = "auction"  # Auction round is live for contested players from Round 0
+    TRANSFERS = "transfers"  # Mid-season transfer window is open
+    COMPLETED = "completed"  # League is finished, no further actions allowed
+
+
+class UserPlayerStatus(str, Enum):
+    """Enum for UserPlayer (player ownership) status."""
+
+    DRAFT = "draft"  # User selected this player in Round 0, squad not yet finalized
+    LOCKED = "locked"  # User submitted Round 0 squad, player is uncontested
+    CONTESTED = (
+        "contested"  # User submitted Round 0 squad, player is contested by others
+    )
+    OWNED = "owned"  # User definitively owns this player (won auction or uncontested)
 
 
 # Custom DateTime type that ensures timezone awareness
@@ -223,6 +242,7 @@ class Gully(TimeStampedModel, table=True):
         id: Primary key
         name: Name of the Gully
         telegram_group_id: Telegram group ID associated with this Gully
+        status: Current status of the Gully (draft, auction, transfers, completed)
     """
 
     __tablename__ = "gullies"
@@ -234,35 +254,49 @@ class Gully(TimeStampedModel, table=True):
         sa_type=BigInteger,
         description="Telegram group ID associated with this Gully",
     )
+    status: str = Field(
+        default=GullyStatus.DRAFT.value,
+        index=True,
+        description="Current status of the Gully (draft, auction, transfers, completed)",
+    )
 
     # Relationships will be defined after all classes are defined
 
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v):
+        """Validate that status is one of the allowed values."""
+        if v not in [status.value for status in GullyStatus]:
+            raise ValueError(
+                f"Status must be one of {[status.value for status in GullyStatus]}"
+            )
+        return v
 
-class UserPlayer(TimeStampedModel, table=True):
+
+class ParticipantPlayer(TimeStampedModel, table=True):
     """
-    Model for player ownership by users in a specific Gully.
+    Model for player ownership by participants in a specific Gully.
 
-    Represents the ownership relationship between a user and a player in a specific Gully,
+    Represents the ownership relationship between a participant and a player,
     including purchase details and team role information.
 
     Attributes:
         id: Primary key
-        user_id: Reference to the User
+        gully_participant_id: Reference to the GullyParticipant (link between User and Gully)
         player_id: Reference to the Player
-        gully_id: Reference to the Gully context
         purchase_price: Price paid for this player
         purchase_date: When the player was purchased
         is_captain: Whether this player is the team captain
         is_vice_captain: Whether this player is the team vice-captain
         is_playing_xi: Whether this player is in the playing XI
+        status: Current status of player ownership (draft, locked, contested, owned)
     """
 
-    __tablename__ = "user_players"
+    __tablename__ = "participant_players"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="users.id", index=True)
+    gully_participant_id: int = Field(foreign_key="gully_participants.id", index=True)
     player_id: int = Field(foreign_key="players.id", index=True)
-    gully_id: int = Field(foreign_key="gullies.id", index=True)
     purchase_price: Decimal = Field(description="Price paid for this player")
     purchase_date: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
@@ -271,10 +305,17 @@ class UserPlayer(TimeStampedModel, table=True):
     is_captain: bool = Field(default=False)
     is_vice_captain: bool = Field(default=False)
     is_playing_xi: bool = Field(default=True)
+    status: str = Field(
+        default=UserPlayerStatus.DRAFT.value,
+        index=True,
+        description="Current status of player ownership (draft, locked, contested, owned)",
+    )
 
-    # Define unique constraint for player_id and gully_id
+    # Define unique constraint for player_id and gully_participant_id
     __table_args__ = (
-        sqlalchemy.UniqueConstraint("player_id", "gully_id", name="uq_player_gully"),
+        sqlalchemy.UniqueConstraint(
+            "player_id", "gully_participant_id", name="uq_player_participant"
+        ),
     )
 
     # Relationships will be defined after all classes are defined
@@ -285,6 +326,16 @@ class UserPlayer(TimeStampedModel, table=True):
         """Validate that purchase price is non-negative."""
         if v < 0:
             raise ValueError("Purchase price must be non-negative")
+        return v
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v):
+        """Validate that status is one of the allowed values."""
+        if v not in [status.value for status in UserPlayerStatus]:
+            raise ValueError(
+                f"Status must be one of {[status.value for status in UserPlayerStatus]}"
+            )
         return v
 
 
@@ -515,9 +566,6 @@ User.gullies = Relationship(
     sa_relationship_kwargs={"lazy": "selectin"},
     back_populates="users",
 )
-User.user_players = Relationship(
-    sa_relationship_kwargs={"lazy": "selectin"}, back_populates="user"
-)
 
 
 # Add property to User model for easy access to gully IDs
@@ -535,12 +583,12 @@ GullyParticipant.gully = Relationship(back_populates="participants")
 GullyParticipant.bank_transactions = Relationship(
     sa_relationship_kwargs={"lazy": "selectin"}, back_populates="seller_participant"
 )
+GullyParticipant.participant_players = Relationship(
+    sa_relationship_kwargs={"lazy": "selectin"}, back_populates="gully_participant"
+)
 
 # Gully relationships
 Gully.participants = Relationship(
-    sa_relationship_kwargs={"lazy": "selectin"}, back_populates="gully"
-)
-Gully.user_players = Relationship(
     sa_relationship_kwargs={"lazy": "selectin"}, back_populates="gully"
 )
 Gully.users = Relationship(
@@ -559,14 +607,13 @@ Gully.bank_transactions = Relationship(
 )
 
 # Player relationships
-Player.user_player = Relationship(
+Player.participant_player = Relationship(
     sa_relationship_kwargs={"lazy": "selectin"}, back_populates="player"
 )
 
-# UserPlayer relationships
-UserPlayer.user = Relationship(back_populates="user_players")
-UserPlayer.player = Relationship(back_populates="user_player")
-UserPlayer.gully = Relationship(back_populates="user_players")
+# ParticipantPlayer relationships
+ParticipantPlayer.gully_participant = Relationship(back_populates="participant_players")
+ParticipantPlayer.player = Relationship(back_populates="participant_player")
 
 # AuctionQueue relationships
 AuctionQueue.gully = Relationship(back_populates="auction_queue_items")
@@ -601,12 +648,14 @@ AuctionQueue.highest_bid = property(get_highest_bid)
 
 def get_current_owner_in_gully(self, gully_id: int) -> Optional["User"]:
     """Return the current owner of this player in the specified gully."""
-    if not hasattr(self, "user_player") or self.user_player is None:
+    if not hasattr(self, "participant_player") or self.participant_player is None:
         return None
 
-    for up in self.user_players:
-        if up.gully_id == gully_id:
-            return up.user
+    for pp in self.participant_players:
+        # Get the gully_id from the participant
+        participant_gully_id = pp.gully_participant.gully_id
+        if participant_gully_id == gully_id:
+            return pp.gully_participant.user
     return None
 
 
@@ -623,6 +672,6 @@ def receive_before_update(mapper, connection, target):
 
 # Use TYPE_CHECKING for forward references to avoid circular imports
 if TYPE_CHECKING:
-    from src.db.models.models import UserPlayer
+    from src.db.models.models import ParticipantPlayer
 else:
-    UserPlayer = ForwardRef("UserPlayer")
+    ParticipantPlayer = ForwardRef("ParticipantPlayer")
