@@ -2,8 +2,9 @@
 Factory classes for creating fantasy-related response objects.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Union
 from src.api.schemas.player import PlayerType
+from src.api.schemas.auction import AuctionStartResponse
 
 
 class PlayerResponseFactory:
@@ -200,22 +201,35 @@ class AuctionStartResponseFactory:
     """Factory for creating auction start response objects."""
 
     @staticmethod
-    def create_response(data: Dict[str, Any]) -> Dict[str, Any]:
+    def create_response(
+        data: Union[Dict[str, Any], AuctionStartResponse],
+    ) -> Dict[str, Any]:
         """
-        Create an auction start response from data.
+        Create a response for auction start.
 
         Args:
-            data: Auction start data
+            data: Auction start data or AuctionStartResponse object
 
         Returns:
-            Auction start response
+            Response data
         """
+        # Convert Pydantic model to dict if needed
+        if isinstance(data, AuctionStartResponse):
+            data_dict = data.model_dump()
+        else:
+            data_dict = data
+
         return {
-            "gully_id": data.get("gully_id"),
-            "status": data.get("status"),
-            "message": data.get("message"),
-            "contested_count": data.get("contested_count", 0),
-            "uncontested_count": data.get("uncontested_count", 0),
+            "success": True,
+            "message": "Auction started successfully",
+            "data": {
+                "gully_id": data_dict.get("gully_id"),
+                "status": data_dict.get("status"),
+                "contested_players_count": data_dict.get("contested_count"),
+                "uncontested_players_count": data_dict.get("uncontested_count"),
+                "contested_players": data_dict.get("contested_players"),
+                "uncontested_players": data_dict.get("uncontested_players"),
+            },
         }
 
 

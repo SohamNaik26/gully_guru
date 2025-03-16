@@ -4,11 +4,16 @@ This module provides API endpoints for auction-related operations.
 """
 
 import logging
-from fastapi import APIRouter, Depends, Path, Query, status
+from fastapi import APIRouter, Depends, Path, Query, status, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Dict, Any, Optional
 
 from src.api.dependencies.database import get_db
+from src.api.schemas.auction import (
+    AuctionQueueListResponse,
+    ReleasePlayersRequest,
+    ReleasePlayersResponse,
+)
 from src.api.schemas.fantasy import (
     AuctionStartResponse,
     ContestPlayerResponse,
@@ -19,7 +24,8 @@ from src.api.factories.fantasy import (
     AuctionStartResponseFactory,
     ContestPlayerResponseFactory,
 )
-from src.api.exceptions import handle_exceptions, NotFoundException
+from src.api.factories.auction import AuctionResponseFactory
+from src.api.exceptions import handle_exceptions, NotFoundException, ValidationException
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -47,57 +53,98 @@ def get_auction_service(
 
 @router.post(
     "/gullies/{gully_id}/start",
-    response_model=AuctionStartResponse,
+    response_model=Dict[str, Any],
     summary="Start auction for a gully",
     status_code=status.HTTP_200_OK,
 )
 @handle_exceptions
 async def start_auction(
-    gully_id: int = Path(..., description="ID of the gully"),
-    auction_service: AuctionService = Depends(get_auction_service),
+    gully_id: int, auction_service: AuctionService = Depends(get_auction_service)
 ):
     """
     Start auction for a gully.
 
     Args:
         gully_id: Gully ID
-        auction_service: Auction service instance
+        auction_service: Auction service
 
     Returns:
-        AuctionStartResponse: Auction start status
-
-    Raises:
-        ValidationException: If auction cannot be started
+        Auction start response
     """
     auction_start = await auction_service.start_auction(gully_id)
-    return AuctionStartResponseFactory.create_response(auction_start)
+
+    # Convert Pydantic model to dictionary if needed
+    if hasattr(auction_start, "model_dump"):
+        # For Pydantic v2
+        auction_start_dict = auction_start.model_dump()
+    elif hasattr(auction_start, "dict"):
+        # For Pydantic v1
+        auction_start_dict = auction_start.dict()
+    else:
+        # Already a dict
+        auction_start_dict = auction_start
+
+    # Use factory to create response
+    return AuctionResponseFactory.create_start_auction_response(auction_start_dict)
 
 
-@router.post(
-    "/gullies/{gully_id}/mark-contested",
-    summary="Mark contested players in a gully",
+@router.post("/gullies/{gully_id}/stop", response_model=Dict[str, Any])
+async def stop_auction(
+    gully_id: int, auction_service: AuctionService = Depends(get_auction_service)
+):
+    """
+    Stop auction for a gully.
+
+    Args:
+        gully_id: Gully ID
+        auction_service: Auction service
+
+    Returns:
+        Success response
+    """
+    response = await auction_service.stop_auction(gully_id)
+
+    # Convert Pydantic model to dictionary if needed
+    if hasattr(response, "model_dump"):
+        # For Pydantic v2
+        response_dict = response.model_dump()
+    elif hasattr(response, "dict"):
+        # For Pydantic v1
+        response_dict = response.dict()
+    else:
+        # Already a dict
+        response_dict = response
+
+    # Use factory to create response
+    return AuctionResponseFactory.create_stop_auction_response(
+        gully_id=gully_id,
+        success=response_dict.get("success", True),
+        message=response_dict.get("message", "Auction stopped successfully"),
+    )
+
+
+@router.get(
+    "/gullies/{gully_id}/auction-queue",
+    response_model=Dict[str, Any],
     status_code=status.HTTP_200_OK,
 )
 @handle_exceptions
-async def mark_contested_players(
+async def get_all_players_from_auction_queue(
     gully_id: int = Path(..., description="ID of the gully"),
     auction_service: AuctionService = Depends(get_auction_service),
 ):
     """
-    Mark players as contested if they are selected by multiple users.
+    Get all players from the auction queue for a specific gully.
 
     Args:
-        gully_id: ID of the gully
+        gully_id: Gully ID
         auction_service: Auction service instance
 
     Returns:
-        Result with counts of contested and uncontested players
-
-    Raises:
-        ValidationException: If marking contested players fails
+        List of AuctionQueueResponse objects
     """
-    result = await auction_service.mark_contested_players(gully_id)
-    return result
+    players = await auction_service.get_all_players_from_auction_queue(gully_id)
+    return AuctionResponseFactory.create_auction_queue_response(players, gully_id)
 
 
 @router.get(
@@ -225,3 +272,40 @@ async def resolve_contested_player(
         player_id, winning_participant_id
     )
     return result
+
+
+@router.post(
+    "/participants/{participant_id}/release-players",
+    response_model=Dict[str, Any],
+    summary="Release players from a participant",
+    status_code=status.HTTP_200_OK,
+)
+@handle_exceptions
+async def release_players(
+    participant_id: int = Path(..., description="ID of the participant"),
+    request: ReleasePlayersRequest = Body(..., description="Release players request"),
+    auction_service: AuctionService = Depends(get_auction_service),
+):
+    """
+    Release players from a participant and add them to the auction queue.
+
+    Args:
+        participant_id: ID of the participant
+        request: Release players request
+        auction_service: Auction service
+
+    Returns:
+        Release players response
+    """
+    # Validate that the participant ID in the path matches the one in the request
+    if participant_id != request.participant_id:
+        raise ValidationException(
+            f"Participant ID in path ({participant_id}) does not match the one in the request ({request.participant_id})"
+        )
+
+    result = await auction_service.release_players(
+        participant_id=participant_id,
+        player_ids=request.player_ids,
+    )
+
+    return AuctionResponseFactory.create_release_players_response(result)
