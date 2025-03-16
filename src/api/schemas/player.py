@@ -1,68 +1,84 @@
 """
-Schemas for player-related data.
+Player schemas for the GullyGuru API.
 """
 
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional
 from datetime import datetime
-from decimal import Decimal
+from enum import Enum
 
 
-# Player API Models
+class PlayerType(str, Enum):
+    """Enum for player types."""
+
+    BAT = "BAT"
+    BOWL = "BOWL"
+    AR = "AR"
+    WK = "WK"
+
+
 class PlayerBase(BaseModel):
-    """Base schema for Player model."""
+    """Base model for player data."""
 
-    name: str = Field(..., description="Player name")
-    team: str = Field(..., description="Team name")
-    player_type: str = Field(..., description="Player type (BAT, BOWL, ALL, WK)")
-    base_price: Optional[Decimal] = Field(default=None, description="Player base price")
-    sold_price: Optional[Decimal] = Field(default=None, description="Player sold price")
-    season: int = Field(default=2025, description="IPL season year")
+    name: str = Field(..., description="Name of the player")
+    team: str = Field(..., description="Team of the player")
+    player_type: PlayerType = Field(..., description="Type of player (BAT, BOWL, AR)")
+    base_price: float = Field(..., ge=0, description="Base price of the player")
+    season: int = Field(..., ge=2000, le=2100, description="Season year")
 
 
 class PlayerCreate(PlayerBase):
-    """Schema for creating a new player."""
+    """Model for creating a new player."""
 
-    pass
+    sold_price: Optional[float] = Field(
+        None, ge=0, description="Sold price of the player"
+    )
 
 
 class PlayerUpdate(BaseModel):
-    """Schema for updating a player."""
+    """Model for updating a player."""
 
-    name: Optional[str] = Field(None, description="Player name")
-    team: Optional[str] = Field(None, description="Team name")
-    player_type: Optional[str] = Field(None, description="Player type")
-    base_price: Optional[Decimal] = Field(None, description="Player base price")
-    sold_price: Optional[Decimal] = Field(None, description="Player sold price")
-    season: Optional[int] = Field(None, description="IPL season year")
-
-    model_config = ConfigDict(extra="forbid")
+    name: Optional[str] = Field(None, description="Name of the player")
+    team: Optional[str] = Field(None, description="Team of the player")
+    player_type: Optional[PlayerType] = Field(
+        None, description="Type of player (BAT, BOWL, AR)"
+    )
+    base_price: Optional[float] = Field(
+        None, ge=0, description="Base price of the player"
+    )
+    sold_price: Optional[float] = Field(
+        None, ge=0, description="Sold price of the player"
+    )
+    season: Optional[int] = Field(None, ge=2000, le=2100, description="Season year")
 
 
 class PlayerResponse(PlayerBase):
-    """Schema for player response."""
+    """Model for player response."""
 
-    id: int = Field(..., description="Player ID")
-    created_at: datetime = Field(..., description="When the player was created")
-    updated_at: datetime = Field(..., description="When the player was last updated")
+    id: int = Field(..., description="ID of the player")
+    sold_price: Optional[float] = Field(
+        None, ge=0, description="Sold price of the player"
+    )
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: datetime = Field(..., description="Last update timestamp")
 
     model_config = ConfigDict(from_attributes=True)
 
 
-# Stats API Models
 class PlayerStatsResponse(BaseModel):
-    """Response model for player statistics."""
+    """Model for player statistics response."""
 
-    id: int
-    player_id: int
-    player_name: str  # Joined from Player
-    matches_played: int
-    runs: int
-    wickets: int
-    highest_score: int
-    best_bowling: str
-    fantasy_points: float
-    created_at: datetime
-    updated_at: datetime
+    player_id: int = Field(..., description="ID of the player")
+    name: str = Field(..., description="Name of the player")
+    team: str = Field(..., description="Team of the player")
+    player_type: PlayerType = Field(..., description="Type of player")
+    matches_played: int = Field(..., ge=0, description="Number of matches played")
+    runs_scored: int = Field(..., ge=0, description="Number of runs scored")
+    wickets_taken: int = Field(..., ge=0, description="Number of wickets taken")
+    average: float = Field(..., ge=0, description="Batting/bowling average")
+    strike_rate: float = Field(..., ge=0, description="Strike rate")
+    economy: Optional[float] = Field(
+        None, ge=0, description="Economy rate (for bowlers)"
+    )
 
     model_config = ConfigDict(from_attributes=True)

@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """
 Main bot module for GullyGuru.
 Handles bot initialization, command registration, and onboarding functionality.
@@ -15,10 +14,13 @@ from telegram.ext import (
     ContextTypes,
     CommandHandler,
     CallbackQueryHandler,
+    ConversationHandler,
+    MessageHandler,
+    filters,
 )
 
 # Import features module for handler registration
-from src.bot.features import register_handlers
+from src.bot.features import register_all_features
 from src.bot.api_client.base import initialize_api_client
 from src.bot.api_client.onboarding import get_onboarding_client
 
@@ -42,15 +44,9 @@ configure_logging(verbose=False)
 logger = logging.getLogger(__name__)
 
 # Set higher log levels for noisy libraries to reduce output
-logging.getLogger("httpx").setLevel(
-    logging.WARNING
-)  # Only show warnings and errors for httpx
-logging.getLogger("telegram").setLevel(
-    logging.WARNING
-)  # Only show warnings and errors for python-telegram-bot
-logging.getLogger("telegram.ext").setLevel(
-    logging.WARNING
-)  # Only show warnings and errors for telegram extensions
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.WARNING)
+logging.getLogger("telegram.ext").setLevel(logging.WARNING)
 
 
 # Create a filter to exclude repetitive messages
@@ -171,29 +167,28 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 is_admin = True
                 break
 
-        # Create main menu keyboard
+        # Create main menu keyboard with feature-prefixed callbacks
         keyboard = [
-            [InlineKeyboardButton("My Squad", callback_data="menu_my_squad")],
-            [InlineKeyboardButton("Auctions", callback_data="menu_auctions")],
-            [InlineKeyboardButton("Transfers", callback_data="menu_transfers")],
-            [InlineKeyboardButton("Leaderboard", callback_data="menu_leaderboard")],
-            [InlineKeyboardButton("Help", callback_data="menu_help")],
+            [
+                InlineKeyboardButton("My Squad", callback_data="squad_view"),
+                InlineKeyboardButton("Squad Menu", callback_data="squad_menu"),
+            ],
+            [InlineKeyboardButton("Auctions", callback_data="auction_view")],
+            [InlineKeyboardButton("Transfers", callback_data="transfer_view")],
+            [InlineKeyboardButton("Leaderboard", callback_data="leaderboard_view")],
+            [InlineKeyboardButton("Help", callback_data="help_view")],
         ]
 
         # Add Switch Gully button if user is part of multiple gullies
         if gully_count > 1:
             keyboard.append(
-                [
-                    InlineKeyboardButton(
-                        "Switch Gully", callback_data="menu_switch_gully"
-                    )
-                ]
+                [InlineKeyboardButton("Switch Gully", callback_data="gully_switch")]
             )
 
         # Add Admin Panel button if user is an admin
         if is_admin:
             keyboard.append(
-                [InlineKeyboardButton("Admin Panel", callback_data="menu_admin")]
+                [InlineKeyboardButton("Admin Panel", callback_data="admin_view")]
             )
 
         # Add Cancel button
@@ -206,7 +201,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             message_text = (
                 f"🏏 *GullyGuru Main Menu* 🏏\n\n"
                 f"Active Gully: *{active_gully.get('name', 'Unknown')}*\n\n"
-                f"Please select an option:"
+                "Please select an option:"
             )
         else:
             message_text = (
@@ -246,6 +241,7 @@ async def show_gully_selection(
     Show a list of gullies the user is part of for selection.
     """
     user = update.effective_user
+    logger.info(f"Showing gully selection for user {user.id}")
 
     # Get API client
     client = await get_onboarding_client()
@@ -253,6 +249,7 @@ async def show_gully_selection(
     # Get user from database
     db_user = await client.get_user(user.id)
     if not db_user:
+        logger.error(f"User {user.id} not found in database")
         message = "❌ Error accessing your account. Please try again later."
         if update.callback_query:
             await update.callback_query.edit_message_text(message)
@@ -262,15 +259,20 @@ async def show_gully_selection(
 
     # Get user's active gully
     active_gully_id = context.user_data.get("active_gully_id")
+    logger.info(f"Active gully ID: {active_gully_id}")
 
     # Get all gullies the user is part of
     try:
         user_gullies = await client.get_user_gullies(user_id=db_user["id"])
+        logger.info(
+            f"Found {len(user_gullies) if user_gullies else 0} gullies for user {user.id}"
+        )
 
         # Debug log to see the structure
         logger.debug(f"User gullies response: {user_gullies}")
 
         if not user_gullies or len(user_gullies) == 0:
+            logger.warning(f"No gullies found for user {user.id}")
             message = "You are not part of any gully. Please join a gully first."
             if update.callback_query:
                 await update.callback_query.edit_message_text(message)
@@ -293,10 +295,12 @@ async def show_gully_selection(
             if "id" in gully_data and "name" in gully_data:
                 gully_id = gully_data["id"]
                 gully_name = gully_data["name"]
+                logger.info(f"Found direct gully: {gully_name} (ID: {gully_id})")
             # Check if this is a participation with embedded gully
             elif "gully" in gully_data and "id" in gully_data["gully"]:
                 gully_id = gully_data["gully"]["id"]
                 gully_name = gully_data["gully"]["name"]
+                logger.info(f"Found embedded gully: {gully_name} (ID: {gully_id})")
             # Check if this is a participation with gully_id
             elif "gully_id" in gully_data:
                 gully_id = gully_data["gully_id"]
@@ -304,8 +308,10 @@ async def show_gully_selection(
                 gully = await client.get_gully(gully_id)
                 if gully:
                     gully_name = gully["name"]
+                    logger.info(f"Found gully by ID: {gully_name} (ID: {gully_id})")
                 else:
                     gully_name = f"Gully {gully_id}"
+                    logger.warning(f"Could not fetch gully name for ID: {gully_id}")
 
             # Skip if we couldn't determine the gully ID or name
             if not gully_id or not gully_name:
@@ -316,34 +322,35 @@ async def show_gully_selection(
             if active_gully_id and gully_id == active_gully_id:
                 gully_name = f"★ {gully_name} (Active)"
 
+            callback_data = f"select_gully_{gully_id}"
+            logger.info(
+                f"Adding button for gully: {gully_name} with callback: {callback_data}"
+            )
+
             keyboard.append(
-                [
-                    InlineKeyboardButton(
-                        gully_name, callback_data=f"select_gully_{gully_id}"
-                    )
-                ]
+                [InlineKeyboardButton(gully_name, callback_data=callback_data)]
             )
 
         # Only add Back button if this is called from the main menu (not on startup)
-        if update.callback_query and update.callback_query.data == "menu_switch_gully":
+        if update.callback_query and update.callback_query.data == "gully_switch":
+            logger.info("Adding 'Back to Main Menu' button")
             keyboard.append(
-                [
-                    InlineKeyboardButton(
-                        "Back to Main Menu", callback_data="back_to_main_menu"
-                    )
-                ]
+                [InlineKeyboardButton("Back to Main Menu", callback_data="main_menu")]
             )
 
+        logger.info(f"Created keyboard with {len(keyboard)} buttons")
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        message = "Select a gully to continue:"
+        message = "Please select a gully to continue:"
 
         if update.callback_query:
+            logger.info("Editing message with gully selection keyboard")
             await update.callback_query.edit_message_text(
                 message,
                 reply_markup=reply_markup,
             )
         else:
+            logger.info("Sending new message with gully selection keyboard")
             await update.message.reply_text(
                 message,
                 reply_markup=reply_markup,
@@ -422,88 +429,11 @@ async def handle_gully_selection(
         )
 
 
-@log_function_call
-async def handle_main_menu_callback(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
-    """
-    Handle callbacks from the main menu.
-    Routes to appropriate sub-menus based on user selection.
-    """
-    query = update.callback_query
-    await query.answer()
-
-    callback_data = query.data
-
-    if callback_data == "menu_my_squad":
-        # Placeholder for My Squad feature
-        await query.edit_message_text(
-            "🏏 *My Squad* 🏏\n\n"
-            "This feature is coming soon!\n\n"
-            "You'll be able to view and manage your squad here.",
-            parse_mode="Markdown",
-        )
-
-    elif callback_data == "menu_auctions":
-        # Placeholder for Auctions feature
-        await query.edit_message_text(
-            "🏏 *Auctions* 🏏\n\n"
-            "This feature is coming soon!\n\n"
-            "You'll be able to participate in player auctions here.",
-            parse_mode="Markdown",
-        )
-
-    elif callback_data == "menu_transfers":
-        # Placeholder for Transfers feature
-        await query.edit_message_text(
-            "🏏 *Transfers* 🏏\n\n"
-            "This feature is coming soon!\n\n"
-            "You'll be able to transfer players here.",
-            parse_mode="Markdown",
-        )
-
-    elif callback_data == "menu_leaderboard":
-        # Placeholder for Leaderboard feature
-        await query.edit_message_text(
-            "🏏 *Leaderboard* 🏏\n\n"
-            "This feature is coming soon!\n\n"
-            "You'll be able to view the leaderboard here.",
-            parse_mode="Markdown",
-        )
-
-    elif callback_data == "menu_help":
-        await show_help_menu(update, context)
-
-    elif callback_data == "menu_switch_gully":
-        await show_gully_selection(update, context)
-
-    elif callback_data == "menu_admin":
-        # Placeholder for Admin Panel feature
-        await query.edit_message_text(
-            "🏏 *Admin Panel* 🏏\n\n"
-            "This feature is coming soon!\n\n"
-            "You'll be able to manage your gully here.",
-            parse_mode="Markdown",
-        )
-
-    elif callback_data == "menu_cancel":
-        await query.edit_message_text(
-            "Operation cancelled. Type /start to show the menu again."
-        )
-
-    else:
-        await query.edit_message_text(
-            "Invalid option. Type /start to show the menu again."
-        )
-
-
 async def show_help_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Show the help menu with basic instructions.
     """
-    keyboard = [
-        [InlineKeyboardButton("Back to Main Menu", callback_data="back_to_main_menu")]
-    ]
+    keyboard = [[InlineKeyboardButton("Back to Main Menu", callback_data="main_menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     help_text = (
@@ -519,16 +449,6 @@ async def show_help_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.callback_query.edit_message_text(
         help_text, reply_markup=reply_markup, parse_mode="Markdown"
     )
-
-
-async def back_to_main_menu_handler(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
-    """
-    Handle the 'Back to Main Menu' callback.
-    Returns the user to the main menu from any sub-menu.
-    """
-    await show_main_menu(update, context)
 
 
 async def start_command_handler(
@@ -666,8 +586,14 @@ async def set_log_level_command(
     Command handler to set the logging level.
     Usage: /loglevel [DEBUG|INFO|WARNING|ERROR|CRITICAL]
     """
-    # Check if the user is authorized (you might want to restrict this to admins)
-    if update.effective_user.id != YOUR_ADMIN_ID:  # Replace with your Telegram ID
+    # Check if the user is authorized (only allow the first user who uses this command)
+    if "admin_id" not in context.bot_data:
+        context.bot_data["admin_id"] = update.effective_user.id
+        logger.info(
+            f"Setting {update.effective_user.id} as admin for log level commands"
+        )
+
+    if update.effective_user.id != context.bot_data.get("admin_id"):
         await update.message.reply_text("You are not authorized to change log levels.")
         return
 
@@ -708,8 +634,12 @@ async def debug_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     Command handler to dump debug information.
     Usage: /debug
     """
-    # Check if the user is authorized (you might want to restrict this to admins)
-    if update.effective_user.id != YOUR_ADMIN_ID:  # Replace with your Telegram ID
+    # Check if the user is authorized (only allow the first user who uses this command)
+    if "admin_id" not in context.bot_data:
+        context.bot_data["admin_id"] = update.effective_user.id
+        logger.info(f"Setting {update.effective_user.id} as admin for debug commands")
+
+    if update.effective_user.id != context.bot_data.get("admin_id"):
         await update.message.reply_text("You are not authorized to use debug commands.")
         return
 
@@ -742,6 +672,430 @@ async def debug_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text(debug_text)
 
 
+async def debug_participant_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    Command handler to debug participant data.
+    Usage: /debug_participant
+    """
+    user = update.effective_user
+
+    # Get user data
+    try:
+        onboarding_client = await get_onboarding_client()
+        user_data = await onboarding_client.get_user(user.id)
+
+        if not user_data:
+            await update.message.reply_text(
+                "You are not registered. Please use /start to register."
+            )
+            return
+
+        user_id = user_data["id"]
+
+        # Get active gully
+        active_gully_id = context.user_data.get("active_gully_id")
+        if not active_gully_id:
+            await update.message.reply_text(
+                "No active gully set. Please use /gully to select a gully."
+            )
+            return
+
+        # Try to get participant data
+        debug_info = [
+            f"User ID: {user_id}",
+            f"Telegram ID: {user.id}",
+            f"Active Gully ID: {active_gully_id}",
+        ]
+
+        # Try onboarding client
+        try:
+            participant1 = await onboarding_client.get_participant(
+                user_id, active_gully_id
+            )
+            debug_info.append("\nParticipant data from onboarding client:")
+            if participant1:
+                debug_info.append(f"Participant ID: {participant1.get('id')}")
+                debug_info.append(f"Team Name: {participant1.get('team_name')}")
+            else:
+                debug_info.append("No participant data found")
+        except Exception as e1:
+            debug_info.append(
+                f"Error getting participant from onboarding client: {str(e1)}"
+            )
+
+        # Send debug info
+        await update.message.reply_text("\n".join(debug_info))
+
+    except Exception as e:
+        logger.error(f"Error in debug_participant: {str(e)}", exc_info=True)
+        await update.message.reply_text(f"Error: {str(e)}")
+
+
+@log_function_call
+async def handle_main_menu_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    Handle callbacks from the main menu.
+    Routes to appropriate sub-menus based on user selection.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    callback_data = query.data
+    logger.info(f"Main menu callback received: {callback_data}")
+
+    # For squad-related callbacks, ensure participant_id is set
+    if callback_data == "squad_view" or callback_data.startswith("squad_"):
+        if not await ensure_participant_id(update, context):
+            return
+
+    # Simply delegate to the appropriate feature based on the callback prefix
+    if callback_data == "squad_view":
+        # This specific callback should be handled by the squad handler
+        # Import the necessary function to avoid circular imports
+        from src.bot.features.squad import view_squad
+
+        logger.info("Directly handling squad_view callback")
+        return await view_squad(update, context)
+    elif callback_data.startswith("squad_"):
+        # Log that we're delegating to squad handlers
+        logger.info(f"Delegating '{callback_data}' to squad handlers")
+        # Let the squad handlers handle this
+        return
+    elif callback_data.startswith("auction_"):
+        # Placeholder for auction feature (not implemented yet)
+        logger.info("Showing auction placeholder")
+        await query.edit_message_text(
+            "🏏 *Auctions* 🏏\n\n"
+            "This feature is coming soon!\n\n"
+            "You'll be able to participate in player auctions here.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("Back to Main Menu", callback_data="main_menu")]]
+            ),
+        )
+        return
+    elif callback_data.startswith("transfer_"):
+        # Placeholder for transfer feature (not implemented yet)
+        logger.info("Showing transfer placeholder")
+        await query.edit_message_text(
+            "🏏 *Transfers* 🏏\n\n"
+            "This feature is coming soon!\n\n"
+            "You'll be able to transfer players here.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("Back to Main Menu", callback_data="main_menu")]]
+            ),
+        )
+        return
+    elif callback_data.startswith("leaderboard_"):
+        # Placeholder for leaderboard feature (not implemented yet)
+        logger.info("Showing leaderboard placeholder")
+        await query.edit_message_text(
+            "🏏 *Leaderboard* 🏏\n\n"
+            "This feature is coming soon!\n\n"
+            "You'll be able to view the leaderboard here.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("Back to Main Menu", callback_data="main_menu")]]
+            ),
+        )
+        return
+    elif callback_data == "help_view":
+        logger.info("Showing help menu")
+        await show_help_menu(update, context)
+    elif callback_data == "menu_cancel":
+        logger.info("Returning to main menu")
+        await query.edit_message_text("Operation cancelled.")
+        await show_main_menu(update, context)
+    elif callback_data == "gully_switch":
+        logger.info("Showing gully selection")
+        await show_gully_selection(update, context)
+    else:
+        logger.warning(f"Unknown callback data: {callback_data}")
+        await query.edit_message_text(
+            "❌ Unknown option selected. Please try again.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("Back to Main Menu", callback_data="main_menu")]]
+            ),
+        )
+
+
+@log_function_call
+async def handle_squad_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    Handle squad-related callbacks.
+    This is a router function that delegates to specific squad feature handlers.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    # Ensure participant_id is set
+    if not await ensure_participant_id(update, context):
+        return
+
+    callback_data = query.data
+    logger.info(f"Squad callback received: {callback_data}")
+
+    # Import squad feature functions here to avoid circular imports
+    from src.bot.features.squad import (
+        show_all_players,
+        view_squad,
+        show_squad_menu,
+        SQUAD_MENU,
+        PLAYER_FILTER,
+        PLAYER_SELECTION,
+        REMOVE_PLAYER,
+        CONFIRM_SUBMISSION,
+        MULTI_SELECT,
+        MULTI_REMOVE,
+    )
+
+    # Delegate to the appropriate squad handler based on the callback data
+    if callback_data == SQUAD_MENU.START_BUILDING:
+        logger.info("Delegating to show_all_players")
+        # This should show the player selection screen
+        return await show_all_players(update, context)
+    elif callback_data == SQUAD_MENU.VIEW_SQUAD:
+        logger.info("Delegating to view_squad")
+        # This should show the current squad
+        return await view_squad(update, context)
+    elif callback_data == SQUAD_MENU.SUBMIT_SQUAD:
+        logger.info("Delegating to confirm_submission")
+        # This should show the submission confirmation
+        from src.bot.features.squad import confirm_submission
+
+        return await confirm_submission(update, context)
+    elif callback_data == SQUAD_MENU.BACK_TO_MENU:
+        logger.info("Delegating to show_squad_menu")
+        # This should show the squad menu
+        return await show_squad_menu(update, context)
+    elif (
+        callback_data.startswith(PLAYER_FILTER.BATSMEN)
+        or callback_data.startswith(PLAYER_FILTER.BOWLERS)
+        or callback_data.startswith(PLAYER_FILTER.ALL_ROUNDERS)
+        or callback_data.startswith(PLAYER_FILTER.WICKET_KEEPERS)
+        or callback_data.startswith(PLAYER_FILTER.ALL_PLAYERS)
+        or callback_data.startswith(PLAYER_FILTER.SEARCH_BY_NAME)
+    ):
+        logger.info("Delegating to show_all_players for filter")
+        # This should filter players
+        return await show_all_players(update, context)
+    elif (
+        callback_data.startswith(PLAYER_SELECTION.SELECT_PLAYER)
+        or callback_data.startswith(PLAYER_SELECTION.PAGE_PREFIX)
+        or callback_data == PLAYER_SELECTION.MORE_PLAYERS
+    ):
+        logger.info("Delegating to show_all_players for player selection")
+        # This should handle player selection
+        return await show_all_players(update, context)
+    elif (
+        callback_data.startswith(MULTI_SELECT.TOGGLE_SELECT)
+        or callback_data == MULTI_SELECT.CONFIRM_MULTI_SELECT
+        or callback_data == MULTI_SELECT.CANCEL_MULTI_SELECT
+    ):
+        logger.info("Delegating to handle_multi_select_callback")
+        # This should handle multi-select
+        from src.bot.features.squad import handle_multi_select_callback
+
+        return await handle_multi_select_callback(update, context)
+    elif (
+        callback_data.startswith(REMOVE_PLAYER.REMOVE_PLAYER)
+        or callback_data == REMOVE_PLAYER.MULTI_REMOVE
+    ):
+        logger.info("Delegating to handle_view_squad_callback")
+        # This should handle player removal
+        from src.bot.features.squad import handle_view_squad_callback
+
+        return await handle_view_squad_callback(update, context)
+    elif (
+        callback_data.startswith(MULTI_REMOVE.TOGGLE_REMOVE)
+        or callback_data == MULTI_REMOVE.CONFIRM_MULTI_REMOVE
+        or callback_data == MULTI_REMOVE.CANCEL_MULTI_REMOVE
+    ):
+        logger.info("Delegating to handle_multi_remove_callback")
+        # This should handle multi-remove
+        from src.bot.features.squad import handle_multi_remove_callback
+
+        return await handle_multi_remove_callback(update, context)
+    elif (
+        callback_data == CONFIRM_SUBMISSION.CONFIRM
+        or callback_data == CONFIRM_SUBMISSION.CANCEL
+    ):
+        logger.info("Delegating to handle_submission_confirmation")
+        # This should handle submission confirmation
+        from src.bot.features.squad import handle_submission_confirmation
+
+        return await handle_submission_confirmation(update, context)
+    else:
+        logger.warning(f"Unknown squad callback: {callback_data}")
+        # Fallback to show squad menu
+        return await show_squad_menu(update, context)
+
+
+@log_function_call
+async def ensure_participant_id(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> bool:
+    """
+    Ensure that participant_id is set in the context.
+    If not, try to fetch it and set it.
+
+    Returns:
+        bool: True if participant_id is set, False otherwise
+    """
+    if context.user_data.get("participant_id"):
+        return True
+
+    user = update.effective_user
+    active_gully_id = context.user_data.get("active_gully_id")
+
+    if not active_gully_id:
+        if update.callback_query:
+            await update.callback_query.edit_message_text(
+                "No active gully selected. Please select a gully first.",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "Back to Main Menu", callback_data="main_menu"
+                            )
+                        ]
+                    ]
+                ),
+            )
+        else:
+            await update.message.reply_text(
+                "No active gully selected. Please select a gully first.",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "Back to Main Menu", callback_data="main_menu"
+                            )
+                        ]
+                    ]
+                ),
+            )
+        return False
+
+    try:
+        # Get user data
+        onboarding_client = await get_onboarding_client()
+        user_data = await onboarding_client.get_user_by_telegram_id(user.id)
+
+        if not user_data or "id" not in user_data:
+            logger.error(f"Could not find user with telegram_id {user.id}")
+            if update.callback_query:
+                await update.callback_query.edit_message_text(
+                    "Error retrieving your user data. Please try again later.",
+                    reply_markup=InlineKeyboardMarkup(
+                        [
+                            [
+                                InlineKeyboardButton(
+                                    "Back to Main Menu", callback_data="main_menu"
+                                )
+                            ]
+                        ]
+                    ),
+                )
+            else:
+                await update.message.reply_text(
+                    "Error retrieving your user data. Please try again later.",
+                    reply_markup=InlineKeyboardMarkup(
+                        [
+                            [
+                                InlineKeyboardButton(
+                                    "Back to Main Menu", callback_data="main_menu"
+                                )
+                            ]
+                        ]
+                    ),
+                )
+            return False
+
+        user_id = user_data["id"]
+        context.user_data["user_id"] = user_id
+
+        # Get participant data
+        participant_data = await onboarding_client.get_participant_by_user_id(
+            user_id, active_gully_id
+        )
+
+        if not participant_data or "id" not in participant_data:
+            logger.error(
+                f"Could not find participant for user {user_id} in gully {active_gully_id}"
+            )
+            if update.callback_query:
+                await update.callback_query.edit_message_text(
+                    "You are not registered as a participant in this gully. Please join the gully first.",
+                    reply_markup=InlineKeyboardMarkup(
+                        [
+                            [
+                                InlineKeyboardButton(
+                                    "Back to Main Menu", callback_data="main_menu"
+                                )
+                            ]
+                        ]
+                    ),
+                )
+            else:
+                await update.message.reply_text(
+                    "You are not registered as a participant in this gully. Please join the gully first.",
+                    reply_markup=InlineKeyboardMarkup(
+                        [
+                            [
+                                InlineKeyboardButton(
+                                    "Back to Main Menu", callback_data="main_menu"
+                                )
+                            ]
+                        ]
+                    ),
+                )
+            return False
+
+        participant_id = participant_data["id"]
+        context.user_data["participant_id"] = participant_id
+        logger.info(f"Set participant_id to {participant_id} for user {user.id}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error ensuring participant_id: {str(e)}", exc_info=True)
+        if update.callback_query:
+            await update.callback_query.edit_message_text(
+                "An error occurred while retrieving your participant data. Please try again later.",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "Back to Main Menu", callback_data="main_menu"
+                            )
+                        ]
+                    ]
+                ),
+            )
+        else:
+            await update.message.reply_text(
+                "An error occurred while retrieving your participant data. Please try again later.",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "Back to Main Menu", callback_data="main_menu"
+                            )
+                        ]
+                    ]
+                ),
+            )
+        return False
+
+
 async def main_async():
     """Initialize and start the bot."""
     try:
@@ -765,33 +1119,65 @@ async def main_async():
         # Create application
         application = Application.builder().token(BOT_TOKEN).build()
 
-        # Register onboarding handlers for group events
-        register_handlers(application)
+        # Register all feature handlers
+        register_all_features(application)
 
         # Override the /start command with our simplified version
         application.add_handler(CommandHandler("start", start_command_handler))
 
-        # Register main menu handlers
+        # Register debug and log level commands
+        application.add_handler(CommandHandler("loglevel", set_log_level_command))
+        application.add_handler(CommandHandler("debug", debug_command))
         application.add_handler(
-            CallbackQueryHandler(handle_main_menu_callback, pattern="^menu_")
+            CommandHandler("debug_participant", debug_participant_command)
         )
-        application.add_handler(
-            CallbackQueryHandler(
-                back_to_main_menu_handler, pattern="^back_to_main_menu$"
-            )
-        )
+
+        # Register gully selection handlers FIRST (more specific)
         application.add_handler(
             CallbackQueryHandler(handle_gully_selection, pattern="^select_gully_")
+        )
+        application.add_handler(
+            CallbackQueryHandler(show_gully_selection, pattern="^gully_switch$")
+        )
+
+        # Register main menu and help handlers
+        application.add_handler(
+            CallbackQueryHandler(show_main_menu, pattern="^main_menu$")
+        )
+        application.add_handler(
+            CallbackQueryHandler(show_help_menu, pattern="^help_view$")
+        )
+
+        # Add a direct handler for squad_view
+        from src.bot.features.squad import view_squad
+
+        application.add_handler(
+            CallbackQueryHandler(view_squad, pattern="^squad_view$")
+        )
+
+        # Register squad-specific handlers with a more comprehensive pattern
+        application.add_handler(
+            CallbackQueryHandler(
+                handle_squad_callback,
+                pattern="^(start_building_squad|add_players|view_squad|submit_squad|back_to_menu|"
+                "batsmen|bowlers|all_rounders|wicket_keepers|all_players|search_by_name|"
+                "select_player|page_|more_players|toggle_select|confirm_multi_select|cancel_multi_select|"
+                "remove_player|multi_remove|toggle_remove|confirm_multi_remove|cancel_multi_remove|"
+                "confirm_final|cancel_submission).*$",
+            )
+        )
+
+        # Register the main menu callback handler LAST, with a more specific pattern
+        # that doesn't overlap with other handlers
+        application.add_handler(
+            CallbackQueryHandler(
+                handle_main_menu_callback,
+                pattern="^(squad_(?!view$)|auction_|transfer_|leaderboard_|menu_cancel).*$",
+            )
         )
 
         # Register error handler
         application.add_error_handler(error_handler)
-
-        # Register log level command
-        application.add_handler(CommandHandler("loglevel", set_log_level_command))
-
-        # Register debug command
-        application.add_handler(CommandHandler("debug", debug_command))
 
         # Initialize the application
         await application.initialize()

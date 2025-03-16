@@ -4,18 +4,24 @@ Participant schemas for the GullyGuru API.
 
 from typing import Optional
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 
 
 class ParticipantBase(BaseModel):
     """Base model for participant data."""
 
-    user_id: int = Field(..., description="ID of the user")
     gully_id: int = Field(..., description="ID of the gully")
-    role: str = Field(
-        default="participant", description="Role of the user in the gully"
-    )
-    team_name: Optional[str] = Field(None, description="Team name for the user")
+    user_id: int = Field(..., description="ID of the user")
+    role: str = Field("participant", description="Role in the gully")
+    team_name: Optional[str] = Field(None, description="Team name")
+
+    @validator("role")
+    def validate_role(cls, v):
+        """Validate that role is one of the allowed values."""
+        allowed_roles = ["participant", "admin", "owner"]
+        if v not in allowed_roles:
+            raise ValueError(f"Role must be one of: {', '.join(allowed_roles)}")
+        return v
 
 
 class ParticipantCreate(ParticipantBase):
@@ -27,8 +33,19 @@ class ParticipantCreate(ParticipantBase):
 class ParticipantUpdate(BaseModel):
     """Model for updating a participant."""
 
-    role: Optional[str] = Field(None, description="Role of the user in the gully")
-    team_name: Optional[str] = Field(None, description="Team name for the user")
+    role: Optional[str] = Field(None, description="Role in the gully")
+    team_name: Optional[str] = Field(None, description="Team name")
+
+    @validator("role")
+    def validate_role(cls, v):
+        """Validate that role is one of the allowed values."""
+        if v is None:
+            return v
+            
+        allowed_roles = ["participant", "admin", "owner"]
+        if v not in allowed_roles:
+            raise ValueError(f"Role must be one of: {', '.join(allowed_roles)}")
+        return v
 
 
 class ParticipantResponse(ParticipantBase):
@@ -39,6 +56,5 @@ class ParticipantResponse(ParticipantBase):
     updated_at: datetime = Field(..., description="Last update timestamp")
 
     class Config:
-        """Pydantic config."""
-
-        orm_mode = True
+        """Pydantic configuration."""
+        from_attributes = True

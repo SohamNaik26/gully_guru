@@ -6,12 +6,13 @@ This module provides methods for interacting with gully-related database operati
 import logging
 from typing import Dict, Any, Optional, List, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import select, func
 
 from src.api.services.base import BaseService
 from src.db.models.models import (
     Gully,
     GullyParticipant,
+    User,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,74 +33,53 @@ class GullyService(BaseService):
 
     async def get_gullies(
         self,
-        name: Optional[str] = None,
-        status: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[int] = None,
         limit: int = 10,
         offset: int = 0,
-        user_id: Optional[int] = None,
-        telegram_group_id: Optional[int] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
+    ) -> Tuple[List[Gully], int]:
         """
-        Get a list of gullies with optional filtering.
+        Get gullies with optional filtering.
 
         Args:
-            name: Optional filter by gully name
-            status: Optional filter by gully status
+            filters: Optional dictionary of field names and values to filter by
+            user_id: Optional filter by user ID
             limit: Maximum number of gullies to return
             offset: Number of gullies to skip
-            user_id: Filter by user ID (gullies the user is participating in)
-            telegram_group_id: Filter by Telegram group ID
 
         Returns:
             Tuple of (list of gullies, total count)
         """
-        if user_id:
-            # Get gullies the user is participating in
-            stmt = (
-                select(Gully)
-                .join(
-                    GullyParticipant,
-                    GullyParticipant.gully_id == Gully.id,
-                )
+        # Start with a base query
+        query = select(Gully)
+
+        # Apply filters if provided
+        if filters:
+            for field, value in filters.items():
+                if hasattr(Gully, field) and value is not None:
+                    query = query.where(getattr(Gully, field) == value)
+
+        # Apply user_id filter if provided
+        if user_id is not None:
+            # Join with GullyParticipant to filter by user_id
+            query = (
+                query.join(GullyParticipant, Gully.id == GullyParticipant.gully_id)
                 .where(GullyParticipant.user_id == user_id)
+                .distinct()
             )
-        else:
-            # Get all gullies
-            stmt = select(Gully)
 
-        # Apply additional filters if provided
-        if name:
-            stmt = stmt.where(Gully.name.contains(name))
-        if status:
-            stmt = stmt.where(Gully.status == status)
-        if telegram_group_id:
-            stmt = stmt.where(Gully.telegram_group_id == telegram_group_id)
-
-        # Get total count before pagination
-        count_stmt = stmt
-        count_result = await self.db.execute(count_stmt)
-        total = len(count_result.scalars().all())
+        # Get total count
+        count_query = select(func.count()).select_from(query.subquery())
+        total = await self.db.scalar(count_query) or 0
 
         # Apply pagination
-        stmt = stmt.offset(offset).limit(limit)
+        query = query.offset(offset).limit(limit)
 
-        result = await self.db.execute(stmt)
+        # Execute query
+        result = await self.db.execute(query)
         gullies = result.scalars().all()
 
-        # Convert to dictionaries
-        gully_dicts = []
-        for gully in gullies:
-            gully_dict = {
-                "id": gully.id,
-                "name": gully.name,
-                "status": gully.status,
-                "telegram_group_id": gully.telegram_group_id,
-                "created_at": gully.created_at,
-                "updated_at": gully.updated_at,
-            }
-            gully_dicts.append(gully_dict)
-
-        return gully_dicts, total
+        return list(gullies), total
 
     async def get_gully(self, gully_id: int) -> Optional[Dict[str, Any]]:
         """

@@ -53,11 +53,9 @@ from src.api.schemas.fantasy import (
     DraftPlayerBase,
     DraftPlayerCreate,
     DraftPlayerResponse,
-    SquadResponse,
-    SubmitSquadResponse,
-    SubmissionStatusResponse,
-    AuctionStartResponse,
-    ContestPlayerResponse,
+    DraftSelectionBase,
+    DraftSelectionCreate,
+    DraftSelectionResponse,
 )
 
 # Admin schemas
@@ -108,11 +106,10 @@ __all__ = [
     "DraftPlayerBase",
     "DraftPlayerCreate",
     "DraftPlayerResponse",
+    "DraftSelectionBase",
+    "DraftSelectionCreate",
+    "DraftSelectionResponse",
     "SquadResponse",
-    "SubmitSquadResponse",
-    "SubmissionStatusResponse",
-    "AuctionStartResponse",
-    "ContestPlayerResponse",
     # Admin schemas
     "AdminPermissionBase",
     "AdminPermissionCreate",

@@ -13,6 +13,49 @@ The API is organized in a layered architecture:
 3. **Factories Layer**: Transforms database models into API response objects
 4. **Schemas Layer**: Defines data validation and serialization/deserialization
 5. **Database Layer**: Handles data persistence and retrieval
+6. **Dependencies Layer**: Provides reusable dependencies for routes
+7. **Exceptions Layer**: Defines custom exceptions and error handling
+
+## Standardized Patterns
+
+The GullyGuru API follows several standardized patterns to ensure consistency and maintainability:
+
+### 1. Dependency Injection
+
+All routes use FastAPI's dependency injection system to obtain database sessions and service instances:
+
+```python
+@router.get("/{user_id}")
+async def get_user(
+    user_id: int = Path(..., description="ID of the user"),
+    db: AsyncSession = Depends(get_db)
+):
+    # ...
+```
+
+### 2. Exception Handling
+
+The API uses a consistent exception handling pattern with custom exceptions:
+
+```python
+try:
+    user = await user_service.get_user(user_id)
+    if not user:
+        raise NotFoundException(resource_type="User", resource_id=user_id)
+    return user
+except GullyGuruException:
+    # Custom exceptions are handled automatically
+    raise
+except Exception as e:
+    # Unexpected exceptions are logged and converted to 500 errors
+    logger.error(f"Unexpected error: {str(e)}", exc_info=True)
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="An internal server error occurred"
+    )
+```
+
+The API also provides a `handle_exceptions` decorator that can be applied to route
 
 ## Standalone API
 
@@ -189,6 +232,13 @@ This endpoint is useful for monitoring and health checks in production environme
 
 | Method | Endpoint | Description | Input | Output |
 |--------|----------|-------------|-------|--------|
+| GET | /fantasy/draft-squad/{participant_id} | Get a participant's draft squad | Path param: participant_id | SquadResponse |
+| POST | /fantasy/draft-squad/{participant_id}/add | Add players to a participant's draft squad | Path param: participant_id, Body: BulkPlayerAddRequest | BulkDraftPlayerResponse |
+| POST | /fantasy/draft-squad/{participant_id}/remove | Remove players from a participant's draft squad | Path param: participant_id, Body: BulkPlayerRemoveRequest | BulkDraftPlayerResponse |
+| POST | /fantasy/draft-squad/{participant_id}/submit | Submit a participant's draft squad | Path param: participant_id | SubmitSquadResponse |
+| POST | /fantasy/draft-squad/{participant_id}/unsubmit | Unsubmit a participant's draft squad for editing | Path param: participant_id | SubmitSquadResponse |
+| POST | /fantasy/gully/{gully_id}/finalize-draft | Finalize the draft phase and transition to auction phase | Path param: gully_id | FinalizeDraftResponse |
+| GET | /gullies/{gully_id}/submission-status | Get submission status for a gully | Path param: gully_id | SubmissionStatusResponse |
 | POST | /fantasy/contests/ | Create a new fantasy contest | ContestCreate (name, description, start_time, end_time, etc.) | ContestResponse |
 | GET | /fantasy/contests/ | Get a paginated list of contests | Query params: name, status, page, size | PaginatedResponse[ContestResponse] |
 | GET | /fantasy/contests/{contest_id} | Get a contest by ID | Path param: contest_id | ContestResponse |

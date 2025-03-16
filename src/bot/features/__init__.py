@@ -1,13 +1,14 @@
 """
 Features module for GullyGuru bot.
-Contains onboarding feature module and handler registration.
+Contains feature modules and handler registration.
 """
 
 import logging
-from telegram.ext import MessageHandler, filters
+from telegram.ext import MessageHandler, filters, Application
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from src.bot.features.onboarding import register_onboarding_handlers
+from src.bot.features.squad import register_squad_handlers
 from src.bot.api_client.onboarding import handle_complete_onboarding
 
 # Configure logging
@@ -75,7 +76,7 @@ async def new_chat_members_handler(update, context):
 
 
 def register_handlers(application):
-    """Register only onboarding-related handlers."""
+    """Register onboarding-related handlers."""
     logger.info("Registering onboarding feature handlers...")
 
     # New chat members handler for onboarding
@@ -87,3 +88,18 @@ def register_handlers(application):
     register_onboarding_handlers(application, skip_new_chat_members=True)
 
     logger.info("Onboarding handlers registered successfully")
+
+
+def register_all_features(application: Application):
+    """
+    Register all feature handlers with the application.
+
+    Args:
+        application: The application instance
+    """
+    logger.info("Registering all feature handlers")
+
+    # Register squad handlers
+    register_squad_handlers(application)
+
+    logger.info("All feature handlers registered successfully")

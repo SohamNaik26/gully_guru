@@ -1,4 +1,4 @@
-from typing import Optional, TYPE_CHECKING, ForwardRef
+from typing import Optional
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
@@ -14,7 +14,7 @@ class PlayerType(str, Enum):
 
     BATSMAN = "BAT"
     BOWLER = "BOWL"
-    ALL_ROUNDER = "ALL"
+    ALL_ROUNDER = "AR"
     WICKET_KEEPER = "WK"
 
 
@@ -52,7 +52,6 @@ class GullyStatus(str, Enum):
 class UserPlayerStatus(str, Enum):
     """Enum for UserPlayer (player ownership) status."""
 
-    DRAFT = "draft"  # User selected this player in Round 0, squad not yet finalized
     LOCKED = "locked"  # User submitted Round 0 squad, player is uncontested
     CONTESTED = (
         "contested"  # User submitted Round 0 squad, player is contested by others
@@ -273,23 +272,36 @@ class Gully(TimeStampedModel, table=True):
         return v
 
 
+# Add this new model after the existing models
+class DraftSelection(TimeStampedModel, table=True):
+    """
+    Model for tracking player selections during the draft phase.
+    Once draft is complete, successful selections are converted to ParticipantPlayer records.
+    """
+
+    __tablename__ = "draft_selections"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    gully_participant_id: int = Field(foreign_key="gully_participants.id", index=True)
+    player_id: int = Field(foreign_key="players.id", index=True)
+    selected_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_type=sqlalchemy.DateTime(timezone=True),
+    )
+
+    # Add composite index for efficient querying
+    __table_args__ = (
+        sqlalchemy.Index(
+            "ix_draft_selections_gully_player", "gully_participant_id", "player_id"
+        ),
+    )
+
+    # Relationships will be defined after all classes are defined
+
+
 class ParticipantPlayer(TimeStampedModel, table=True):
     """
-    Model for player ownership by participants in a specific Gully.
-
-    Represents the ownership relationship between a participant and a player,
-    including purchase details and team role information.
-
-    Attributes:
-        id: Primary key
-        gully_participant_id: Reference to the GullyParticipant (link between User and Gully)
-        player_id: Reference to the Player
-        purchase_price: Price paid for this player
-        purchase_date: When the player was purchased
-        is_captain: Whether this player is the team captain
-        is_vice_captain: Whether this player is the team vice-captain
-        is_playing_xi: Whether this player is in the playing XI
-        status: Current status of player ownership (draft, locked, contested, owned)
+    Model for player ownership by participants after the draft phase.
     """
 
     __tablename__ = "participant_players"
@@ -306,9 +318,9 @@ class ParticipantPlayer(TimeStampedModel, table=True):
     is_vice_captain: bool = Field(default=False)
     is_playing_xi: bool = Field(default=True)
     status: str = Field(
-        default=UserPlayerStatus.DRAFT.value,
+        default=UserPlayerStatus.LOCKED.value,  # Changed default from DRAFT to LOCKED
         index=True,
-        description="Current status of player ownership (draft, locked, contested, owned)",
+        description="Current status of player ownership (locked, contested, owned)",
     )
 
     # Define unique constraint for player_id and gully_participant_id
@@ -318,24 +330,17 @@ class ParticipantPlayer(TimeStampedModel, table=True):
         ),
     )
 
-    # Relationships will be defined after all classes are defined
-
-    @field_validator("purchase_price")
-    @classmethod
-    def validate_purchase_price(cls, v):
-        """Validate that purchase price is non-negative."""
-        if v < 0:
-            raise ValueError("Purchase price must be non-negative")
-        return v
-
     @field_validator("status")
     @classmethod
     def validate_status(cls, v):
         """Validate that status is one of the allowed values."""
-        if v not in [status.value for status in UserPlayerStatus]:
-            raise ValueError(
-                f"Status must be one of {[status.value for status in UserPlayerStatus]}"
-            )
+        allowed_values = [
+            UserPlayerStatus.LOCKED.value,
+            UserPlayerStatus.CONTESTED.value,
+            UserPlayerStatus.OWNED.value,
+        ]
+        if v not in allowed_values:
+            raise ValueError(f"Status must be one of {allowed_values}")
         return v
 
 
@@ -586,6 +591,9 @@ GullyParticipant.bank_transactions = Relationship(
 GullyParticipant.participant_players = Relationship(
     sa_relationship_kwargs={"lazy": "selectin"}, back_populates="gully_participant"
 )
+GullyParticipant.draft_selections = Relationship(
+    sa_relationship_kwargs={"lazy": "selectin"}, back_populates="gully_participant"
+)
 
 # Gully relationships
 Gully.participants = Relationship(
@@ -610,10 +618,17 @@ Gully.bank_transactions = Relationship(
 Player.participant_player = Relationship(
     sa_relationship_kwargs={"lazy": "selectin"}, back_populates="player"
 )
+Player.draft_selections = Relationship(
+    sa_relationship_kwargs={"lazy": "selectin"}, back_populates="player"
+)
 
 # ParticipantPlayer relationships
 ParticipantPlayer.gully_participant = Relationship(back_populates="participant_players")
 ParticipantPlayer.player = Relationship(back_populates="participant_player")
+
+# DraftSelection relationships
+DraftSelection.gully_participant = Relationship(back_populates="draft_selections")
+DraftSelection.player = Relationship(back_populates="draft_selections")
 
 # AuctionQueue relationships
 AuctionQueue.gully = Relationship(back_populates="auction_queue_items")
@@ -668,10 +683,3 @@ Player.get_current_owner_in_gully = get_current_owner_in_gully
 def receive_before_update(mapper, connection, target):
     """Update the updated_at field when a record is modified."""
     target.updated_at = datetime.now(timezone.utc)
-
-
-# Use TYPE_CHECKING for forward references to avoid circular imports
-if TYPE_CHECKING:
-    from src.db.models.models import ParticipantPlayer
-else:
-    ParticipantPlayer = ForwardRef("ParticipantPlayer")

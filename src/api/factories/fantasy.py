@@ -3,6 +3,44 @@ Factory classes for creating fantasy-related response objects.
 """
 
 from typing import Dict, Any, List
+from src.api.schemas.player import PlayerType
+
+
+class PlayerResponseFactory:
+    """Factory for creating player response objects within draft selections."""
+
+    @staticmethod
+    def create_response(data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a player response from data.
+
+        Args:
+            data: Player data
+
+        Returns:
+            Player response
+        """
+        # Ensure player_type is a valid enum value
+        player_type = data.get("player_type")
+
+        # If player_type is a string, try to convert it to the enum value
+        if isinstance(player_type, str):
+            # Check if the string matches any of the enum values
+            try:
+                player_type = PlayerType(player_type)
+            except ValueError:
+                # If conversion fails, use a default value
+                player_type = PlayerType.BAT
+
+        return {
+            "id": data.get("id"),
+            "name": data.get("name"),
+            "team": data.get("team"),
+            "player_type": player_type,
+            "base_price": data.get("base_price"),
+            "sold_price": data.get("sold_price"),
+            "season": data.get("season"),
+        }
 
 
 class DraftPlayerResponseFactory:
@@ -21,48 +59,115 @@ class DraftPlayerResponseFactory:
         """
         return {
             "id": data.get("id"),
-            "user_id": data.get("user_id"),
             "player_id": data.get("player_id"),
-            "gully_id": data.get("gully_id"),
+            "participant_id": data.get("participant_id"),
+            "selected_at": data.get("selected_at"),
             "status": data.get("status"),
-            "player": data.get("player", {}),
+            "player": (
+                PlayerResponseFactory.create_response(data.get("player", {}))
+                if data.get("player")
+                else None
+            ),
+        }
+
+
+class DraftSelectionResponseFactory:
+    """Factory for creating draft selection response objects."""
+
+    @staticmethod
+    def create_response(data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a draft selection response from data.
+
+        Args:
+            data: Draft selection data
+
+        Returns:
+            Draft selection response
+        """
+        # Ensure player_type is a valid enum value
+        player_type = data.get("player_type")
+
+        # If player_type is a string, try to convert it to the enum value
+        if isinstance(player_type, str):
+            # Check if the string matches any of the enum values
+            try:
+                player_type = PlayerType(player_type)
+            except ValueError:
+                # If conversion fails, use a default value
+                player_type = PlayerType.BAT
+
+        return {
+            "id": data.get("draft_selection_id"),
+            "player_id": data.get("id"),  # This is the player's ID
+            "name": data.get("name"),
+            "team": data.get("team"),
+            "player_type": player_type,
+            "base_price": data.get("base_price"),
+            "sold_price": data.get("sold_price"),
+            "season": data.get("season"),
+            "selected_at": data.get("selected_at"),
         }
 
     @staticmethod
     def create_response_list(data_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Create a list of draft player responses from data.
+        Create a list of draft selection responses from data.
 
         Args:
-            data_list: List of draft player data
+            data_list: List of draft selection data
 
         Returns:
-            List of draft player responses
+            List of draft selection responses
         """
-        return [DraftPlayerResponseFactory.create_response(data) for data in data_list]
+        return [
+            DraftSelectionResponseFactory.create_response(data) for data in data_list
+        ]
 
 
-class DraftSquadResponseFactory:
-    """Factory for creating draft squad response objects."""
+class SquadResponseFactory:
+    """Factory for creating squad response objects."""
 
     @staticmethod
     def create_response(data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Create a draft squad response from data.
+        Create a squad response from data.
 
         Args:
-            data: Draft squad data
+            data: Squad data
 
         Returns:
-            Draft squad response
+            Squad response
         """
         return {
-            "user_id": data.get("user_id"),
-            "gully_id": data.get("gully_id"),
             "players": [
-                DraftPlayerResponseFactory.create_response(player)
+                DraftSelectionResponseFactory.create_response(player)
                 for player in data.get("players", [])
             ],
+            "player_count": len(data.get("players", [])),
+        }
+
+
+class BulkDraftPlayerResponseFactory:
+    """Factory for creating bulk draft player operation response objects."""
+
+    @staticmethod
+    def create_response(data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a bulk draft player operation response from data.
+
+        Args:
+            data: Bulk operation result data
+
+        Returns:
+            Bulk operation response
+        """
+        return {
+            "success": data.get("success", False),
+            "message": data.get("message", ""),
+            "added_count": data.get("added_count", 0),
+            "removed_count": data.get("removed_count", 0),
+            "failed_ids": data.get("failed_ids", []),
         }
 
 
@@ -82,10 +187,12 @@ class SubmissionStatusResponseFactory:
         """
         return {
             "gully_id": data.get("gully_id"),
+            "gully_status": data.get("gully_status"),
             "total_participants": data.get("total_participants", 0),
-            "submitted_count": data.get("submitted_count", 0),
-            "is_complete": data.get("is_complete", False),
-            "status": data.get("status", "pending"),
+            "submitted_participants": data.get("submitted_participants", 0),
+            "all_submitted": data.get("all_submitted", False),
+            "submitted_details": data.get("submitted_details", []),
+            "not_submitted_details": data.get("not_submitted_details", []),
         }
 
 
@@ -105,9 +212,10 @@ class AuctionStartResponseFactory:
         """
         return {
             "gully_id": data.get("gully_id"),
-            "status": data.get("status", "pending"),
-            "contested_players_count": data.get("contested_players_count", 0),
-            "uncontested_players_count": data.get("uncontested_players_count", 0),
+            "status": data.get("status"),
+            "message": data.get("message"),
+            "contested_count": data.get("contested_count", 0),
+            "uncontested_count": data.get("uncontested_count", 0),
         }
 
 
@@ -125,27 +233,46 @@ class ContestPlayerResponseFactory:
         Returns:
             Contest player response
         """
+        # Ensure player_type is a valid enum value
+        player_type = data.get("player_type")
+
+        # If player_type is a string, try to convert it to the enum value
+        if isinstance(player_type, str):
+            # Check if the string matches any of the enum values
+            try:
+                player_type = PlayerType(player_type)
+            except ValueError:
+                # If conversion fails, use a default value
+                player_type = PlayerType.BAT
+
         return {
             "player_id": data.get("player_id"),
-            "player_name": data.get("player_name", ""),
-            "team": data.get("team", ""),
-            "role": data.get("role", ""),
-            "participants": data.get("participants", []),
+            "name": data.get("name"),
+            "team": data.get("team"),
+            "player_type": player_type,
+            "base_price": data.get("base_price"),
+            "contested_by": data.get("contested_by", []),
+            "contest_count": len(data.get("contested_by", [])),
         }
 
 
-class SquadResponseFactory:
-    """Factory for creating squad response objects."""
+class FinalizeDraftResponseFactory:
+    """Factory for creating finalize draft response objects."""
 
     @staticmethod
     def create_response(data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Create a squad response from data.
+        Create a finalize draft response from data.
 
         Args:
-            data: Squad data
+            data: Finalize draft data
 
         Returns:
-            Squad response
+            Finalize draft response
         """
-        return {"players": data.get("players", [])}
+        return {
+            "gully_id": data.get("gully_id"),
+            "status": data.get("status"),
+            "message": data.get("message"),
+            "success": data.get("success", False),
+        }

@@ -24,6 +24,13 @@ from src.bot.api_client.onboarding import (  # noqa
     add_admin_to_gully,
 )
 
+from src.bot.features.squad import (  # noqa
+    register_squad_handlers,
+    squad_entry_point,
+    squad_menu_entry,
+    view_squad,
+)
+
 __all__ = [
     "initialize_api_client",
     "close_api_client",
@@ -39,6 +46,9 @@ __all__ = [
     "handle_complete_onboarding",
     "create_gully_for_group",
     "add_admin_to_gully",
+    "register_squad_handlers",
+    "squad_menu_entry",
+    "view_squad",
 ]
 
 

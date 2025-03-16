@@ -2,14 +2,14 @@
 Factory classes for creating gully-related response objects.
 """
 
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 
 
 class GullyResponseFactory:
     """Factory for creating gully response objects."""
 
     @staticmethod
-    def create_response(data: Dict[str, Any]) -> Dict[str, Any]:
+    def create_response(data: Any) -> Dict[str, Any]:
         """
         Create a gully response from data.
 
@@ -19,19 +19,19 @@ class GullyResponseFactory:
         Returns:
             Gully response
         """
-        return {
+        response = {
             "id": data.get("id"),
             "name": data.get("name"),
-            "status": data.get("status"),
             "telegram_group_id": data.get("telegram_group_id"),
-            "description": None,  # This field doesn't exist in the model
-            "created_by": None,  # This field doesn't exist in the model
+            "status": data.get("status"),
             "created_at": data.get("created_at"),
             "updated_at": data.get("updated_at"),
         }
 
+        return response
+
     @staticmethod
-    def create_response_list(data_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def create_response_list(data_list: List[Any]) -> List[Dict[str, Any]]:
         """
         Create a list of gully responses from data.
 
@@ -84,3 +84,28 @@ class GullyParticipantResponseFactory:
         return [
             GullyParticipantResponseFactory.create_response(data) for data in data_list
         ]
+
+
+class SubmissionStatusResponseFactory:
+    """Factory for creating submission status response objects."""
+
+    @staticmethod
+    def create_response(data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a submission status response from data.
+
+        Args:
+            data: Submission status data
+
+        Returns:
+            Submission status response
+        """
+        return {
+            "gully_id": data.get("gully_id"),
+            "gully_status": data.get("gully_status"),
+            "total_participants": data.get("total_participants", 0),
+            "submitted_participants": data.get("submitted_participants", 0),
+            "all_submitted": data.get("all_submitted", False),
+            "submitted_details": data.get("submitted_details", []),
+            "not_submitted_details": data.get("not_submitted_details", []),
+        }

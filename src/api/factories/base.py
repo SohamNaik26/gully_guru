@@ -41,6 +41,29 @@ class ResponseFactory(Generic[ModelT, ResponseT]):
         """
         return [cls.create_response(model) for model in models]
 
+    @classmethod
+    def create_paginated_response(
+        cls, models: List[ModelT], total: int, limit: int, offset: int
+    ) -> Dict[str, Any]:
+        """
+        Create a paginated response from a list of models.
+
+        Args:
+            models: List of database model instances
+            total: Total number of items available
+            limit: Maximum number of items per page
+            offset: Number of items to skip
+
+        Returns:
+            Dictionary with paginated response format
+        """
+        return {
+            "items": cls.create_response_list(models),
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+
 
 class SuccessResponseFactory:
     """Factory for creating success response objects."""

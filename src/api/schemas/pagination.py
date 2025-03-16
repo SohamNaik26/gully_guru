@@ -3,23 +3,18 @@ Pagination schemas for the GullyGuru API.
 This module provides schemas for paginated responses.
 """
 
-from typing import Generic, TypeVar, List
+from typing import Generic, TypeVar, List, Dict, Any
+from pydantic import BaseModel, Field
 from pydantic.generics import GenericModel
 
 T = TypeVar("T")
 
 
-class PaginationParams:
+class PaginationParams(BaseModel):
     """Parameters for pagination."""
 
-    def __init__(self, limit: int = 10, offset: int = 0):
-        self.limit = min(limit, 100)  # Maximum 100 items per page
-        self.offset = max(offset, 0)  # Minimum offset 0
-
-    @property
-    def skip(self) -> int:
-        """Alias for offset to maintain compatibility with older code."""
-        return self.offset
+    limit: int = Field(10, ge=1, le=100, description="Number of items per page")
+    offset: int = Field(0, ge=0, description="Number of items to skip")
 
     @property
     def page(self) -> int:
@@ -28,11 +23,11 @@ class PaginationParams:
 
     @property
     def size(self) -> int:
-        """Alias for limit to maintain compatibility with older code."""
+        """Get the page size."""
         return self.limit
 
 
-class PaginatedResponse(GenericModel, Generic[T]):
+class PaginatedResponse(BaseModel, Generic[T]):
     """
     Paginated response schema.
 
@@ -47,6 +42,16 @@ class PaginatedResponse(GenericModel, Generic[T]):
     total: int
     limit: int
     offset: int
+
+    @property
+    def page(self) -> int:
+        """Calculate the current page number."""
+        return (self.offset // self.limit) + 1 if self.limit > 0 else 1
+
+    @property
+    def pages(self) -> int:
+        """Calculate the total number of pages."""
+        return (self.total + self.limit - 1) // self.limit if self.limit > 0 else 1
 
     @property
     def has_more(self) -> bool:

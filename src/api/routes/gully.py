@@ -4,22 +4,30 @@ This module provides API endpoints for gully-related operations.
 """
 
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any, List, Optional
 
 from src.db.session import get_session
-from src.db.models import GullyStatus
 from src.api.exceptions import NotFoundException
 from src.api.schemas.gully import (
     GullyCreate,
     GullyUpdate,
     GullyResponse,
     SuccessResponse,
+    SubmissionStatusResponse,
 )
+from src.api.schemas.pagination import PaginatedResponse
+from src.api.dependencies.database import get_db
+from src.api.dependencies.pagination import pagination_params, PaginationParams
+from src.api.dependencies.permissions import check_is_admin
 from src.api.services.gully import GullyService
 from src.api.services.participant import ParticipantService
 from src.api.factories import GullyResponseFactory
+from src.api.factories.gully import SubmissionStatusResponseFactory
+from src.api.services.fantasy import FantasyService
+from src.api.services.auction import AuctionService
+from src.api.exceptions import handle_exceptions
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -28,7 +36,7 @@ logger = logging.getLogger(__name__)
 # Define helper functions for admin checks
 async def is_gully_admin(user_id: int, gully_id: int, session: AsyncSession) -> bool:
     """
-    Check if a user is an admin in a specific gully.
+    Check if a user is an admin for a gully.
 
     Args:
         user_id: User ID to check
@@ -49,62 +57,105 @@ router = APIRouter(
 )
 
 
+def get_gully_service(
+    db: AsyncSession = Depends(get_db),
+) -> GullyService:
+    """
+    Get the gully service instance.
+
+    Args:
+        db: Database session
+
+    Returns:
+        GullyService instance
+    """
+    return GullyService(db)
+
+
+def get_fantasy_service(
+    db: AsyncSession = Depends(get_db),
+) -> FantasyService:
+    """
+    Get the fantasy service instance.
+
+    Args:
+        db: Database session
+
+    Returns:
+        FantasyService instance
+    """
+    return FantasyService(db)
+
+
+def get_auction_service(
+    db: AsyncSession = Depends(get_db),
+) -> AuctionService:
+    """
+    Get the auction service instance.
+
+    Args:
+        db: Database session
+
+    Returns:
+        AuctionService instance
+    """
+    return AuctionService(db)
+
+
 # Gully endpoints
-@router.get("/", response_model=Dict[str, Any])
+@router.get(
+    "/",
+    response_model=PaginatedResponse[GullyResponse],
+    summary="Get a list of gullies with optional filtering",
+)
+@handle_exceptions
 async def get_gullies(
+    name: Optional[str] = Query(None, description="Filter by gully name"),
+    status: Optional[str] = Query(None, description="Filter by gully status"),
+    user_id: Optional[int] = Query(None, description="Filter by user ID"),
     telegram_group_id: Optional[int] = Query(
         None, description="Filter by Telegram group ID"
     ),
-    limit: int = Query(
-        10, ge=1, le=100, description="Maximum number of gullies to return"
-    ),
-    offset: int = Query(0, ge=0, description="Number of gullies to skip"),
-    session: AsyncSession = Depends(get_session),
+    pagination: PaginationParams = Depends(pagination_params),
+    gully_service: GullyService = Depends(get_gully_service),
 ):
     """
     Get a paginated list of gullies with optional filtering.
 
     Args:
+        name: Optional filter by gully name
+        status: Optional filter by gully status
+        user_id: Optional filter by user ID
         telegram_group_id: Optional filter by Telegram group ID
-        limit: Maximum number of gullies to return
-        offset: Number of gullies to skip
-        session: Database session
+        pagination: Pagination parameters
+        gully_service: Gully service instance
 
     Returns:
-        Dict[str, Any]: Paginated list of gullies
+        Paginated list of gullies
     """
-    gully_service = GullyService(session)
+    # Build filters
+    filters = {}
+    if name:
+        filters["name"] = name
+    if status:
+        filters["status"] = status
+    if telegram_group_id:
+        filters["telegram_group_id"] = telegram_group_id
 
-    # Prioritize telegram_group_id filtering for bot integration
-    if telegram_group_id is not None:
-        gully = await gully_service.get_gully_by_group(telegram_group_id)
-        if gully:
-            return {
-                "items": [GullyResponseFactory.create_response(gully)],
-                "total": 1,
-                "limit": limit,
-                "offset": offset,
-            }
-        else:
-            return {
-                "items": [],
-                "total": 0,
-                "limit": limit,
-                "offset": offset,
-            }
-    else:
-        # Regular filtering
-        gullies, total = await gully_service.get_gullies(
-            limit=limit,
-            offset=offset,
-        )
+    # Call the updated service method
+    gullies, total = await gully_service.get_gullies(
+        filters=filters,
+        user_id=user_id,
+        limit=pagination.limit,
+        offset=pagination.offset,
+    )
 
-        return {
-            "items": [GullyResponseFactory.create_response(gully) for gully in gullies],
-            "total": total,
-            "limit": limit,
-            "offset": offset,
-        }
+    return {
+        "items": [GullyResponseFactory.create_response(gully) for gully in gullies],
+        "total": total,
+        "limit": pagination.limit,
+        "offset": pagination.offset,
+    }
 
 
 @router.get("/user/{user_id}", response_model=List[GullyResponse])
@@ -288,50 +339,13 @@ async def update_gully(
     return GullyResponseFactory.create_response(gully)
 
 
-@router.delete("/{gully_id}", response_model=SuccessResponse)
-async def delete_gully(
-    gully_id: int,
-    user_id: int = Query(..., description="ID of the user deleting the gully"),
-    session: AsyncSession = Depends(get_session),
-):
-    """
-    Delete a gully by ID.
-
-    Args:
-        gully_id: Gully ID
-        user_id: ID of the user deleting the gully
-        session: Database session
-
-    Returns:
-        SuccessResponse: Success response
-
-    Raises:
-        NotFoundException: If gully not found
-        HTTPException: If user is not an admin in the gully
-    """
-    gully_service = GullyService(session)
-
-    # Check if user is admin in the gully
-    is_admin = await is_gully_admin(user_id, gully_id, session)
-    if not is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only gully admins can delete the gully",
-        )
-
-    # Delete the gully
-    deleted = await gully_service.delete_gully(gully_id)
-    if not deleted:
-        raise NotFoundException(resource_type="Gully", resource_id=gully_id)
-
-    return {"success": True, "message": f"Gully with ID {gully_id} deleted"}
-
-
 @router.put("/{gully_id}/status", response_model=SuccessResponse)
 async def update_gully_status(
     gully_id: int,
     status: str = Query(..., description="New status for the gully"),
-    user_id: int = Query(..., description="ID of the user updating the gully status"),
+    user_id: Optional[int] = Query(
+        None, description="ID of the user updating the gully status"
+    ),
     session: AsyncSession = Depends(get_session),
 ):
     """
@@ -340,7 +354,7 @@ async def update_gully_status(
     Args:
         gully_id: Gully ID
         status: New status
-        user_id: ID of the user updating the gully status
+        user_id: ID of the user updating the gully status (optional for bot updates)
         session: Database session
 
     Returns:
@@ -351,13 +365,14 @@ async def update_gully_status(
     """
     gully_service = GullyService(session)
 
-    # Check if user is admin in the gully
-    is_admin = await is_gully_admin(user_id, gully_id, session)
-    if not is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only gully admins can update the gully status",
-        )
+    # Check if user is admin in the gully (skip for bot updates)
+    if user_id is not None:
+        is_admin = await is_gully_admin(user_id, gully_id, session)
+        if not is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only gully admins can update the gully status",
+            )
 
     # Update the gully status
     result = await gully_service.update_gully_status(gully_id, status)
@@ -369,3 +384,72 @@ async def update_gully_status(
         )
 
     return {"success": True, "message": f"Gully status updated to {status}"}
+
+
+@router.delete("/{gully_id}", response_model=SuccessResponse)
+async def delete_gully(
+    gully_id: int,
+    user_id: Optional[int] = Query(
+        None, description="ID of the user deleting the gully"
+    ),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Delete a gully by ID.
+
+    Args:
+        gully_id: Gully ID
+        user_id: ID of the user deleting the gully (optional for bot operations)
+        session: Database session
+
+    Returns:
+        SuccessResponse: Success response
+
+    Raises:
+        NotFoundException: If gully not found
+        HTTPException: If user is not an admin in the gully
+    """
+    gully_service = GullyService(session)
+
+    # Check if user is admin in the gully (skip for bot operations)
+    if user_id is not None:
+        is_admin = await is_gully_admin(user_id, gully_id, session)
+        if not is_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only gully admins can delete the gully",
+            )
+
+    # Delete the gully
+    deleted = await gully_service.delete_gully(gully_id)
+    if not deleted:
+        raise NotFoundException(resource_type="Gully", resource_id=gully_id)
+
+    return {"success": True, "message": f"Gully with ID {gully_id} deleted"}
+
+
+@router.get(
+    "/{gully_id}/submission-status",
+    response_model=SubmissionStatusResponse,
+    summary="Get submission status for a gully",
+)
+async def get_gully_submission_status(
+    gully_id: int = Path(..., description="ID of the gully"),
+    fantasy_service: FantasyService = Depends(get_fantasy_service),
+):
+    """
+    Get the submission status for a gully.
+
+    Args:
+        gully_id: ID of the gully
+
+    Returns:
+        Submission status data
+    """
+    try:
+        status_data = await fantasy_service.get_submission_status(gully_id)
+        return SubmissionStatusResponseFactory.create_response(status_data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

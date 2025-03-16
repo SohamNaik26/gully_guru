@@ -11,7 +11,8 @@ from src.api.routes.players import router as players_router
 from src.api.routes.fantasy import router as fantasy_router
 from src.api.routes.admin import router as admin_router
 from src.api.routes.gully import router as gullies_router
-from src.api.routes.participants import router as participants_router
+from src.api.routes.participant import router as participant_router
+from src.api.routes.auction import router as auction_router
 
 # Create the main API router
 api_router = APIRouter()
@@ -22,4 +23,5 @@ api_router.include_router(players_router)
 api_router.include_router(fantasy_router)
 api_router.include_router(admin_router)
 api_router.include_router(gullies_router)
-api_router.include_router(participants_router)
+api_router.include_router(participant_router)
+api_router.include_router(auction_router)

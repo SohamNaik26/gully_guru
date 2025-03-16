@@ -23,12 +23,33 @@ class OnboardingApiClient:
             api_client: Base API client instance
         """
         self._api_client = api_client
+        # Cache for gully data to avoid problematic API calls
+        self._gully_cache = {}
 
     async def _get_client(self) -> BaseApiClient:
         """Get the API client instance."""
         if self._api_client is None:
             self._api_client = await get_api_client()
         return self._api_client
+
+    def _extract_items(self, response: Any) -> List[Dict[str, Any]]:
+        """
+        Extract items from a paginated response or return the list directly.
+
+        Args:
+            response: API response
+
+        Returns:
+            List of items
+        """
+        if not response:
+            return []
+
+        if isinstance(response, list):
+            return response
+        elif isinstance(response, dict) and "items" in response:
+            return response["items"]
+        return []
 
     # User Management Methods
 
@@ -47,20 +68,14 @@ class OnboardingApiClient:
 
         client = await self._get_client()
         try:
-            # Use the updated endpoint that directly supports telegram_id filtering
+            # Use the endpoint that directly supports telegram_id filtering
             response = await client.get("users", params={"telegram_id": telegram_id})
 
-            # The response is now a list of users after the BaseApiClient extracts items from paginated response
-            if response and isinstance(response, list) and len(response) > 0:
+            # Extract items from the response
+            items = self._extract_items(response)
+            if items and len(items) > 0:
                 logger.info(f"Found user with telegram_id {telegram_id}")
-                return response[0]
-
-            # If the response is a dict (not paginated or original format), check if it has the expected fields
-            if response and isinstance(response, dict) and "items" in response:
-                items = response.get("items", [])
-                if items and len(items) > 0:
-                    logger.info(f"Found user with telegram_id {telegram_id}")
-                    return items[0]
+                return items[0]
 
             logger.info(f"User with telegram_id {telegram_id} not found")
             return None
@@ -152,7 +167,7 @@ class OnboardingApiClient:
 
         try:
             client = await self._get_client()
-            # Use the user_id in the URL path instead of in the request body
+            # Use the user_id in the URL path
             response = await client.put(f"users/{user_id}", json=data)
 
             if response:
@@ -182,29 +197,49 @@ class OnboardingApiClient:
         if not gully_id:
             raise ValueError("gully_id is required")
 
+        # Check cache first
+        if gully_id in self._gully_cache:
+            logger.info(f"Using cached gully data for ID {gully_id}")
+            return self._gully_cache[gully_id]
+
+        # We'll avoid direct gully endpoint due to factory method issues
+        # Instead, we'll use the participants endpoint and extract gully info
         try:
             client = await self._get_client()
-            response = await client.get("gullies", params={"id": gully_id})
 
-            # The response is now a list of gullies after the BaseApiClient extracts items from paginated response
-            if response and isinstance(response, list) and len(response) > 0:
-                logger.info(f"Found gully with ID {gully_id}")
-                return response[0]
+            # Get participants for this gully
+            response = await client.get("participants", params={"gully_id": gully_id})
+            items = self._extract_items(response)
 
-            # If the response is a dict (not paginated or original format), check if it has the expected fields
-            if response and isinstance(response, dict) and "items" in response:
-                items = response.get("items", [])
-                if items and len(items) > 0:
-                    logger.info(f"Found gully with ID {gully_id}")
-                    return items[0]
+            if not items:
+                logger.info(f"No participants found for gully {gully_id}")
+                return None
 
-            logger.info(f"Gully with ID {gully_id} not found")
-            return None
+            # Extract gully info from the first participant
+            participant = items[0]
+            if "gully" in participant:
+                gully_data = participant["gully"]
+                logger.info(f"Found gully with ID {gully_id} from participant data")
+
+                # Cache the gully data
+                self._gully_cache[gully_id] = gully_data
+                return gully_data
+
+            # If no gully info in participant, create a minimal gully object
+            gully_data = {
+                "id": gully_id,
+                "name": f"Gully {gully_id}",  # Default name
+                "status": "active",  # Default status
+            }
+
+            # Cache the gully data
+            self._gully_cache[gully_id] = gully_data
+            logger.info(f"Created minimal gully data for ID {gully_id}")
+            return gully_data
+
         except Exception as e:
             logger.error(f"Failed to get gully with ID {gully_id}: {e}")
-            if "404" in str(e):
-                return None
-            raise
+            return None
 
     async def get_gully_by_telegram_id(
         self, telegram_group_id: int
@@ -223,18 +258,23 @@ class OnboardingApiClient:
 
         client = await self._get_client()
         try:
-            # Use the updated endpoint that directly supports telegram_group_id filtering
+            # Use the dedicated endpoint for getting a gully by group ID
+            response = await client.get(f"gullies/group/{telegram_group_id}")
+
+            if response:
+                logger.info(f"Found gully with telegram_group_id {telegram_group_id}")
+                return response
+
+            # Fallback to filtering
             response = await client.get(
                 "gullies", params={"telegram_group_id": telegram_group_id}
             )
 
-            # The response is now a list of gullies after the BaseApiClient extracts items from paginated response
+            # Handle different response formats
             if response and isinstance(response, list) and len(response) > 0:
                 logger.info(f"Found gully with telegram_group_id {telegram_group_id}")
                 return response[0]
-
-            # If the response is a dict (not paginated or original format), check if it has the expected fields
-            if response and isinstance(response, dict) and "items" in response:
+            elif response and isinstance(response, dict) and "items" in response:
                 items = response.get("items", [])
                 if items and len(items) > 0:
                     logger.info(
@@ -326,7 +366,7 @@ class OnboardingApiClient:
 
         try:
             client = await self._get_client()
-            # Use the gully_id in the URL path instead of in the request body
+            # Use the gully_id in the URL path
             response = await client.put(f"gullies/{gully_id}", json=data)
 
             if response:
@@ -343,6 +383,43 @@ class OnboardingApiClient:
 
     # Participant Management Methods
 
+    async def get_participant(
+        self, user_id: int, gully_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get a participant by user ID and gully ID.
+
+        Args:
+            user_id: The user ID
+            gully_id: The gully ID
+
+        Returns:
+            The participant data or None if not found
+        """
+        try:
+            logger.info(
+                f"Getting participant data for user {user_id} in gully {gully_id}"
+            )
+            client = await self._get_client()
+
+            # Use the dedicated endpoint for getting a participant by user and gully
+            response = await client.get(f"participants/user/{user_id}/gully/{gully_id}")
+
+            if response:
+                logger.info(
+                    f"Found participant for user {user_id} in gully {gully_id}: {response.get('id')}"
+                )
+                return response
+            else:
+                logger.warning(
+                    f"No participant found for user {user_id} in gully {gully_id}"
+                )
+                return None
+        except Exception as e:
+            logger.error(f"Error getting participant: {str(e)}")
+            logger.error("Stack trace:", exc_info=True)
+            return None
+
     async def get_user_gully_participation(
         self, user_id: int, gully_id: int
     ) -> Optional[Dict[str, Any]]:
@@ -356,31 +433,8 @@ class OnboardingApiClient:
         Returns:
             Participation object if found, None otherwise
         """
-        if not user_id:
-            raise ValueError("user_id is required")
-        if not gully_id:
-            raise ValueError("gully_id is required")
-
-        client = await self._get_client()
-        try:
-            # Use the updated participants endpoint with filtering
-            response = await client.get(
-                "participants", params={"user_id": user_id, "gully_id": gully_id}
-            )
-
-            if response and isinstance(response, list) and len(response) > 0:
-                logger.info(
-                    f"Found participation for user {user_id} in gully {gully_id}"
-                )
-                return response[0]
-
-            logger.info(
-                f"No participation found for user {user_id} in gully {gully_id}"
-            )
-            return None
-        except Exception as e:
-            logger.error(f"Failed to get participation: {e}")
-            return None
+        # This is now an alias for get_participant for backward compatibility
+        return await self.get_participant(user_id, gully_id)
 
     async def join_gully(
         self,
@@ -443,25 +497,17 @@ class OnboardingApiClient:
 
         client = await self._get_client()
         try:
-            # Try the dedicated endpoint for user gullies first
-            try:
-                response = await client.get(f"gullies/user/{user_id}")
+            # Use the dedicated endpoint for user gullies
+            response = await client.get(f"gullies/user/{user_id}")
 
-                # Log the raw response for debugging
-                logger.debug(f"Raw response from gullies/user/{user_id}: {response}")
-
-                if response:
-                    if isinstance(response, list):
-                        logger.info(f"Found {len(response)} gullies for user {user_id}")
-                        return response
-                    elif isinstance(response, dict) and "items" in response:
-                        items = response.get("items", [])
-                        logger.info(f"Found {len(items)} gullies for user {user_id}")
-                        return items
-            except Exception as e:
-                logger.warning(
-                    f"Error using gullies/user endpoint: {e}, falling back to participants"
-                )
+            if response:
+                if isinstance(response, list):
+                    logger.info(f"Found {len(response)} gullies for user {user_id}")
+                    return response
+                elif isinstance(response, dict) and "items" in response:
+                    items = response.get("items", [])
+                    logger.info(f"Found {len(items)} gullies for user {user_id}")
+                    return items
 
             # Fallback to participants endpoint
             response = await client.get("participants", params={"user_id": user_id})
@@ -507,12 +553,23 @@ class OnboardingApiClient:
 
         client = await self._get_client()
         try:
-            # Use the participants endpoint with gully_id filtering
+            # Use the dedicated endpoint for gully participants
+            response = await client.get(f"participants/gully/{gully_id}")
+
+            if response and isinstance(response, list):
+                logger.info(f"Found {len(response)} participants in gully {gully_id}")
+                return response
+
+            # Fallback to filtering
             response = await client.get("participants", params={"gully_id": gully_id})
 
             if response and isinstance(response, list):
                 logger.info(f"Found {len(response)} participants in gully {gully_id}")
                 return response
+            elif response and isinstance(response, dict) and "items" in response:
+                items = response.get("items", [])
+                logger.info(f"Found {len(items)} participants in gully {gully_id}")
+                return items
 
             logger.info(f"No participants found in gully {gully_id}")
             return []

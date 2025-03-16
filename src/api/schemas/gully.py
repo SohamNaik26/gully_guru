@@ -2,7 +2,7 @@
 Gully schemas for the GullyGuru API.
 """
 
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, Field
 
@@ -51,3 +51,33 @@ class SuccessResponse(BaseModel):
 
     success: bool = Field(..., description="Success status")
     message: str = Field(..., description="Success message")
+
+
+class SubmissionStatusResponse(BaseModel):
+    """Schema for submission status response."""
+
+    gully_id: int = Field(..., description="ID of the gully")
+    gully_status: str = Field(..., description="Status of the gully")
+    total_participants: int = Field(..., description="Total number of participants")
+    submitted_participants: int = Field(
+        ..., description="Number of participants who have submitted"
+    )
+    all_submitted: bool = Field(
+        ..., description="Whether all participants have submitted"
+    )
+
+    # Details of participants who have submitted
+    submitted_details: List[Dict[str, Any]] = Field(
+        default_factory=list, description="Details of participants who have submitted"
+    )
+
+    # Details of participants who have not submitted
+    not_submitted_details: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Details of participants who have not submitted",
+    )
+
+    class Config:
+        """Pydantic config."""
+
+        orm_mode = True

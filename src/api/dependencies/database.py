@@ -5,7 +5,7 @@ This module provides dependencies for database access.
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.db.session import get_session
+from src.db.session import AsyncSessionLocal
 
 
 async def get_db() -> AsyncSession:
@@ -15,5 +15,12 @@ async def get_db() -> AsyncSession:
     Returns:
         Database session
     """
-    async with get_session() as session:
+    session = AsyncSessionLocal()
+    try:
         yield session
+    finally:
+        await session.close()
+
+
+# Add an alias for backward compatibility
+get_session = get_db

@@ -4,6 +4,7 @@ This module provides factory classes for creating response objects for player-re
 """
 
 from typing import Dict, Any, List
+from src.api.schemas.player import PlayerType
 
 
 class PlayerResponseFactory:
@@ -20,11 +21,23 @@ class PlayerResponseFactory:
         Returns:
             Response object
         """
+        # Ensure player_type is a valid enum value
+        player_type = data.get("player_type")
+
+        # If player_type is a string, try to convert it to the enum value
+        if isinstance(player_type, str):
+            # Check if the string matches any of the enum values
+            try:
+                player_type = PlayerType(player_type)
+            except ValueError:
+                # If conversion fails, use a default value
+                player_type = PlayerType.BAT
+
         return {
             "id": data.get("id"),
             "name": data.get("name"),
             "team": data.get("team"),
-            "player_type": data.get("player_type"),
+            "player_type": player_type,
             "base_price": data.get("base_price"),
             "sold_price": data.get("sold_price"),
             "season": data.get("season"),

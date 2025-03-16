@@ -4,12 +4,13 @@ This module provides methods for interacting with participant-related database o
 """
 
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
+from sqlalchemy import func
 
 from src.api.services.base import BaseService
-from src.db.models.models import GullyParticipant
+from src.db.models.models import GullyParticipant, User, Gully
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class ParticipantService(BaseService):
         user_id: Optional[int] = None,
         skip: int = 0,
         limit: int = 100,
-    ) -> List[Dict[str, Any]]:
+    ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Get participants with optional filtering.
 
@@ -44,7 +45,7 @@ class ParticipantService(BaseService):
             limit: Maximum number of participants to return
 
         Returns:
-            List of participants
+            Tuple of (list of participants, total count)
         """
         stmt = select(GullyParticipant)
 
@@ -53,18 +54,23 @@ class ParticipantService(BaseService):
         if user_id:
             stmt = stmt.where(GullyParticipant.user_id == user_id)
 
+        # Get total count
+        count_query = select(func.count()).select_from(stmt.subquery())
+        total = await self.db.scalar(count_query) or 0
+
+        # Apply pagination
         stmt = stmt.offset(skip).limit(limit)
 
         result = await self.db.execute(stmt)
         participants = result.scalars().all()
 
-        # Convert to dictionaries
+        # Convert to list of dictionaries
         participant_dicts = []
         for participant in participants:
             participant_dict = {
                 "id": participant.id,
-                "user_id": participant.user_id,
                 "gully_id": participant.gully_id,
+                "user_id": participant.user_id,
                 "role": participant.role,
                 "team_name": participant.team_name,
                 "created_at": participant.created_at,
@@ -72,7 +78,7 @@ class ParticipantService(BaseService):
             }
             participant_dicts.append(participant_dict)
 
-        return participant_dicts
+        return participant_dicts, total
 
     async def get_participant(
         self, gully_id: int, user_id: int
@@ -315,7 +321,6 @@ class ParticipantService(BaseService):
         Returns:
             List of participants matching the Telegram IDs
         """
-        from src.db.models.models import User
         from sqlalchemy import and_
 
         # Join GullyParticipant with User to filter by telegram_id

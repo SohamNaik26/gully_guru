@@ -1,3 +1,7 @@
+"""
+Pagination dependencies for the GullyGuru API.
+"""
+
 from fastapi import Query
 from src.api.schemas.pagination import PaginationParams
 

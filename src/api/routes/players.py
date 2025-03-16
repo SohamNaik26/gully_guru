@@ -4,7 +4,7 @@ This module provides API endpoints for player-related operations.
 """
 
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.schemas.player import (
@@ -16,8 +16,10 @@ from src.api.schemas.player import (
 from src.api.schemas.pagination import PaginatedResponse
 from src.api.services.player import PlayerService
 from src.api.factories.player import PlayerResponseFactory
-from src.db.session import get_session
-from src.api.exceptions import NotFoundException
+from src.api.dependencies.database import get_db
+from src.api.dependencies.pagination import pagination_params, PaginationParams
+from src.api.dependencies.permissions import check_is_system_admin
+from src.api.exceptions import NotFoundException, handle_exceptions
 
 router = APIRouter(
     prefix="/players",
@@ -26,12 +28,14 @@ router = APIRouter(
 
 
 @router.post("/", response_model=PlayerResponse, status_code=status.HTTP_201_CREATED)
+@handle_exceptions
 async def create_player(
     player_data: PlayerCreate,
     admin_user_id: int = Query(
         ..., description="ID of the admin user creating the player"
     ),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(lambda: check_is_system_admin(admin_user_id, db)),
 ):
     """
     Create a new player.
@@ -39,31 +43,22 @@ async def create_player(
     Args:
         player_data: Player data including name, team, role, etc.
         admin_user_id: ID of the admin user creating the player
+        db: Database session
+        _: Permission check dependency (hidden)
 
     Returns:
         PlayerResponse: Created player with ID
 
     Raises:
-        HTTPException: If player creation fails or user is not an admin
+        AuthorizationException: If user is not an admin
     """
     player_service = PlayerService(db)
-
-    # Check if user is an admin (this would be implemented in the service)
-    is_admin = await player_service.is_system_admin(admin_user_id)
-    if not is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admins can create players",
-        )
-
-    try:
-        player_dict = await player_service.create_player(player_data.dict())
-        return PlayerResponseFactory.create_response(player_dict)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    player_dict = await player_service.create_player(player_data.dict())
+    return PlayerResponseFactory.create_response(player_dict)
 
 
 @router.get("/", response_model=PaginatedResponse[PlayerResponse])
+@handle_exceptions
 async def get_players(
     name: Optional[str] = Query(
         None, description="Filter by player name (partial match)"
@@ -72,11 +67,8 @@ async def get_players(
     player_type: Optional[str] = Query(
         None, description="Filter by player type (BAT, BOWL, ALL, WK)"
     ),
-    limit: int = Query(
-        10, ge=1, le=100, description="Maximum number of players to return"
-    ),
-    offset: int = Query(0, ge=0, description="Number of players to skip"),
-    db: AsyncSession = Depends(get_session),
+    pagination: PaginationParams = Depends(pagination_params),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get a paginated list of players with optional filtering.
@@ -85,8 +77,8 @@ async def get_players(
         name: Optional filter by player name (partial match)
         team: Optional filter by team
         player_type: Optional filter by player type (BAT, BOWL, ALL, WK)
-        limit: Maximum number of players to return
-        offset: Number of players to skip
+        pagination: Pagination parameters
+        db: Database session
 
     Returns:
         PaginatedResponse[PlayerResponse]: Paginated list of players
@@ -102,28 +94,32 @@ async def get_players(
     if player_type is not None:
         filters["player_type"] = player_type
 
-    player_dicts, total = await player_service.get_players(limit, offset, filters)
+    player_dicts, total = await player_service.get_players(
+        pagination.limit, pagination.offset, filters
+    )
 
     return {
         "items": [
             PlayerResponseFactory.create_response(player) for player in player_dicts
         ],
         "total": total,
-        "limit": limit,
-        "offset": offset,
+        "limit": pagination.limit,
+        "offset": pagination.offset,
     }
 
 
 @router.get("/{player_id}", response_model=PlayerResponse)
+@handle_exceptions
 async def get_player(
-    player_id: int,
-    db: AsyncSession = Depends(get_session),
+    player_id: int = Path(..., description="ID of the player"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get a player by ID.
 
     Args:
         player_id: Player ID
+        db: Database session
 
     Returns:
         PlayerResponse: Player details
@@ -141,13 +137,15 @@ async def get_player(
 
 
 @router.put("/{player_id}", response_model=PlayerResponse)
+@handle_exceptions
 async def update_player(
-    player_id: int,
-    player_data: PlayerUpdate,
+    player_id: int = Path(..., description="ID of the player"),
+    player_data: PlayerUpdate = None,
     admin_user_id: int = Query(
         ..., description="ID of the admin user updating the player"
     ),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(lambda: check_is_system_admin(admin_user_id, db)),
 ):
     """
     Update a player by ID.
@@ -156,43 +154,35 @@ async def update_player(
         player_id: Player ID
         player_data: Player data to update
         admin_user_id: ID of the admin user updating the player
+        db: Database session
+        _: Permission check dependency (hidden)
 
     Returns:
         PlayerResponse: Updated player details
 
     Raises:
         NotFoundException: If player not found
-        HTTPException: If update fails or user is not an admin
+        AuthorizationException: If user is not an admin
     """
     player_service = PlayerService(db)
+    player_dict = await player_service.update_player(
+        player_id, player_data.dict(exclude_unset=True)
+    )
+    if not player_dict:
+        raise NotFoundException(resource_type="Player", resource_id=player_id)
 
-    # Check if user is an admin
-    is_admin = await player_service.is_system_admin(admin_user_id)
-    if not is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admins can update players",
-        )
-
-    try:
-        player_dict = await player_service.update_player(
-            player_id, player_data.dict(exclude_unset=True)
-        )
-        if not player_dict:
-            raise NotFoundException(resource_type="Player", resource_id=player_id)
-
-        return PlayerResponseFactory.create_response(player_dict)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    return PlayerResponseFactory.create_response(player_dict)
 
 
 @router.delete("/{player_id}", status_code=status.HTTP_204_NO_CONTENT)
+@handle_exceptions
 async def delete_player(
-    player_id: int,
+    player_id: int = Path(..., description="ID of the player"),
     admin_user_id: int = Query(
         ..., description="ID of the admin user deleting the player"
     ),
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(lambda: check_is_system_admin(admin_user_id, db)),
 ):
     """
     Delete a player by ID.
@@ -200,23 +190,17 @@ async def delete_player(
     Args:
         player_id: Player ID
         admin_user_id: ID of the admin user deleting the player
+        db: Database session
+        _: Permission check dependency (hidden)
 
     Returns:
         None
 
     Raises:
         NotFoundException: If player not found
-        HTTPException: If deletion fails or user is not an admin
+        AuthorizationException: If user is not an admin
     """
     player_service = PlayerService(db)
-
-    # Check if user is an admin
-    is_admin = await player_service.is_system_admin(admin_user_id)
-    if not is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admins can delete players",
-        )
 
     deleted = await player_service.delete_player(player_id)
     if not deleted:
@@ -228,7 +212,7 @@ async def delete_player(
 @router.get("/{player_id}/stats", response_model=PlayerStatsResponse)
 async def get_player_stats(
     player_id: int,
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get statistics for a player.

@@ -3,29 +3,22 @@ Fantasy routes for the GullyGuru API.
 This module provides API endpoints for fantasy-related operations.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, Path
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
-from src.db.models.models import UserPlayerStatus
-from src.db.session import get_session
+
+from src.api.dependencies.database import get_db
 from src.api.schemas.fantasy import (
-    DraftPlayerCreate,
-    DraftPlayerResponse,
-    SubmissionStatusResponse,
-    AuctionStartResponse,
-    ContestPlayerResponse,
-    SuccessResponse,
     SquadResponse,
-    SubmitSquadResponse,
+    BulkPlayerAddRequest,
+    BulkPlayerRemoveRequest,
+    BulkDraftPlayerResponse,
 )
 from src.api.services.fantasy import FantasyService
 from src.api.factories.fantasy import (
-    DraftPlayerResponseFactory,
-    SubmissionStatusResponseFactory,
-    AuctionStartResponseFactory,
-    ContestPlayerResponseFactory,
     SquadResponseFactory,
+    BulkDraftPlayerResponseFactory,
 )
+from src.api.exceptions import handle_exceptions, NotFoundException
 
 router = APIRouter(
     prefix="/fantasy",
@@ -35,511 +28,143 @@ router = APIRouter(
 
 # Define the get_fantasy_service dependency
 def get_fantasy_service(
-    db: AsyncSession = Depends(get_session),
+    db: AsyncSession = Depends(get_db),
 ) -> FantasyService:
-    """Get the fantasy service client."""
+    """
+    Get the fantasy service client.
+
+    Args:
+        db: Database session
+
+    Returns:
+        FantasyService instance
+    """
     return FantasyService(db)
 
 
-# Squad Building Endpoints
-
-
-@router.post(
-    "/users/{user_id}/draft/players",
-    response_model=DraftPlayerResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-async def add_player_to_draft(
-    user_id: int,
-    player_data: DraftPlayerCreate,
-    fantasy_service: FantasyService = Depends(get_fantasy_service),
-):
-    """
-    Add a player to a user's draft squad.
-
-    Args:
-        user_id: User ID
-        player_data: Player data including player_id and gully_id
-
-    Returns:
-        DraftPlayerResponse: Added draft player
-
-    Raises:
-        HTTPException: If player already in draft or other error occurs
-    """
-    try:
-        draft_player = await fantasy_service.add_to_draft_squad(
-            user_id=user_id,
-            player_id=player_data.player_id,
-            gully_id=player_data.gully_id,
-        )
-        return DraftPlayerResponseFactory.create_response(draft_player)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-
-
-@router.delete(
-    "/users/{user_id}/draft/players/{player_id}",
-    response_model=SuccessResponse,
-    status_code=status.HTTP_200_OK,
-)
-async def remove_player_from_draft(
-    user_id: int,
-    player_id: int,
-    gully_id: int = Query(..., description="ID of the gully"),
-    fantasy_service: FantasyService = Depends(get_fantasy_service),
-):
-    """
-    Remove a player from a user's draft squad.
-
-    Args:
-        user_id: User ID
-        player_id: Player ID to remove
-        gully_id: Gully ID
-
-    Returns:
-        SuccessResponse: Success status
-
-    Raises:
-        HTTPException: If player not in draft or other error occurs
-    """
-    try:
-        success = await fantasy_service.remove_from_draft_squad(
-            user_id=user_id,
-            player_id=player_id,
-            gully_id=gully_id,
-        )
-        if not success:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Player not found in draft squad",
-            )
-        return {"success": True, "message": "Player removed from draft squad"}
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
+# Squad Building Endpoints - Participant-based
 
 
 @router.get(
-    "/users/{user_id}/draft/squad",
+    "/draft-squad/{participant_id}",
     response_model=SquadResponse,
-    status_code=status.HTTP_200_OK,
+    summary="Get a participant's draft squad",
 )
+@handle_exceptions
 async def get_draft_squad(
-    user_id: int,
-    gully_id: int = Query(..., description="ID of the gully"),
+    participant_id: int = Path(..., description="ID of the participant"),
     fantasy_service: FantasyService = Depends(get_fantasy_service),
 ):
     """
-    Get a user's draft squad for a specific gully.
+    Get a participant's draft squad.
 
     Args:
-        user_id: User ID
-        gully_id: Gully ID
+        participant_id: ID of the participant
+        fantasy_service: Fantasy service instance
 
     Returns:
-        SquadResponse: User's draft squad
+        Squad data with players
 
     Raises:
-        HTTPException: If user or gully not found
+        NotFoundException: If participant not found
     """
     try:
-        draft_squad = await fantasy_service.get_draft_squad(
-            user_id=user_id,
-            gully_id=gully_id,
-        )
-        return SquadResponseFactory.create_response(draft_squad)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
+        squad = await fantasy_service.get_draft_squad(participant_id)
+        return SquadResponseFactory.create_response(squad)
+    except ValueError:
+        raise NotFoundException(resource_type="Participant", resource_id=participant_id)
 
 
 @router.post(
-    "/users/{user_id}/submit-squad",
-    response_model=SubmitSquadResponse,
-    status_code=status.HTTP_200_OK,
+    "/draft-squad/{participant_id}/add",
+    response_model=BulkDraftPlayerResponse,
+    summary="Add players to a participant's draft squad",
 )
-async def submit_squad(
-    user_id: int,
-    gully_id: int = Query(..., description="ID of the gully"),
+@handle_exceptions
+async def add_players_to_draft(
+    request: BulkPlayerAddRequest,
+    participant_id: int = Path(..., description="ID of the participant"),
     fantasy_service: FantasyService = Depends(get_fantasy_service),
 ):
     """
-    Submit a user's final squad for a gully.
+    Add multiple players to a participant's draft squad.
 
     Args:
-        user_id: User ID
-        gully_id: Gully ID
+        request: Request with player IDs to add
+        participant_id: ID of the participant
+        fantasy_service: Fantasy service instance
 
     Returns:
-        SubmitSquadResponse: Submission status
+        Result of the operation
 
     Raises:
-        HTTPException: If submission fails
+        ValidationException: If request is invalid
     """
-    try:
-        await fantasy_service.submit_squad(
-            user_id=user_id,
-            gully_id=gully_id,
-        )
-        return {"success": True, "message": "Squad submitted successfully"}
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-
-
-@router.put(
-    "/users/{user_id}/players/{player_id}/status",
-    response_model=DraftPlayerResponse,
-    status_code=status.HTTP_200_OK,
-)
-async def update_player_status(
-    user_id: int,
-    player_id: int,
-    status: UserPlayerStatus,
-    gully_id: int = Query(..., description="ID of the gully"),
-    fantasy_service: FantasyService = Depends(get_fantasy_service),
-):
-    """
-    Update a player's status in a user's draft squad.
-
-    Args:
-        user_id: User ID
-        player_id: Player ID
-        status: New status for the player
-        gully_id: Gully ID
-
-    Returns:
-        DraftPlayerResponse: Updated player status
-
-    Raises:
-        HTTPException: If update fails
-    """
-    try:
-        updated_player = await fantasy_service.update_player_status(
-            user_id=user_id,
-            player_id=player_id,
-            gully_id=gully_id,
-            status=status,
-        )
-        return DraftPlayerResponseFactory.create_response(updated_player)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-
-
-# Gully Management Endpoints
-
-
-@router.get(
-    "/gullies/{gully_id}/submission-status",
-    response_model=SubmissionStatusResponse,
-    status_code=status.HTTP_200_OK,
-)
-async def get_submission_status(
-    gully_id: int,
-    fantasy_service: FantasyService = Depends(get_fantasy_service),
-):
-    """
-    Check submission status for a gully.
-
-    Args:
-        gully_id: Gully ID
-
-    Returns:
-        SubmissionStatusResponse: Submission status for the gully
-
-    Raises:
-        HTTPException: If gully not found
-    """
-    try:
-        submission_status = await fantasy_service.get_submission_status(gully_id)
-        return SubmissionStatusResponseFactory.create_response(submission_status)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
+    result = await fantasy_service.bulk_add_players_to_draft(
+        participant_id, request.player_ids
+    )
+    return BulkDraftPlayerResponseFactory.create_response(result)
 
 
 @router.post(
-    "/gullies/{gully_id}/start-auction",
-    response_model=AuctionStartResponse,
-    status_code=status.HTTP_200_OK,
+    "/draft-squad/{participant_id}/remove",
+    response_model=BulkDraftPlayerResponse,
+    summary="Remove players from a participant's draft squad",
 )
-async def start_auction(
-    gully_id: int,
+@handle_exceptions
+async def remove_players_from_draft(
+    request: BulkPlayerRemoveRequest,
+    participant_id: int = Path(..., description="ID of the participant"),
     fantasy_service: FantasyService = Depends(get_fantasy_service),
 ):
     """
-    Start auction for a gully.
+    Remove multiple players from a participant's draft squad.
 
     Args:
-        gully_id: Gully ID
+        request: Request with player IDs to remove
+        participant_id: ID of the participant
+        fantasy_service: Fantasy service instance
 
     Returns:
-        AuctionStartResponse: Auction start status
+        Result of the operation
 
     Raises:
-        HTTPException: If auction cannot be started
+        ValidationException: If request is invalid
     """
-    try:
-        auction_start = await fantasy_service.start_auction(gully_id)
-        return AuctionStartResponseFactory.create_response(auction_start)
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-
-
-@router.get(
-    "/gullies/{gully_id}/contested-players",
-    response_model=List[ContestPlayerResponse],
-    status_code=status.HTTP_200_OK,
-)
-async def get_contested_players(
-    gully_id: int,
-    fantasy_service: FantasyService = Depends(get_fantasy_service),
-):
-    """
-    Get contested players for a gully.
-
-    Args:
-        gully_id: Gully ID
-
-    Returns:
-        List[ContestPlayerResponse]: List of contested players
-
-    Raises:
-        HTTPException: If gully not found
-    """
-    try:
-        contested_players = await fantasy_service.get_contested_players(gully_id)
-        return [
-            ContestPlayerResponseFactory.create_response(player)
-            for player in contested_players
-        ]
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-
-
-@router.get(
-    "/gullies/{gully_id}/uncontested-players",
-    response_model=List[ContestPlayerResponse],
-    status_code=status.HTTP_200_OK,
-)
-async def get_uncontested_players(
-    gully_id: int,
-    fantasy_service: FantasyService = Depends(get_fantasy_service),
-):
-    """
-    Get uncontested players for a gully.
-
-    Args:
-        gully_id: Gully ID
-
-    Returns:
-        List[ContestPlayerResponse]: List of uncontested players
-
-    Raises:
-        HTTPException: If gully not found
-    """
-    try:
-        uncontested_players = await fantasy_service.get_uncontested_players(gully_id)
-        return [
-            ContestPlayerResponseFactory.create_response(player)
-            for player in uncontested_players
-        ]
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
+    result = await fantasy_service.bulk_remove_players_from_draft(
+        participant_id, request.player_ids
+    )
+    return BulkDraftPlayerResponseFactory.create_response(result)
 
 
 @router.put(
-    "/gullies/{gully_id}/status",
-    response_model=SuccessResponse,
-    status_code=status.HTTP_200_OK,
+    "/draft-squad/{participant_id}",
+    response_model=BulkDraftPlayerResponse,
+    summary="Update a participant's entire draft squad",
 )
-async def update_gully_status(
-    gully_id: int,
-    status: str = Query(..., description="New status for the gully"),
+@handle_exceptions
+async def update_draft_squad(
+    request: BulkPlayerAddRequest,
+    participant_id: int = Path(..., description="ID of the participant"),
     fantasy_service: FantasyService = Depends(get_fantasy_service),
 ):
     """
-    Update a gully's status.
+    Update a participant's entire draft squad by replacing all players.
+
+    This endpoint removes all existing draft selections and adds the new ones.
 
     Args:
-        gully_id: Gully ID
-        status: New status for the gully
+        request: Request with player IDs for the updated squad
+        participant_id: ID of the participant
+        fantasy_service: Fantasy service instance
 
     Returns:
-        SuccessResponse: Success status
+        Result of the operation
 
     Raises:
-        HTTPException: If update fails
+        ValidationException: If request is invalid
     """
-    try:
-        success = await fantasy_service.update_gully_status(
-            gully_id=gully_id,
-            status=status,
-        )
-        if not success:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Gully with ID {gully_id} not found",
-            )
-        return {"success": True, "message": f"Gully status updated to {status}"}
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-
-
-@router.put(
-    "/auction/{auction_queue_id}/status",
-    response_model=SuccessResponse,
-    status_code=status.HTTP_200_OK,
-)
-async def update_auction_status(
-    auction_queue_id: int,
-    status: str = Query(..., description="New status for the auction"),
-    gully_id: int = Query(..., description="ID of the gully"),
-    fantasy_service: FantasyService = Depends(get_fantasy_service),
-):
-    """
-    Update an auction's status.
-
-    Args:
-        auction_queue_id: Auction queue ID
-        status: New status for the auction
-        gully_id: Gully ID
-
-    Returns:
-        SuccessResponse: Success status
-
-    Raises:
-        HTTPException: If update fails
-    """
-    try:
-        success = await fantasy_service.update_auction_status(
-            auction_queue_id=auction_queue_id,
-            status=status,
-            gully_id=gully_id,
-        )
-        if not success:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Auction with ID {auction_queue_id} not found",
-            )
-        return {"success": True, "message": f"Auction status updated to {status}"}
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-
-
-@router.post(
-    "/gullies/{gully_id}/resolve-contested/{player_id}/{winner_participant_id}",
-    response_model=SuccessResponse,
-    status_code=status.HTTP_200_OK,
-)
-async def resolve_contested_player(
-    gully_id: int,
-    player_id: int,
-    winner_participant_id: int,
-    fantasy_service: FantasyService = Depends(get_fantasy_service),
-):
-    """
-    Resolve a contested player.
-
-    Args:
-        gully_id: Gully ID
-        player_id: Player ID
-        winner_participant_id: ID of the winning participant
-
-    Returns:
-        SuccessResponse: Success status
-
-    Raises:
-        HTTPException: If resolution fails
-    """
-    try:
-        success = await fantasy_service.resolve_contested_player(
-            gully_id=gully_id,
-            player_id=player_id,
-            winner_participant_id=winner_participant_id,
-        )
-        if not success:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Failed to resolve contested player",
-            )
-        return {"success": True, "message": "Contested player resolved successfully"}
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-
-
-@router.put(
-    "/player-status/{participant_player_id}/{new_status}",
-    response_model=SuccessResponse,
-    status_code=status.HTTP_200_OK,
-)
-async def update_participant_player_status(
-    participant_player_id: int,
-    new_status: UserPlayerStatus,
-    fantasy_service: FantasyService = Depends(get_fantasy_service),
-):
-    """
-    Update a participant player's status.
-
-    Args:
-        participant_player_id: Participant player ID
-        new_status: New status for the participant player
-
-    Returns:
-        SuccessResponse: Success status
-
-    Raises:
-        HTTPException: If update fails
-    """
-    try:
-        success = await fantasy_service.update_participant_player_status(
-            participant_player_id=participant_player_id,
-            new_status=new_status,
-        )
-        if not success:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Participant player with ID {participant_player_id} not found",
-            )
-        return {
-            "success": True,
-            "message": f"Participant player status updated to {new_status}",
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
+    result = await fantasy_service.update_draft_squad(
+        participant_id, request.player_ids
+    )
+    return BulkDraftPlayerResponseFactory.create_response(result)

@@ -4,10 +4,13 @@ This module initializes the FastAPI application and includes all routes.
 """
 
 import logging
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 
 from src.api.routes import api_router
+from src.api.exceptions import GullyGuruException
 
 # Configure logging
 logging.basicConfig(
@@ -32,6 +35,32 @@ app.add_middleware(
     allow_headers=["*"],  # Allow all headers
 )
 
+# Add exception handlers
+@app.exception_handler(GullyGuruException)
+async def gullyguru_exception_handler(request: Request, exc: GullyGuruException):
+    """Handle GullyGuru custom exceptions."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Handle request validation errors."""
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors()},
+    )
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """Handle all other exceptions."""
+    logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "An internal server error occurred"},
+    )
+
 # Include API router directly at the root path instead of with /api prefix
 # This change ensures the bot can access endpoints at the root path
 app.include_router(api_router)
@@ -46,4 +75,4 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Health check endpoint for the API."""
-    return {"status": "healthy", "database": "healthy"}
+    return {"status": "healthy", "database": "healthy", "version": "0.1.0"}
