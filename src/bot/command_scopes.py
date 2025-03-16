@@ -12,6 +12,7 @@ from telegram import (
     BotCommand,
     BotCommandScopeAllPrivateChats,
     BotCommandScopeDefault,
+    BotCommandScopeAllGroupChats,
 )
 from telegram.ext import Application, ApplicationBuilder
 
@@ -37,20 +38,26 @@ async def setup_command_scopes(application: Application) -> None:
         BotCommand("squad", "Manage your squad"),
     ]
 
-    # Set commands for private chats
+    group_commands = [
+        BotCommand("hello", "Hello!!"),
+    ]
+    # First, delete all commands for all scopes to ensure a clean slate
+    await application.bot.delete_my_commands(scope=BotCommandScopeDefault())
+    await application.bot.delete_my_commands(scope=BotCommandScopeAllPrivateChats())
+    await application.bot.delete_my_commands(scope=BotCommandScopeAllGroupChats())
+    logger.info("All existing command scopes cleared")
+
+    # Set commands for private chats only
     await application.bot.set_my_commands(
         private_commands, scope=BotCommandScopeAllPrivateChats()
     )
     logger.info("Private chat commands set successfully")
 
-    # Set default commands (visible to all users in all contexts)
-    default_commands = []  # No default commands
-
-    if default_commands:  # Only set if there are any default commands
-        await application.bot.set_my_commands(
-            default_commands, scope=BotCommandScopeDefault()
-        )
-        logger.info("Default commands set successfully")
+    # Explicitly set empty commands for group chats
+    await application.bot.set_my_commands(
+        group_commands, scope=BotCommandScopeAllGroupChats()
+    )
+    logger.info("Group chat commands explicitly set")
 
 
 async def refresh_command_scopes(application: Application) -> None:

@@ -221,6 +221,29 @@ async def squad_command(
             )
             return ConversationHandler.END
 
+    # Check gully status - only allow squad selection if gully is in draft status
+    logger.info(f"Checking status for gully {active_gully_id}")
+    gully = await client.get_gully(active_gully_id)
+
+    if not gully:
+        logger.error(f"Failed to fetch gully {active_gully_id}")
+        await update.message.reply_text(
+            "⚠️ Failed to fetch gully information. Please try again later."
+        )
+        return ConversationHandler.END
+
+    gully_status = gully.get("status", "").lower()
+    logger.info(f"Gully status: {gully_status}")
+
+    if gully_status != "draft":
+        logger.info(
+            f"Squad selection not allowed for gully with status: {gully_status}"
+        )
+        await update.message.reply_text(
+            "Squad selection process is completed, you can no longer select a squad."
+        )
+        return ConversationHandler.END
+
     # Get the squad for this participant
     logger.info(f"Fetching squad for participant {participant_id}")
     squad_client = await get_initialized_squad_client()
@@ -464,14 +487,38 @@ async def handle_edit_squad(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     # Reset page to 0 when starting edit
     context.user_data[PAGE_KEY] = 0
 
-    # Get participant ID from context
+    # Get participant ID and active gully ID from context
     participant_id = ctx_manager.get_participant_id(context)
+    active_gully_id = ctx_manager.get_active_gully_id(context)
 
-    if not participant_id:
-        logger.error("Participant ID not found in context")
+    if not participant_id or not active_gully_id:
+        logger.error("Participant ID or Gully ID not found in context")
         await query.answer(
-            "⚠️ Participant ID not found. Please use /squad to start over.",
+            "⚠️ Participant or Gully information not found. Please use /squad to start over.",
             show_alert=True,
+        )
+        return ConversationHandler.END
+
+    # Check gully status - only allow squad editing if gully is in draft status
+    logger.info(f"Checking status for gully {active_gully_id}")
+    client = await get_initialized_onboarding_client()
+    gully = await client.get_gully(active_gully_id)
+
+    if not gully:
+        logger.error(f"Failed to fetch gully {active_gully_id}")
+        await query.answer(
+            "⚠️ Failed to fetch gully information. Please try again later.",
+            show_alert=True,
+        )
+        return ConversationHandler.END
+
+    gully_status = gully.get("status", "").lower()
+    logger.info(f"Gully status: {gully_status}")
+
+    if gully_status != "draft":
+        logger.info(f"Squad editing not allowed for gully with status: {gully_status}")
+        await query.edit_message_text(
+            "Squad selection process is completed, you can no longer select a squad."
         )
         return ConversationHandler.END
 
