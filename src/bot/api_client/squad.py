@@ -35,35 +35,74 @@ class SquadApiClient(BaseApiClient):
             return {}
 
     async def get_available_players(
-        self, limit: int = 100, offset: int = 0
+        self, max_players: int = 250
     ) -> List[Dict[str, Any]]:
         """
-        Get available players for squad selection.
+        Get available players for squad selection with pagination.
 
         Args:
-            limit: Maximum number of players to return
-            offset: Offset for pagination
+            max_players: Maximum number of players to return (will be fetched in batches of 100)
 
         Returns:
             List of player data
         """
-        # Updated endpoint based on API documentation
-        endpoint = f"/players/?limit={limit}&offset={offset}"
-        response = await self._make_request("GET", endpoint)
+        all_players = []
+        page_size = 100  # API limit is 100
+        offset = 0
 
-        if response.get("success"):
-            # Handle the paginated response format
-            data = response.get("data", {})
-            if isinstance(data, dict) and "items" in data:
-                return data.get("items", [])
-            elif isinstance(data, list):
-                return data
+        # Calculate how many pages we need to fetch
+        pages_to_fetch = (max_players + page_size - 1) // page_size
+
+        logger.info(f"Fetching up to {max_players} players in {pages_to_fetch} batches")
+
+        for page in range(pages_to_fetch):
+            # Calculate the limit for this page (might be less for the last page)
+            current_limit = min(page_size, max_players - len(all_players))
+
+            if current_limit <= 0:
+                break
+
+            logger.info(
+                f"Fetching players batch {page+1}/{pages_to_fetch}: limit={current_limit}, offset={offset}"
+            )
+
+            # Updated endpoint based on API documentation
+            endpoint = f"/players/?limit={current_limit}&offset={offset}"
+            response = await self._make_request("GET", endpoint)
+
+            if response.get("success"):
+                # Handle the paginated response format
+                data = response.get("data", {})
+
+                if isinstance(data, dict) and "items" in data:
+                    batch_players = data.get("items", [])
+                elif isinstance(data, list):
+                    batch_players = data
+                else:
+                    logger.warning(f"Unexpected response format: {data}")
+                    batch_players = []
+
+                # Add this batch to our collection
+                all_players.extend(batch_players)
+                logger.info(
+                    f"Fetched {len(batch_players)} players in this batch, total: {len(all_players)}"
+                )
+
+                # If we got fewer players than requested, we've reached the end
+                if len(batch_players) < current_limit:
+                    logger.info(
+                        f"Reached end of player list with {len(all_players)} total players"
+                    )
+                    break
+
+                # Update offset for next page
+                offset += len(batch_players)
             else:
-                logger.warning(f"Unexpected response format: {data}")
-                return []
-        else:
-            logger.error(f"Error getting players: {response.get('error')}")
-            return []
+                logger.error(f"Error getting players: {response.get('error')}")
+                break
+
+        logger.info(f"Total players fetched: {len(all_players)}")
+        return all_players
 
     async def add_multiple_players_to_draft(
         self, participant_id: int, player_ids: List[int]
@@ -83,9 +122,8 @@ class SquadApiClient(BaseApiClient):
             return {"success": False, "error": "Missing required parameters"}
 
         endpoint = f"/fantasy/draft-squad/{participant_id}/add"
-        response = await self._make_request(
-            "POST", endpoint, json={"player_ids": player_ids}
-        )
+        data = {"player_ids": player_ids}
+        response = await self._make_request("POST", endpoint, data=data)
 
         if response.get("success"):
             return {"success": True, "data": response.get("data", {})}
@@ -111,9 +149,8 @@ class SquadApiClient(BaseApiClient):
             return {"success": False, "error": "Missing required parameters"}
 
         endpoint = f"/fantasy/draft-squad/{participant_id}/remove"
-        response = await self._make_request(
-            "POST", endpoint, json={"player_ids": player_ids}
-        )
+        data = {"player_ids": player_ids}
+        response = await self._make_request("POST", endpoint, data=data)
 
         if response.get("success"):
             return {"success": True, "data": response.get("data", {})}
@@ -140,9 +177,8 @@ class SquadApiClient(BaseApiClient):
             return {"success": False, "error": "Missing required parameter"}
 
         endpoint = f"/fantasy/draft-squad/{participant_id}"
-        response = await self._make_request(
-            "PUT", endpoint, json={"player_ids": player_ids}
-        )
+        data = {"player_ids": player_ids}
+        response = await self._make_request("PUT", endpoint, data=data)
 
         if response.get("success"):
             return {"success": True, "data": response.get("data", {})}

@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 from telegram import (
     BotCommand,
     BotCommandScopeAllPrivateChats,
-    BotCommandScopeAllGroupChats,
     BotCommandScopeDefault,
 )
 from telegram.ext import Application, ApplicationBuilder
@@ -29,11 +28,13 @@ if __name__ == "__main__":
 
 
 async def setup_command_scopes(application: Application) -> None:
-    """Set up command scopes for private and gully chats."""
+    """Set up command scopes for private chats."""
     # Define commands for private chats
     private_commands = [
         # Core user commands
-        BotCommand("start", "Start the bot and show the main menu"),
+        BotCommand("start", "Start the bot and register your team"),
+        BotCommand("gullies", "View and select your gullies"),
+        BotCommand("squad", "Manage your squad"),
     ]
 
     # Set commands for private chats
