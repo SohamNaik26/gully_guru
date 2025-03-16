@@ -10,7 +10,7 @@ from sqlmodel import select
 from sqlalchemy import func
 
 from src.api.services.base import BaseService
-from src.db.models.models import GullyParticipant, User, Gully
+from src.db.models.models import GullyParticipant, User
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +143,7 @@ class ParticipantService(BaseService):
         self,
         gully_id: int,
         user_id: int,
-        role: str = "participant",
+        role: str = "member",
         team_name: Optional[str] = None,
     ) -> Dict[str, Any]:
         """

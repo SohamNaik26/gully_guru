@@ -50,12 +50,12 @@ async def get_participants(
         limit=pagination.limit,
     )
 
-    return {
-        "items": participants,
-        "total": total,
-        "limit": pagination.limit,
-        "offset": pagination.offset,
-    }
+    return ParticipantResponseFactory.create_paginated_response(
+        items=participants,
+        total=total,
+        limit=pagination.limit,
+        offset=pagination.offset,
+    )
 
 
 @router.get("/{participant_id}", response_model=ParticipantResponse)
@@ -83,7 +83,7 @@ async def get_participant_by_id(
     if not participant:
         raise NotFoundException(resource_type="Participant", resource_id=participant_id)
 
-    return participant
+    return ParticipantResponseFactory.create_response(participant)
 
 
 @router.get("/user/{user_id}/gully/{gully_id}", response_model=ParticipantResponse)
@@ -116,7 +116,7 @@ async def get_participant_by_user_and_gully(
             resource_id=f"user {user_id} in gully {gully_id}",
         )
 
-    return participant
+    return ParticipantResponseFactory.create_response(participant)
 
 
 @router.post("/", response_model=ParticipantResponse, status_code=201)
@@ -143,7 +143,7 @@ async def create_participant(
         team_name=participant.team_name,
     )
 
-    return new_participant
+    return ParticipantResponseFactory.create_response(new_participant)
 
 
 @router.put("/{participant_id}", response_model=ParticipantResponse)
@@ -176,7 +176,7 @@ async def update_participant(
     if not updated_participant:
         raise NotFoundException(resource_type="Participant", resource_id=participant_id)
 
-    return updated_participant
+    return ParticipantResponseFactory.create_response(updated_participant)
 
 
 @router.delete("/{participant_id}", status_code=204)
@@ -236,7 +236,7 @@ async def get_user_participations(
     participant_service = ParticipantService(db)
     participations = await participant_service.get_user_participations(user_id)
 
-    return participations
+    return ParticipantResponseFactory.create_response_list(participations)
 
 
 @router.get("/gully/{gully_id}", response_model=List[ParticipantResponse])
@@ -258,4 +258,4 @@ async def get_gully_participants(
     participant_service = ParticipantService(db)
     participants = await participant_service.get_participants(gully_id=gully_id)
 
-    return participants
+    return ParticipantResponseFactory.create_response_list(participants)
