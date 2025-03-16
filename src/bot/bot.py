@@ -8,15 +8,16 @@ import logging
 import asyncio
 import httpx
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 from telegram.ext import (
     Application,
     ContextTypes,
     CommandHandler,
     CallbackQueryHandler,
-    ConversationHandler,
-    MessageHandler,
-    filters,
 )
 
 # Import features module for handler registration
@@ -28,10 +29,16 @@ from src.bot.api_client.onboarding import get_onboarding_client
 from src.utils.config import settings
 
 # Import logging configuration
-from src.utils.logging_config import configure_logging, log_exception
+from src.utils.logging_config import configure_logging
 
 # Import decorators
 from src.utils.decorators import log_function_call
+
+# Import necessary modules for squad functionality
+from src.bot.features.squad import (
+    show_squad_menu,
+    confirm_submission,
+)
 
 # Load environment variables
 load_dotenv()
@@ -89,8 +96,10 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Get API client
         client = await get_onboarding_client()
 
-        # Get user from database
-        db_user = await client.get_user(user.id)
+        # Get user from database by telegram_id
+        users = await client.get_users(telegram_id=user.id)
+        db_user = users[0] if users and len(users) > 0 else None
+
         if not db_user:
             # Create user if not exists
             db_user = await client.create_user(
@@ -112,6 +121,11 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 )
             return
 
+        # Store user ID in context for future use
+        user_id = db_user["id"]
+        context.user_data["user_id"] = user_id
+        logger.info(f"User found with telegram_id {user.id}, database id: {user_id}")
+
         # Get user's active gully
         active_gully = None
         active_gully_id = context.user_data.get("active_gully_id")
@@ -121,8 +135,8 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             active_gully = await client.get_gully(active_gully_id)
             logger.debug(f"Active gully from context: {active_gully}")
 
-        # Get all gullies the user is part of
-        user_gullies = await client.get_user_gullies(user_id=db_user["id"])
+        # Get all gullies the user is part of using the database user ID
+        user_gullies = await client.get_user_gullies(user_id=user_id)
         logger.debug(f"User gullies: {user_gullies}")
 
         gully_count = len(user_gullies) if user_gullies else 0
@@ -171,7 +185,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         keyboard = [
             [
                 InlineKeyboardButton("My Squad", callback_data="squad_view"),
-                InlineKeyboardButton("Squad Menu", callback_data="squad_menu"),
+                InlineKeyboardButton("Team Management", callback_data="team_manage"),
             ],
             [InlineKeyboardButton("Auctions", callback_data="auction_view")],
             [InlineKeyboardButton("Transfers", callback_data="transfer_view")],
@@ -246,16 +260,27 @@ async def show_gully_selection(
     # Get API client
     client = await get_onboarding_client()
 
-    # Get user from database
-    db_user = await client.get_user(user.id)
-    if not db_user:
-        logger.error(f"User {user.id} not found in database")
-        message = "❌ Error accessing your account. Please try again later."
-        if update.callback_query:
-            await update.callback_query.edit_message_text(message)
-        else:
-            await update.message.reply_text(message)
-        return
+    # Use user_id from context if available
+    user_id = context.user_data.get("user_id")
+
+    if not user_id:
+        # If user_id not in context, fetch it from database
+        users = await client.get_users(telegram_id=user.id)
+        db_user = users[0] if users and len(users) > 0 else None
+
+        if not db_user:
+            logger.error(f"User {user.id} not found in database")
+            message = "❌ Error accessing your account. Please try again later."
+            if update.callback_query:
+                await update.callback_query.edit_message_text(message)
+            else:
+                await update.message.reply_text(message)
+            return
+
+        user_id = db_user["id"]
+        context.user_data["user_id"] = user_id
+
+    logger.info(f"Using user_id: {user_id} for gully selection")
 
     # Get user's active gully
     active_gully_id = context.user_data.get("active_gully_id")
@@ -263,7 +288,7 @@ async def show_gully_selection(
 
     # Get all gullies the user is part of
     try:
-        user_gullies = await client.get_user_gullies(user_id=db_user["id"])
+        user_gullies = await client.get_user_gullies(user_id=user_id)
         logger.info(
             f"Found {len(user_gullies) if user_gullies else 0} gullies for user {user.id}"
         )
@@ -389,13 +414,24 @@ async def handle_gully_selection(
     # Get API client
     client = await get_onboarding_client()
 
-    # Get user from database
-    db_user = await client.get_user(user.id)
-    if not db_user:
-        await query.edit_message_text(
-            "❌ Error accessing your account. Please try again later."
-        )
-        return
+    # Use user_id from context if available
+    user_id = context.user_data.get("user_id")
+
+    if not user_id:
+        # If user_id not in context, fetch it from database
+        users = await client.get_users(telegram_id=user.id)
+        db_user = users[0] if users and len(users) > 0 else None
+
+        if not db_user:
+            logger.error(f"User {user.id} not found in database")
+            await query.edit_message_text(
+                "❌ Error accessing your account. Please try again later."
+            )
+            return
+
+        user_id = db_user["id"]
+        context.user_data["user_id"] = user_id
+        logger.info(f"Set user_id to {user_id} for user {user.id}")
 
     try:
         # Get the gully
@@ -435,6 +471,7 @@ async def show_help_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     """
     keyboard = [[InlineKeyboardButton("Back to Main Menu", callback_data="main_menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
+"""
 
     help_text = (
         "📋 *GullyGuru Help* 📋\n\n"
@@ -487,9 +524,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     # Log the error with full traceback
     logger.error("Exception while handling an update", exc_info=context.error)
 
-    # Get the exception info
-    error = context.error
-
     # Log detailed information about the update that caused the error
     if update:
         if hasattr(update, "effective_message") and update.effective_message:
@@ -500,7 +534,8 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
             )
         if hasattr(update, "effective_user") and update.effective_user:
             logger.error(
-                f"User that triggered error: {update.effective_user.id} ({update.effective_user.username or update.effective_user.first_name})"
+                f"User that triggered error: {update.effective_user.id} "
+                f"({update.effective_user.username or update.effective_user.first_name})"
             )
 
     # Notify user about the error if possible
@@ -520,13 +555,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 async def wait_for_api(max_retries=30, retry_interval=2):
     """
     Wait for the API to be available.
-
-    Args:
-        max_retries: Maximum number of retries
-        retry_interval: Interval between retries in seconds
-
-    Returns:
-        bool: True if API is available, False otherwise
     """
     api_base_url = settings.API_BASE_URL
     health_url = f"{api_base_url}/health"
@@ -559,12 +587,12 @@ async def wait_for_api(max_retries=30, retry_interval=2):
                         )
                 else:
                     logger.warning(
-                        f"API returned status code {response.status_code}, retrying..."
+                        f"API returned status code {response.status_code}, response: {response.text}, retrying..."
                     )
         except httpx.ConnectError:
-            logger.warning("Connection to API failed, retrying...")
+            logger.warning(f"Connection to API failed at {health_url}, retrying...")
         except httpx.ReadTimeout:
-            logger.warning("API request timed out, retrying...")
+            logger.warning(f"API request to {health_url} timed out, retrying...")
         except Exception as e:
             logger.warning(f"API check failed with error: {str(e)}")
 
@@ -575,7 +603,7 @@ async def wait_for_api(max_retries=30, retry_interval=2):
             )
             await asyncio.sleep(retry_interval)
 
-    logger.error(f"API not available after {max_retries} attempts")
+    logger.error(f"API not available after {max_retries} attempts at {health_url}")
     return False
 
 
@@ -684,7 +712,7 @@ async def debug_participant_command(
     # Get user data
     try:
         onboarding_client = await get_onboarding_client()
-        user_data = await onboarding_client.get_user(user.id)
+        user_data = await onboarding_client.get_user_by_telegram_id(user.id)
 
         if not user_data:
             await update.message.reply_text(
@@ -752,14 +780,805 @@ async def handle_main_menu_callback(
         if not await ensure_participant_id(update, context):
             return
 
-    # Simply delegate to the appropriate feature based on the callback prefix
+    # Import at the top of the file instead of inside the function
+    # to avoid potential circular import issues
     if callback_data == "squad_view":
-        # This specific callback should be handled by the squad handler
-        # Import the necessary function to avoid circular imports
         from src.bot.features.squad import view_squad
 
         logger.info("Directly handling squad_view callback")
         return await view_squad(update, context)
+    elif callback_data == "team_manage":
+Main bot module for GullyGuru.
+Handles bot initialization, command registration, and onboarding functionality.
+"""
+
+import os
+import logging
+import asyncio
+import httpx
+from dotenv import load_dotenv
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
+from telegram.ext import (
+    Application,
+    ContextTypes,
+    CommandHandler,
+    CallbackQueryHandler,
+)
+
+# Import features module for handler registration
+from src.bot.features import register_all_features
+from src.bot.api_client.base import initialize_api_client
+from src.bot.api_client.onboarding import get_onboarding_client
+
+# Import settings
+from src.utils.config import settings
+
+# Import logging configuration
+from src.utils.logging_config import configure_logging
+
+# Import decorators
+from src.utils.decorators import log_function_call
+
+# Import necessary modules for squad functionality
+from src.bot.features.squad import (
+    show_squad_menu,
+    confirm_submission,
+)
+
+# Load environment variables
+load_dotenv()
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+# Configure logging with default settings
+configure_logging(verbose=False)
+
+# Create a logger for this module
+logger = logging.getLogger(__name__)
+
+# Set higher log levels for noisy libraries to reduce output
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.WARNING)
+logging.getLogger("telegram.ext").setLevel(logging.WARNING)
+
+
+# Create a filter to exclude repetitive messages
+class MessageFilter(logging.Filter):
+    """Filter to exclude repetitive log messages."""
+
+    def __init__(self):
+        super().__init__()
+        self.last_message = ""
+
+    def filter(self, record):
+        # Skip getUpdates messages completely
+        if "getUpdates" in record.getMessage():
+            return False
+
+        # Skip repetitive HTTP Request messages
+        if "HTTP Request: " in record.getMessage():
+            # Only show if it's not a polling request
+            return "getUpdates" not in record.getMessage()
+
+        # Allow all other messages
+        return True
+
+
+# Apply the filter to the root logger
+root_logger = logging.getLogger()
+root_logger.addFilter(MessageFilter())
+
+
+# Main Menu functionality
+@log_function_call
+async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Show the main menu to the user.
+    This is the central navigation point for the bot in private chats.
+    """
+    user = update.effective_user
+
+    try:
+        # Get API client
+        client = await get_onboarding_client()
+
+        # Get user from database by telegram_id
+        users = await client.get_users(telegram_id=user.id)
+        db_user = users[0] if users and len(users) > 0 else None
+
+        if not db_user:
+            # Create user if not exists
+            db_user = await client.create_user(
+                telegram_id=user.id,
+                first_name=user.first_name,
+                last_name=user.last_name,
+                username=user.username,
+            )
+
+        if not db_user:
+            if update.callback_query:
+                await update.callback_query.answer("Error accessing your account")
+                await update.callback_query.edit_message_text(
+                    "❌ Sorry, there was an error with your account. Please try again later."
+                )
+            else:
+                await update.message.reply_text(
+                    "❌ Sorry, there was an error with your account. Please try again later."
+                )
+            return
+
+        # Store user ID in context for future use
+        user_id = db_user["id"]
+        context.user_data["user_id"] = user_id
+        logger.info(f"User found with telegram_id {user.id}, database id: {user_id}")
+
+        # Get user's active gully
+        active_gully = None
+        active_gully_id = context.user_data.get("active_gully_id")
+
+        if active_gully_id:
+            # If we have an active gully ID in context, use it
+            active_gully = await client.get_gully(active_gully_id)
+            logger.debug(f"Active gully from context: {active_gully}")
+
+        # Get all gullies the user is part of using the database user ID
+        user_gullies = await client.get_user_gullies(user_id=user_id)
+        logger.debug(f"User gullies: {user_gullies}")
+
+        gully_count = len(user_gullies) if user_gullies else 0
+
+        # If user has no active gully or is part of multiple gullies and this is not a callback from gully selection,
+        # show gully selection first
+        if (not active_gully or gully_count > 1) and not context.user_data.get(
+            "from_gully_selection"
+        ):
+            # Reset the flag for future calls
+            if context.user_data.get("from_gully_selection"):
+                context.user_data["from_gully_selection"] = False
+
+            # If user has no gullies, show message
+            if gully_count == 0:
+                if update.callback_query:
+                    await update.callback_query.edit_message_text(
+                        "You are not part of any gully. Please join a gully first by clicking the link in a group chat."
+                    )
+                else:
+                    await update.message.reply_text(
+                        "You are not part of any gully. Please join a gully first by clicking the link in a group chat."
+                    )
+                return
+
+            # Show gully selection
+            await show_gully_selection(update, context)
+            return
+
+        # Check if user is an admin of any gully
+        is_admin = False
+        for gully_data in user_gullies:
+            # Check different possible structures
+            if "role" in gully_data and gully_data["role"] == "admin":
+                is_admin = True
+                break
+            elif (
+                "gully" in gully_data
+                and "role" in gully_data
+                and gully_data["role"] == "admin"
+            ):
+                is_admin = True
+                break
+
+        # Create main menu keyboard with feature-prefixed callbacks
+        keyboard = [
+            [
+                InlineKeyboardButton("My Squad", callback_data="squad_view"),
+                InlineKeyboardButton("Squad Menu", callback_data="squad_menu"),
+            ],
+            [InlineKeyboardButton("Auctions", callback_data="auction_view")],
+            [InlineKeyboardButton("Transfers", callback_data="transfer_view")],
+            [InlineKeyboardButton("Leaderboard", callback_data="leaderboard_view")],
+            [InlineKeyboardButton("Help", callback_data="help_view")],
+        ]
+
+        # Add Switch Gully button if user is part of multiple gullies
+        if gully_count > 1:
+            keyboard.append(
+                [InlineKeyboardButton("Switch Gully", callback_data="gully_switch")]
+            )
+
+        # Add Admin Panel button if user is an admin
+        if is_admin:
+            keyboard.append(
+                [InlineKeyboardButton("Admin Panel", callback_data="admin_view")]
+            )
+
+        # Add Cancel button
+        keyboard.append([InlineKeyboardButton("Cancel", callback_data="menu_cancel")])
+
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        # Create message text with active gully information
+        if active_gully:
+            message_text = (
+                f"🏏 *GullyGuru Main Menu* 🏏\n\n"
+                f"Active Gully: *{active_gully.get('name', 'Unknown')}*\n\n"
+                "Please select an option:"
+            )
+        else:
+            message_text = (
+                "🏏 *GullyGuru Main Menu* 🏏\n\n"
+                "You don't have an active gully. Please join a gully first.\n\n"
+                "Please select an option:"
+            )
+
+        # Send or edit message based on update type
+        if update.callback_query:
+            await update.callback_query.answer()
+            await update.callback_query.edit_message_text(
+                message_text,
+                reply_markup=reply_markup,
+                parse_mode="Markdown",
+            )
+        else:
+            await update.message.reply_text(
+                message_text,
+                reply_markup=reply_markup,
+                parse_mode="Markdown",
+            )
+    except Exception as e:
+        logger.error(f"Error in show_main_menu: {e}", exc_info=True)
+        message = "❌ Sorry, there was an error showing the main menu. Please try again later."
+        if update.callback_query:
+            await update.callback_query.edit_message_text(message)
+        else:
+            await update.message.reply_text(message)
+
+
+@log_function_call
+async def show_gully_selection(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    Show a list of gullies the user is part of for selection.
+    """
+    user = update.effective_user
+    logger.info(f"Showing gully selection for user {user.id}")
+
+    # Get API client
+    client = await get_onboarding_client()
+
+    # Use user_id from context if available
+    user_id = context.user_data.get("user_id")
+
+    if not user_id:
+        # If user_id not in context, fetch it from database
+        users = await client.get_users(telegram_id=user.id)
+        db_user = users[0] if users and len(users) > 0 else None
+
+        if not db_user:
+            logger.error(f"User {user.id} not found in database")
+            message = "❌ Error accessing your account. Please try again later."
+            if update.callback_query:
+                await update.callback_query.edit_message_text(message)
+            else:
+                await update.message.reply_text(message)
+            return
+
+        user_id = db_user["id"]
+        context.user_data["user_id"] = user_id
+
+    logger.info(f"Using user_id: {user_id} for gully selection")
+
+    # Get user's active gully
+    active_gully_id = context.user_data.get("active_gully_id")
+    logger.info(f"Active gully ID: {active_gully_id}")
+
+    # Get all gullies the user is part of
+    try:
+        user_gullies = await client.get_user_gullies(user_id=user_id)
+        logger.info(
+            f"Found {len(user_gullies) if user_gullies else 0} gullies for user {user.id}"
+        )
+
+        # Debug log to see the structure
+        logger.debug(f"User gullies response: {user_gullies}")
+
+        if not user_gullies or len(user_gullies) == 0:
+            logger.warning(f"No gullies found for user {user.id}")
+            message = "You are not part of any gully. Please join a gully first."
+            if update.callback_query:
+                await update.callback_query.edit_message_text(message)
+            else:
+                await update.message.reply_text(message)
+            return
+
+        # Create keyboard with gully options
+        keyboard = []
+
+        # Process each gully based on its structure
+        for gully_data in user_gullies:
+            # Debug log for each gully
+            logger.debug(f"Processing gully data: {gully_data}")
+
+            gully_id = None
+            gully_name = None
+
+            # Check if this is a direct gully object
+            if "id" in gully_data and "name" in gully_data:
+                gully_id = gully_data["id"]
+                gully_name = gully_data["name"]
+                logger.info(f"Found direct gully: {gully_name} (ID: {gully_id})")
+            # Check if this is a participation with embedded gully
+            elif "gully" in gully_data and "id" in gully_data["gully"]:
+                gully_id = gully_data["gully"]["id"]
+                gully_name = gully_data["gully"]["name"]
+                logger.info(f"Found embedded gully: {gully_name} (ID: {gully_id})")
+            # Check if this is a participation with gully_id
+            elif "gully_id" in gully_data:
+                gully_id = gully_data["gully_id"]
+                # We need to fetch the gully name
+                gully = await client.get_gully(gully_id)
+                if gully:
+                    gully_name = gully["name"]
+                    logger.info(f"Found gully by ID: {gully_name} (ID: {gully_id})")
+                else:
+                    gully_name = f"Gully {gully_id}"
+                    logger.warning(f"Could not fetch gully name for ID: {gully_id}")
+
+            # Skip if we couldn't determine the gully ID or name
+            if not gully_id or not gully_name:
+                logger.warning(f"Skipping gully with unknown structure: {gully_data}")
+                continue
+
+            # Mark active gully with a star
+            if active_gully_id and gully_id == active_gully_id:
+                gully_name = f"★ {gully_name} (Active)"
+
+            callback_data = f"select_gully_{gully_id}"
+            logger.info(
+                f"Adding button for gully: {gully_name} with callback: {callback_data}"
+            )
+
+            keyboard.append(
+                [InlineKeyboardButton(gully_name, callback_data=callback_data)]
+            )
+
+        # Only add Back button if this is called from the main menu (not on startup)
+        if update.callback_query and update.callback_query.data == "gully_switch":
+            logger.info("Adding 'Back to Main Menu' button")
+            keyboard.append(
+                [InlineKeyboardButton("Back to Main Menu", callback_data="main_menu")]
+            )
+
+        logger.info(f"Created keyboard with {len(keyboard)} buttons")
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        message = "Please select a gully to continue:"
+
+        if update.callback_query:
+            logger.info("Editing message with gully selection keyboard")
+            await update.callback_query.edit_message_text(
+                message,
+                reply_markup=reply_markup,
+            )
+        else:
+            logger.info("Sending new message with gully selection keyboard")
+            await update.message.reply_text(
+                message,
+                reply_markup=reply_markup,
+            )
+    except Exception as e:
+        # Log the error
+        logger.error(f"Error in show_gully_selection: {e}", exc_info=True)
+        message = "❌ Sorry, there was an error retrieving your gullies. Please try again later."
+        if update.callback_query:
+            await update.callback_query.edit_message_text(message)
+        else:
+            await update.message.reply_text(message)
+
+
+@log_function_call
+async def handle_gully_selection(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    Handle gully selection callback.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    user = update.effective_user
+    callback_data = query.data
+
+    # Extract gully ID from callback data
+    try:
+        gully_id = int(callback_data.replace("select_gully_", ""))
+    except ValueError:
+        logger.error(f"Invalid gully ID in callback data: {callback_data}")
+        await query.edit_message_text("❌ Invalid gully selection. Please try again.")
+        return
+
+    # Get API client
+    client = await get_onboarding_client()
+
+    # Use user_id from context if available
+    user_id = context.user_data.get("user_id")
+
+    if not user_id:
+        # If user_id not in context, fetch it from database
+        users = await client.get_users(telegram_id=user.id)
+        db_user = users[0] if users and len(users) > 0 else None
+
+        if not db_user:
+            logger.error(f"User {user.id} not found in database")
+            await query.edit_message_text(
+                "❌ Error accessing your account. Please try again later."
+            )
+            return
+
+        user_id = db_user["id"]
+        context.user_data["user_id"] = user_id
+        logger.info(f"Set user_id to {user_id} for user {user.id}")
+
+    try:
+        # Get the gully
+        gully = await client.get_gully(gully_id)
+        if not gully:
+            logger.error(f"Gully with ID {gully_id} not found")
+            await query.edit_message_text(
+                "❌ The selected gully was not found. Please try again."
+            )
+            return
+
+        # Store in context for future use
+        context.user_data["active_gully_id"] = gully_id
+        context.user_data["from_gully_selection"] = True
+
+        # Get the gully name for the message
+        gully_name = gully.get("name", f"Gully {gully_id}")
+
+        # Show a confirmation message
+        await query.edit_message_text(
+            f"✅ Active gully set to *{gully_name}*.",
+            parse_mode="Markdown",
+        )
+
+        # Show main menu for the selected gully
+        await show_main_menu(update, context)
+    except Exception as e:
+        logger.error(f"Error in handle_gully_selection: {e}", exc_info=True)
+        await query.edit_message_text(
+            "❌ An error occurred while selecting the gully. Please try again later."
+        )
+
+
+async def show_help_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Show the help menu with basic instructions.
+    """
+    keyboard = [[InlineKeyboardButton("Back to Main Menu", callback_data="main_menu")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    help_text = (
+        "📋 *GullyGuru Help* 📋\n\n"
+        "Need assistance? Here's how to use GullyGuru:\n\n"
+        "• You can see your squad with [My Squad]\n"
+        "• To buy players, use [Auctions] or [Transfers]\n"
+        "• Check your ranking in [Leaderboard]\n"
+        "• For admin tasks, see [Admin Panel]\n\n"
+        "For more help, contact @GullyGuruSupport"
+    )
+
+    await update.callback_query.edit_message_text(
+        help_text, reply_markup=reply_markup, parse_mode="Markdown"
+    )
+
+
+async def start_command_handler(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    Handle /start command to show the main menu.
+    This replaces the original start_command in onboarding.py for simplicity.
+    """
+    chat = update.effective_chat
+
+    # Only allow in private chats
+    if chat.type != "private":
+        return
+
+    # Check if user came from deep link
+    args = context.args
+    telegram_group_id = None
+
+    if args and args[0].startswith("group_"):
+        try:
+            telegram_group_id = int(args[0].split("_")[1])
+            logger.info(
+                f"User {update.effective_user.id} started registration from group {telegram_group_id}"
+            )
+            context.user_data["telegram_group_id"] = telegram_group_id
+        except (ValueError, IndexError):
+            logger.warning(f"Invalid deep link parameter: {args[0]}")
+
+    # Show the main menu
+    await show_main_menu(update, context)
+
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle errors in the dispatcher."""
+    # Log the error with full traceback
+    logger.error("Exception while handling an update", exc_info=context.error)
+
+    # Log detailed information about the update that caused the error
+    if update:
+        if hasattr(update, "effective_message") and update.effective_message:
+            logger.error(f"Message that caused error: {update.effective_message.text}")
+        if hasattr(update, "callback_query") and update.callback_query:
+            logger.error(
+                f"Callback query that caused error: {update.callback_query.data}"
+            )
+        if hasattr(update, "effective_user") and update.effective_user:
+            logger.error(
+                f"User that triggered error: {update.effective_user.id} "
+                f"({update.effective_user.username or update.effective_user.first_name})"
+            )
+
+    # Notify user about the error if possible
+    try:
+        if hasattr(update, "effective_message") and update.effective_message:
+            await update.effective_message.reply_text(
+                "Sorry, something went wrong. The error has been logged and will be addressed."
+            )
+        elif hasattr(update, "callback_query") and update.callback_query:
+            await update.callback_query.answer(
+                "Sorry, something went wrong. Please try again."
+            )
+    except Exception as e:
+        logger.error(f"Error while sending error message to user: {e}")
+
+
+async def wait_for_api(max_retries=30, retry_interval=2):
+    """
+    Wait for the API to be available.
+    """
+    api_base_url = settings.API_BASE_URL
+    health_url = f"{api_base_url}/health"
+
+    logger.info(f"Checking API availability at {health_url}")
+
+    retries = 0
+    while retries < max_retries:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                logger.debug(f"Attempt {retries+1}/{max_retries} to connect to API")
+                response = await client.get(health_url)
+
+                if response.status_code == 200:
+                    # Check if database is also healthy
+                    try:
+                        data = response.json()
+                        db_status = data.get("database", "unknown")
+
+                        if db_status == "healthy":
+                            logger.info("API and database are available and healthy!")
+                            return True
+                        else:
+                            logger.warning(
+                                f"API is available but database status is: {db_status}"
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"API returned status 200 but response is not valid JSON: {str(e)}"
+                        )
+                else:
+                    logger.warning(
+                        f"API returned status code {response.status_code}, response: {response.text}, retrying..."
+                    )
+        except httpx.ConnectError:
+            logger.warning(f"Connection to API failed at {health_url}, retrying...")
+        except httpx.ReadTimeout:
+            logger.warning(f"API request to {health_url} timed out, retrying...")
+        except Exception as e:
+            logger.warning(f"API check failed with error: {str(e)}")
+
+        retries += 1
+        if retries < max_retries:
+            logger.info(
+                f"Retrying in {retry_interval} seconds... (Attempt {retries}/{max_retries})"
+            )
+            await asyncio.sleep(retry_interval)
+
+    logger.error(f"API not available after {max_retries} attempts at {health_url}")
+    return False
+
+
+async def set_log_level_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    Command handler to set the logging level.
+    Usage: /loglevel [DEBUG|INFO|WARNING|ERROR|CRITICAL]
+    """
+    # Check if the user is authorized (only allow the first user who uses this command)
+    if "admin_id" not in context.bot_data:
+        context.bot_data["admin_id"] = update.effective_user.id
+        logger.info(
+            f"Setting {update.effective_user.id} as admin for log level commands"
+        )
+
+    if update.effective_user.id != context.bot_data.get("admin_id"):
+        await update.message.reply_text("You are not authorized to change log levels.")
+        return
+
+    # Get the requested log level
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text(
+            "Please specify a log level: /loglevel [DEBUG|INFO|WARNING|ERROR|CRITICAL]"
+        )
+        return
+
+    level_name = context.args[0].upper()
+
+    # Map string to logging level
+    level_map = {
+        "DEBUG": logging.DEBUG,
+        "INFO": logging.INFO,
+        "WARNING": logging.WARNING,
+        "ERROR": logging.ERROR,
+        "CRITICAL": logging.CRITICAL,
+    }
+
+    if level_name not in level_map:
+        await update.message.reply_text(
+            f"Invalid log level: {level_name}. "
+            f"Please use one of: {', '.join(level_map.keys())}"
+        )
+        return
+
+    # Set the log level
+    logging.getLogger().setLevel(level_map[level_name])
+
+    # Confirm the change
+    await update.message.reply_text(f"Log level set to {level_name}")
+
+
+async def debug_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Command handler to dump debug information.
+    Usage: /debug
+    """
+    # Check if the user is authorized (only allow the first user who uses this command)
+    if "admin_id" not in context.bot_data:
+        context.bot_data["admin_id"] = update.effective_user.id
+        logger.info(f"Setting {update.effective_user.id} as admin for debug commands")
+
+    if update.effective_user.id != context.bot_data.get("admin_id"):
+        await update.message.reply_text("You are not authorized to use debug commands.")
+        return
+
+    # Collect debug information
+    debug_info = []
+
+    # User data
+    debug_info.append("User Data:")
+    for key, value in context.user_data.items():
+        debug_info.append(f"  {key}: {value}")
+
+    # Chat data
+    debug_info.append("\nChat Data:")
+    for key, value in context.chat_data.items():
+        debug_info.append(f"  {key}: {value}")
+
+    # Bot data
+    debug_info.append("\nBot Data:")
+    for key, value in context.bot_data.items():
+        debug_info.append(f"  {key}: {value}")
+
+    # Update information
+    debug_info.append("\nUpdate Information:")
+    debug_info.append(f"  Update ID: {update.update_id}")
+    debug_info.append(f"  Chat ID: {update.effective_chat.id}")
+    debug_info.append(f"  User ID: {update.effective_user.id}")
+
+    # Send the debug information
+    debug_text = "\n".join(debug_info)
+    await update.message.reply_text(debug_text)
+
+
+async def debug_participant_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    Command handler to debug participant data.
+    Usage: /debug_participant
+    """
+    user = update.effective_user
+
+    # Get user data
+    try:
+        onboarding_client = await get_onboarding_client()
+        user_data = await onboarding_client.get_user_by_telegram_id(user.id)
+
+        if not user_data:
+            await update.message.reply_text(
+                "You are not registered. Please use /start to register."
+            )
+            return
+
+        user_id = user_data["id"]
+
+        # Get active gully
+        active_gully_id = context.user_data.get("active_gully_id")
+        if not active_gully_id:
+            await update.message.reply_text(
+                "No active gully set. Please use /gully to select a gully."
+            )
+            return
+
+        # Try to get participant data
+        debug_info = [
+            f"User ID: {user_id}",
+            f"Telegram ID: {user.id}",
+            f"Active Gully ID: {active_gully_id}",
+        ]
+
+        # Try onboarding client
+        try:
+            participant1 = await onboarding_client.get_participant(
+                user_id, active_gully_id
+            )
+            debug_info.append("\nParticipant data from onboarding client:")
+            if participant1:
+                debug_info.append(f"Participant ID: {participant1.get('id')}")
+                debug_info.append(f"Team Name: {participant1.get('team_name')}")
+            else:
+                debug_info.append("No participant data found")
+        except Exception as e1:
+            debug_info.append(
+                f"Error getting participant from onboarding client: {str(e1)}"
+            )
+
+        # Send debug info
+        await update.message.reply_text("\n".join(debug_info))
+
+    except Exception as e:
+        logger.error(f"Error in debug_participant: {str(e)}", exc_info=True)
+        await update.message.reply_text(f"Error: {str(e)}")
+
+
+@log_function_call
+async def handle_main_menu_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """
+    Handle callbacks from the main menu.
+    Routes to appropriate sub-menus based on user selection.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    callback_data = query.data
+    logger.info(f"Main menu callback received: {callback_data}")
+
+    # For squad-related callbacks, ensure participant_id is set
+    if callback_data == "squad_view" or callback_data.startswith("squad_"):
+        if not await ensure_participant_id(update, context):
+            return
+
+    # Import at the top of the file instead of inside the function
+    # to avoid potential circular import issues
+    if callback_data == "squad_view":
+        from src.bot.features.squad import view_squad
+
+        logger.info("Directly handling squad_view callback")
+        return await view_squad(update, context)
+    elif callback_data == "squad_menu":
+        # Handle squad menu callback
+        logger.info("Directly handling squad_menu callback")
+        return await show_squad_menu(update, context)
     elif callback_data.startswith("squad_"):
         # Log that we're delegating to squad handlers
         logger.info(f"Delegating '{callback_data}' to squad handlers")
@@ -845,16 +1664,15 @@ async def handle_squad_callback(
 
     # Import squad feature functions here to avoid circular imports
     from src.bot.features.squad import (
-        show_all_players,
+        show_player_selection_keyboard as show_all_players,  # Alias for backward compatibility
         view_squad,
-        show_squad_menu,
         SQUAD_MENU,
         PLAYER_FILTER,
         PLAYER_SELECTION,
         REMOVE_PLAYER,
         CONFIRM_SUBMISSION,
         MULTI_SELECT,
-        MULTI_REMOVE,
+        MULTI_REMOVE,  # Make sure this is properly imported
     )
 
     # Delegate to the appropriate squad handler based on the callback data
@@ -869,8 +1687,6 @@ async def handle_squad_callback(
     elif callback_data == SQUAD_MENU.SUBMIT_SQUAD:
         logger.info("Delegating to confirm_submission")
         # This should show the submission confirmation
-        from src.bot.features.squad import confirm_submission
-
         return await confirm_submission(update, context)
     elif callback_data == SQUAD_MENU.BACK_TO_MENU:
         logger.info("Delegating to show_squad_menu")
@@ -951,12 +1767,16 @@ async def ensure_participant_id(
         bool: True if participant_id is set, False otherwise
     """
     if context.user_data.get("participant_id"):
+        # Handle squad menu callback
+        logger.info("Directly handling team_manage callback")
+        logger.info(f"Using existing participant_id: {context.user_data.get('participant_id')}")
         return True
 
     user = update.effective_user
     active_gully_id = context.user_data.get("active_gully_id")
 
     if not active_gully_id:
+        logger.error("No active gully ID found in context")
         if update.callback_query:
             await update.callback_query.edit_message_text(
                 "No active gully selected. Please select a gully first.",
@@ -986,52 +1806,77 @@ async def ensure_participant_id(
         return False
 
     try:
-        # Get user data
+        # Get user data - first check if we already have the user_id in context
+        user_id = context.user_data.get("user_id")
+        
+        if not user_id:
+            # If not, fetch it from the database
+            onboarding_client = await get_onboarding_client()
+            users = await onboarding_client.get_users(telegram_id=user.id)
+            db_user = users[0] if users and len(users) > 0 else None
+
+            if not db_user or "id" not in db_user:
+                logger.error(
+                    f"Could not find user with telegram_id {user.id}, user_data: {db_user}"
+                )
+                if update.callback_query:
+                    await update.callback_query.edit_message_text(
+                        "Error retrieving your user data. Please try again later.",
+                        reply_markup=InlineKeyboardMarkup(
+                            [
+                                [
+                                    InlineKeyboardButton(
+                                        "Back to Main Menu", callback_data="main_menu"
+                                    )
+                                ]
+                            ]
+                        ),
+                    )
+                else:
+                    await update.message.reply_text(
+                        "Error retrieving your user data. Please try again later.",
+                        reply_markup=InlineKeyboardMarkup(
+                            [
+                                [
+                                    InlineKeyboardButton(
+                                        "Back to Main Menu", callback_data="main_menu"
+                                    )
+                                ]
+                            ]
+                        ),
+                    )
+                return False
+
+            user_id = db_user["id"]
+            context.user_data["user_id"] = user_id
+            logger.info(f"Set user_id to {user_id} for user {user.id}")
+
+        # Get participant data using the correct user_id and gully_id
         onboarding_client = await get_onboarding_client()
-        user_data = await onboarding_client.get_user_by_telegram_id(user.id)
-
-        if not user_data or "id" not in user_data:
-            logger.error(f"Could not find user with telegram_id {user.id}")
-            if update.callback_query:
-                await update.callback_query.edit_message_text(
-                    "Error retrieving your user data. Please try again later.",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "Back to Main Menu", callback_data="main_menu"
-                                )
-                            ]
-                        ]
-                    ),
-                )
-            else:
-                await update.message.reply_text(
-                    "Error retrieving your user data. Please try again later.",
-                    reply_markup=InlineKeyboardMarkup(
-                        [
-                            [
-                                InlineKeyboardButton(
-                                    "Back to Main Menu", callback_data="main_menu"
-                                )
-                            ]
-                        ]
-                    ),
-                )
-            return False
-
-        user_id = user_data["id"]
-        context.user_data["user_id"] = user_id
-
-        # Get participant data
-        participant_data = await onboarding_client.get_participant_by_user_id(
+        
+        # Debug log
+        logger.info(f"Getting participant for user_id: {user_id}, gully_id: {active_gully_id}")
+        
+        # Try to get participant by user and gully
+        participant_data = await onboarding_client.get_participant_by_user_and_gully(
             user_id, active_gully_id
         )
+        
+        # If that fails, try the get_participant method
+        if not participant_data:
+            logger.info("Trying alternative method to get participant")
+            participant_data = await onboarding_client.get_participant(
+                user_id, active_gully_id
+            )
 
         if not participant_data or "id" not in participant_data:
             logger.error(
                 f"Could not find participant for user {user_id} in gully {active_gully_id}"
             )
+            
+            # Debug log the participant data
+            logger.error(f"Participant data: {participant_data}")
+            
             if update.callback_query:
                 await update.callback_query.edit_message_text(
                     "You are not registered as a participant in this gully. Please join the gully first.",
@@ -1066,7 +1911,10 @@ async def ensure_participant_id(
         return True
 
     except Exception as e:
-        logger.error(f"Error ensuring participant_id: {str(e)}", exc_info=True)
+        logger.error(
+            f"Error ensuring participant_id: {str(e)}, user_id: {context.user_data.get('user_id')}, active_gully_id: {active_gully_id}",
+            exc_info=True,
+        )
         if update.callback_query:
             await update.callback_query.edit_message_text(
                 "An error occurred while retrieving your participant data. Please try again later.",
@@ -1120,7 +1968,7 @@ async def main_async():
         application = Application.builder().token(BOT_TOKEN).build()
 
         # Register all feature handlers
-        register_all_features(application)
+        await register_all_features(application)
 
         # Override the /start command with our simplified version
         application.add_handler(CommandHandler("start", start_command_handler))

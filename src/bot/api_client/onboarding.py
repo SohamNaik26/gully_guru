@@ -12,16 +12,19 @@ from src.bot.api_client.base import BaseApiClient, get_api_client
 logger = logging.getLogger(__name__)
 
 
-class OnboardingApiClient:
-    """API client for onboarding-related operations."""
+class OnboardingApiClient(BaseApiClient):
+    """API client for onboarding-related endpoints."""
 
     def __init__(self, api_client: Optional[BaseApiClient] = None):
         """
         Initialize the onboarding API client.
 
         Args:
-            api_client: Base API client instance
+            api_client: API client instance
         """
+        # Initialize with default base_url, don't pass api_client
+        super().__init__()
+        # Store the api_client separately
         self._api_client = api_client
         # Cache for gully data to avoid problematic API calls
         self._gully_cache = {}
@@ -53,34 +56,55 @@ class OnboardingApiClient:
 
     # User Management Methods
 
-    async def get_user(self, telegram_id: int) -> Optional[Dict[str, Any]]:
+    async def get_users(
+        self, telegram_id: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
         """
-        Get a user by Telegram ID.
+        Get users, optionally filtered by telegram_id.
 
         Args:
-            telegram_id: Telegram user ID
+            telegram_id: Optional Telegram user ID to filter by
 
         Returns:
-            User object if found, None otherwise
+            List of user data
         """
-        if not telegram_id:
-            raise ValueError("telegram_id is required")
+        params = {}
+        if telegram_id:
+            params["telegram_id"] = telegram_id
 
-        client = await self._get_client()
-        try:
-            # Use the endpoint that directly supports telegram_id filtering
-            response = await client.get("users", params={"telegram_id": telegram_id})
+        endpoint = "/users/"
+        response = await self._make_request("GET", endpoint, params=params)
 
-            # Extract items from the response
-            items = self._extract_items(response)
-            if items and len(items) > 0:
-                logger.info(f"Found user with telegram_id {telegram_id}")
-                return items[0]
+        if response.get("success"):
+            data = response.get("data", {})
+            if isinstance(data, dict) and "items" in data:
+                return data.get("items", [])
+            elif isinstance(data, list):
+                return data
+            else:
+                logger.warning(f"Unexpected response format: {data}")
+                return []
+        else:
+            logger.error(f"Failed to get users: {response.get('error')}")
+            return []
 
-            logger.info(f"User with telegram_id {telegram_id} not found")
-            return None
-        except Exception as e:
-            logger.error(f"Failed to get user by telegram_id {telegram_id}: {e}")
+    async def get_user(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get user data by ID.
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            User data or None if not found
+        """
+        endpoint = f"/users/{user_id}"
+        response = await self._make_request("GET", endpoint)
+
+        if response.get("success"):
+            return response.get("data")
+        else:
+            logger.error(f"Failed to get user by ID: {response.get('error')}")
             return None
 
     async def create_user(
@@ -91,7 +115,7 @@ class OnboardingApiClient:
         username: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
-        Create a new user if they don't already exist.
+        Create a new user.
 
         Args:
             telegram_id: Telegram user ID
@@ -100,87 +124,41 @@ class OnboardingApiClient:
             username: Telegram username (optional)
 
         Returns:
-            Created or existing user object, None if creation failed
-
-        Raises:
-            ValueError: If required fields are missing
+            Created user data or None if creation failed
         """
-        # Validate required fields
-        if not telegram_id:
-            raise ValueError("telegram_id is required")
-        if not first_name:
-            raise ValueError("first_name is required")
-
-        # Check if user already exists
-        existing_user = await self.get_user(telegram_id)
-        if existing_user:
-            logger.info(
-                f"User with telegram_id {telegram_id} already exists, returning existing user"
-            )
-            return existing_user
-
-        # Create new user
-        user_data = {
+        endpoint = "/users/"
+        data = {
             "telegram_id": telegram_id,
             "first_name": first_name,
         }
 
-        # Add optional fields if provided
         if last_name:
-            user_data["last_name"] = last_name
+            data["last_name"] = last_name
         if username:
-            user_data["username"] = username
+            data["username"] = username
 
-        try:
-            client = await self._get_client()
-            user = await client.post("users", json=user_data)
+        response = await self._make_request("POST", endpoint, data=data)
 
-            if user is None:
-                logger.error(
-                    f"Failed to create user with telegram_id {telegram_id} - API returned None"
-                )
-                return None
-
-            logger.info(f"Created new user with telegram_id {telegram_id}")
-            return user
-        except Exception as e:
-            logger.error(f"Failed to create user: {e}")
+        if response.get("success"):
+            return response.get("data")
+        else:
+            logger.error(f"Failed to create user: {response.get('error')}")
             return None
 
-    async def update_user(
-        self, user_id: int, data: Dict[str, Any]
+    async def get_user_by_telegram_id(
+        self, telegram_id: int
     ) -> Optional[Dict[str, Any]]:
         """
-        Update a user's information.
+        Get user data by Telegram ID.
 
         Args:
-            user_id: User ID
-            data: Data to update
+            telegram_id: Telegram user ID
 
         Returns:
-            Updated user object or None if user not found
+            User data or None if not found
         """
-        if not user_id:
-            raise ValueError("user_id is required")
-        if not data:
-            raise ValueError("data is required")
-
-        try:
-            client = await self._get_client()
-            # Use the user_id in the URL path
-            response = await client.put(f"users/{user_id}", json=data)
-
-            if response:
-                logger.info(f"Updated user with ID {user_id}")
-                return response
-
-            logger.info(f"User with ID {user_id} not found")
-            return None
-        except Exception as e:
-            logger.error(f"Failed to update user with ID {user_id}: {e}")
-            if "404" in str(e):
-                return None
-            raise
+        users = await self.get_users(telegram_id=telegram_id)
+        return users[0] if users and len(users) > 0 else None
 
     # Gully Management Methods
 
@@ -202,46 +180,21 @@ class OnboardingApiClient:
             logger.info(f"Using cached gully data for ID {gully_id}")
             return self._gully_cache[gully_id]
 
-        # We'll avoid direct gully endpoint due to factory method issues
-        # Instead, we'll use the participants endpoint and extract gully info
-        try:
-            client = await self._get_client()
+        endpoint = f"/gullies/{gully_id}"
+        response = await self._make_request("GET", endpoint)
 
-            # Get participants for this gully
-            response = await client.get("participants", params={"gully_id": gully_id})
-            items = self._extract_items(response)
-
-            if not items:
-                logger.info(f"No participants found for gully {gully_id}")
-                return None
-
-            # Extract gully info from the first participant
-            participant = items[0]
-            if "gully" in participant:
-                gully_data = participant["gully"]
-                logger.info(f"Found gully with ID {gully_id} from participant data")
-
-                # Cache the gully data
-                self._gully_cache[gully_id] = gully_data
-                return gully_data
-
-            # If no gully info in participant, create a minimal gully object
-            gully_data = {
-                "id": gully_id,
-                "name": f"Gully {gully_id}",  # Default name
-                "status": "active",  # Default status
-            }
-
+        if response.get("success"):
+            gully_data = response.get("data")
             # Cache the gully data
             self._gully_cache[gully_id] = gully_data
-            logger.info(f"Created minimal gully data for ID {gully_id}")
             return gully_data
-
-        except Exception as e:
-            logger.error(f"Failed to get gully with ID {gully_id}: {e}")
+        else:
+            logger.error(
+                f"Failed to get gully with ID {gully_id}: {response.get('error')}"
+            )
             return None
 
-    async def get_gully_by_telegram_id(
+    async def get_gully_by_telegram_group_id(
         self, telegram_group_id: int
     ) -> Optional[Dict[str, Any]]:
         """
@@ -256,37 +209,14 @@ class OnboardingApiClient:
         if not telegram_group_id:
             raise ValueError("telegram_group_id is required")
 
-        client = await self._get_client()
-        try:
-            # Use the dedicated endpoint for getting a gully by group ID
-            response = await client.get(f"gullies/group/{telegram_group_id}")
+        endpoint = f"/gullies/group/{telegram_group_id}"
+        response = await self._make_request("GET", endpoint)
 
-            if response:
-                logger.info(f"Found gully with telegram_group_id {telegram_group_id}")
-                return response
-
-            # Fallback to filtering
-            response = await client.get(
-                "gullies", params={"telegram_group_id": telegram_group_id}
-            )
-
-            # Handle different response formats
-            if response and isinstance(response, list) and len(response) > 0:
-                logger.info(f"Found gully with telegram_group_id {telegram_group_id}")
-                return response[0]
-            elif response and isinstance(response, dict) and "items" in response:
-                items = response.get("items", [])
-                if items and len(items) > 0:
-                    logger.info(
-                        f"Found gully with telegram_group_id {telegram_group_id}"
-                    )
-                    return items[0]
-
-            logger.info(f"Gully with telegram_group_id {telegram_group_id} not found")
-            return None
-        except Exception as e:
+        if response.get("success"):
+            return response.get("data")
+        else:
             logger.error(
-                f"Failed to get gully by telegram_group_id {telegram_group_id}: {e}"
+                f"Failed to get gully by telegram_group_id {telegram_group_id}: {response.get('error')}"
             )
             return None
 
@@ -294,7 +224,7 @@ class OnboardingApiClient:
         self, name: str, telegram_group_id: int, creator_id: int
     ) -> Optional[Dict[str, Any]]:
         """
-        Create a new gully if it doesn't already exist.
+        Create a new gully.
 
         Args:
             name: Gully name
@@ -302,10 +232,7 @@ class OnboardingApiClient:
             creator_id: User ID of the creator
 
         Returns:
-            Created or existing gully object, None if creation failed
-
-        Raises:
-            ValueError: If required fields are missing
+            Created gully object, None if creation failed
         """
         # Validate required fields
         if not name:
@@ -315,75 +242,46 @@ class OnboardingApiClient:
         if not creator_id:
             raise ValueError("creator_id is required")
 
-        # Check if gully already exists
-        existing_gully = await self.get_gully_by_telegram_id(telegram_group_id)
-        if existing_gully:
-            logger.info(
-                f"Gully with telegram_group_id {telegram_group_id} already exists, returning existing gully"
-            )
-            return existing_gully
-
-        # Create new gully
-        gully_data = {
+        endpoint = "/gullies/"
+        data = {
             "name": name,
             "telegram_group_id": telegram_group_id,
             "creator_id": creator_id,
         }
 
-        try:
-            client = await self._get_client()
-            gully = await client.post("gullies", json=gully_data)
+        response = await self._make_request("POST", endpoint, data=data)
 
-            if gully is None:
-                logger.error(f"Failed to create gully '{name}' - API returned None")
-                return None
-
-            logger.info(
-                f"Created new gully '{name}' with telegram_group_id {telegram_group_id}"
-            )
-            return gully
-        except Exception as e:
-            logger.error(f"Failed to create gully: {e}")
+        if response.get("success"):
+            return response.get("data")
+        else:
+            logger.error(f"Failed to create gully: {response.get('error')}")
             return None
 
-    async def update_gully(
-        self, gully_id: int, data: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+    async def get_user_gullies(self, user_id: int) -> List[Dict[str, Any]]:
         """
-        Update a gully's information.
+        Get all gullies a user participates in.
 
         Args:
-            gully_id: Gully ID
-            data: Data to update
+            user_id: User ID
 
         Returns:
-            Updated gully object or None if gully not found
+            List of gullies
         """
-        if not gully_id:
-            raise ValueError("gully_id is required")
-        if not data:
-            raise ValueError("data is required")
+        if not user_id:
+            raise ValueError("user_id is required")
 
-        try:
-            client = await self._get_client()
-            # Use the gully_id in the URL path
-            response = await client.put(f"gullies/{gully_id}", json=data)
+        endpoint = f"/gullies/user/{user_id}"
+        response = await self._make_request("GET", endpoint)
 
-            if response:
-                logger.info(f"Updated gully with ID {gully_id}")
-                return response
-
-            logger.info(f"Gully with ID {gully_id} not found")
-            return None
-        except Exception as e:
-            logger.error(f"Failed to update gully with ID {gully_id}: {e}")
-            if "404" in str(e):
-                return None
-            raise
+        if response.get("success"):
+            return response.get("data", [])
+        else:
+            logger.error(f"Failed to get user gullies: {response.get('error')}")
+            return []
 
     # Participant Management Methods
 
-    async def get_participant(
+    async def get_participant_by_user_and_gully(
         self, user_id: int, gully_id: int
     ) -> Optional[Dict[str, Any]]:
         """
@@ -396,185 +294,77 @@ class OnboardingApiClient:
         Returns:
             The participant data or None if not found
         """
-        try:
-            logger.info(
-                f"Getting participant data for user {user_id} in gully {gully_id}"
+        endpoint = f"/participants/user/{user_id}/gully/{gully_id}"
+        response = await self._make_request("GET", endpoint)
+
+        if response.get("success"):
+            return response.get("data")
+        else:
+            logger.warning(
+                f"No participant found for user {user_id} in gully {gully_id}"
             )
-            client = await self._get_client()
-
-            # Use the dedicated endpoint for getting a participant by user and gully
-            response = await client.get(f"participants/user/{user_id}/gully/{gully_id}")
-
-            if response:
-                logger.info(
-                    f"Found participant for user {user_id} in gully {gully_id}: {response.get('id')}"
-                )
-                return response
-            else:
-                logger.warning(
-                    f"No participant found for user {user_id} in gully {gully_id}"
-                )
-                return None
-        except Exception as e:
-            logger.error(f"Error getting participant: {str(e)}")
-            logger.error("Stack trace:", exc_info=True)
             return None
 
-    async def get_user_gully_participation(
-        self, user_id: int, gully_id: int
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Get a user's participation in a gully.
-
-        Args:
-            user_id: User ID
-            gully_id: Gully ID
-
-        Returns:
-            Participation object if found, None otherwise
-        """
-        # This is now an alias for get_participant for backward compatibility
-        return await self.get_participant(user_id, gully_id)
-
-    async def join_gully(
-        self,
-        user_id: int,
-        gully_id: int,
-        team_name: Optional[str] = None,
-        role: str = "member",
+    async def add_participant(
+        self, participant_data: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
         """
         Add a user to a gully.
 
         Args:
-            user_id: User ID
-            gully_id: Gully ID
-            team_name: Optional team name for the user
-            role: User's role in the gully (default: "member")
+            participant_data: Dictionary containing user_id, gully_id, team_name, and role
 
         Returns:
             Participant data if successful, None otherwise
         """
-        client = await self._get_client()
+        # Validate required fields
+        if "user_id" not in participant_data:
+            raise ValueError("user_id is required")
+        if "gully_id" not in participant_data:
+            raise ValueError("gully_id is required")
 
-        # Prepare the request data
-        data = {
-            "user_id": user_id,
-            "gully_id": gully_id,
-            "role": role,
-        }
+        endpoint = "/participants/"
+        response = await self._make_request("POST", endpoint, data=participant_data)
 
-        # Add team_name if provided
-        if team_name:
-            data["team_name"] = team_name
-
-        # Make the API request
-        logger.info(f"Adding user {user_id} to gully {gully_id} with role {role}")
-        if team_name:
-            logger.info(f"Team name: {team_name}")
-
-        response = await client.post("participants", json=data)
-
-        if response:
-            logger.info(f"User {user_id} added to gully {gully_id} successfully")
-            return response
+        if response.get("success"):
+            return response.get("data")
         else:
-            logger.error(f"Failed to add user {user_id} to gully {gully_id}")
+            logger.error(f"Failed to add participant: {response.get('error')}")
             return None
 
-    async def get_user_gullies(self, user_id: int) -> List[Dict[str, Any]]:
+    async def get_participants(
+        self, gully_id: Optional[int] = None, user_id: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
         """
-        Get all gullies a user participates in.
+        Get participants, optionally filtered by gully_id or user_id.
 
         Args:
-            user_id: User ID
-
-        Returns:
-            List of gullies or participations
-        """
-        if not user_id:
-            raise ValueError("user_id is required")
-
-        client = await self._get_client()
-        try:
-            # Use the dedicated endpoint for user gullies
-            response = await client.get(f"gullies/user/{user_id}")
-
-            if response:
-                if isinstance(response, list):
-                    logger.info(f"Found {len(response)} gullies for user {user_id}")
-                    return response
-                elif isinstance(response, dict) and "items" in response:
-                    items = response.get("items", [])
-                    logger.info(f"Found {len(items)} gullies for user {user_id}")
-                    return items
-
-            # Fallback to participants endpoint
-            response = await client.get("participants", params={"user_id": user_id})
-
-            if response and isinstance(response, list):
-                logger.info(f"Found {len(response)} participations for user {user_id}")
-
-                # If these are participation objects, we need to fetch the gully details
-                enriched_participations = []
-                for participation in response:
-                    if "gully_id" in participation:
-                        gully_id = participation["gully_id"]
-                        gully = await self.get_gully(gully_id)
-                        if gully:
-                            # Add gully details to the participation
-                            participation["gully"] = gully
-                        enriched_participations.append(participation)
-
-                return enriched_participations
-            elif response and isinstance(response, dict) and "items" in response:
-                items = response.get("items", [])
-                logger.info(f"Found {len(items)} participations for user {user_id}")
-                return items
-
-            logger.info(f"No gullies found for user {user_id}")
-            return []
-        except Exception as e:
-            logger.error(f"Failed to get user gullies: {e}")
-            return []
-
-    async def get_gully_participants(self, gully_id: int) -> List[Dict[str, Any]]:
-        """
-        Get all participants in a gully.
-
-        Args:
-            gully_id: Gully ID
+            gully_id: Optional gully ID to filter by
+            user_id: Optional user ID to filter by
 
         Returns:
             List of participants
         """
-        if not gully_id:
-            raise ValueError("gully_id is required")
+        params = {}
+        if gully_id:
+            params["gully_id"] = gully_id
+        if user_id:
+            params["user_id"] = user_id
 
-        client = await self._get_client()
-        try:
-            # Use the dedicated endpoint for gully participants
-            response = await client.get(f"participants/gully/{gully_id}")
+        endpoint = "/participants/"
+        response = await self._make_request("GET", endpoint, params=params)
 
-            if response and isinstance(response, list):
-                logger.info(f"Found {len(response)} participants in gully {gully_id}")
-                return response
-
-            # Fallback to filtering
-            response = await client.get("participants", params={"gully_id": gully_id})
-
-            if response and isinstance(response, list):
-                logger.info(f"Found {len(response)} participants in gully {gully_id}")
-                return response
-            elif response and isinstance(response, dict) and "items" in response:
-                items = response.get("items", [])
-                logger.info(f"Found {len(items)} participants in gully {gully_id}")
-                return items
-
-            logger.info(f"No participants found in gully {gully_id}")
-            return []
-        except Exception as e:
-            logger.error(f"Failed to get gully participants: {e}")
+        if response.get("success"):
+            data = response.get("data", {})
+            if isinstance(data, dict) and "items" in data:
+                return data.get("items", [])
+            elif isinstance(data, list):
+                return data
+            else:
+                logger.warning(f"Unexpected response format: {data}")
+                return []
+        else:
+            logger.error(f"Failed to get participants: {response.get('error')}")
             return []
 
     async def update_participant(
@@ -595,51 +385,14 @@ class OnboardingApiClient:
         if not data:
             raise ValueError("data is required")
 
-        # Validate team name if provided
-        if "team_name" in data and (
-            len(data["team_name"]) < 3 or len(data["team_name"]) > 30
-        ):
-            raise ValueError("team_name must be between 3 and 30 characters")
+        endpoint = f"/participants/{participant_id}"
+        response = await self._make_request("PUT", endpoint, data=data)
 
-        try:
-            client = await self._get_client()
-            # Use the participant_id in the URL path instead of in the request body
-            response = await client.put(f"participants/{participant_id}", json=data)
-
-            if response:
-                logger.info(f"Updated participant with ID {participant_id}")
-                return response
-
-            logger.info(f"Participant with ID {participant_id} not found")
+        if response.get("success"):
+            return response.get("data")
+        else:
+            logger.error(f"Failed to update participant: {response.get('error')}")
             return None
-        except Exception as e:
-            logger.error(f"Failed to update participant with ID {participant_id}: {e}")
-            if "404" in str(e):
-                return None
-            raise
-
-    async def remove_participant(self, participant_id: int) -> bool:
-        """
-        Remove a participant from a gully.
-
-        Args:
-            participant_id: Participant ID
-
-        Returns:
-            True if removal was successful, False otherwise
-        """
-        if not participant_id:
-            raise ValueError("participant_id is required")
-
-        try:
-            client = await self._get_client()
-            # Use the participant_id in the URL path instead of as a query parameter
-            response = await client.delete(f"participants/{participant_id}")
-            logger.info(f"Removed participant with ID {participant_id}")
-            return response and response.get("success", False)
-        except Exception as e:
-            logger.error(f"Failed to remove participant with ID {participant_id}: {e}")
-            return False
 
 
 # Convenience functions for the bot
@@ -656,8 +409,11 @@ async def get_onboarding_client() -> OnboardingApiClient:
     """
     global _onboarding_client
     if _onboarding_client is None:
+        # Get the API client first
         api_client = await get_api_client()
+        # Create a new OnboardingApiClient with the API client
         _onboarding_client = OnboardingApiClient(api_client)
+        logger.info("Created new OnboardingApiClient")
     return _onboarding_client
 
 
@@ -685,7 +441,7 @@ async def create_gully_for_group(
 
     # Check if gully already exists
     client = await get_onboarding_client()
-    existing_gully = await client.get_gully_by_telegram_id(group_id)
+    existing_gully = await client.get_gully_by_telegram_group_id(group_id)
     if existing_gully:
         logger.info(
             f"Gully already exists for group {group_id}, returning existing gully"
@@ -744,7 +500,9 @@ async def add_admin_to_gully(
     try:
         # Get or create user
         client = await get_onboarding_client()
-        db_user = await client.get_user(user_telegram_id)
+        users = await client.get_users(telegram_id=user_telegram_id)
+        db_user = users[0] if users and len(users) > 0 else None
+
         if not db_user:
             logger.info(
                 f"Creating new user for {username or first_name} (ID: {user_telegram_id})"
@@ -752,9 +510,9 @@ async def add_admin_to_gully(
             try:
                 db_user = await client.create_user(
                     telegram_id=user_telegram_id,
+                    username=username,
                     first_name=first_name,
                     last_name=last_name,
-                    username=username,
                 )
             except Exception as e:
                 logger.error(f"Error creating user: {e}")
@@ -767,18 +525,19 @@ async def add_admin_to_gully(
             )
             return None
 
-        # Add user as admin to the gully using the direct participants endpoint
+        # Add user as admin to the gully
         logger.info(f"Adding user {db_user['id']} as admin to gully {gully_id}")
 
         # Join the gully as admin
         team_name = f"{username or first_name}'s Team"
         try:
-            participation = await client.join_gully(
-                user_id=db_user["id"],
-                gully_id=gully_id,
-                team_name=team_name,
-                role="admin",
-            )
+            participant_data = {
+                "user_id": db_user["id"],
+                "gully_id": gully_id,
+                "team_name": team_name,
+                "role": "admin",
+            }
+            participation = await client.add_participant(participant_data)
 
             if participation:
                 logger.info(
@@ -861,7 +620,7 @@ async def handle_complete_onboarding(
         logger.error(f"Failed to create gully for group {group_name}")
         return result
 
-    # Add admin to gully - this now uses the direct participants endpoint without admin checks
+    # Add admin to gully
     participation = await add_admin_to_gully(
         user_telegram_id=admin_telegram_id,
         first_name=admin_first_name,
@@ -874,7 +633,8 @@ async def handle_complete_onboarding(
 
     # Get admin user info
     client = await get_onboarding_client()
-    admin_user = await client.get_user(admin_telegram_id)
+    users = await client.get_users(telegram_id=admin_telegram_id)
+    admin_user = users[0] if users and len(users) > 0 else None
     result["admin_user"] = admin_user
 
     # Set success flag

@@ -198,35 +198,35 @@ This endpoint is useful for monitoring and health checks in production environme
 | Method | Endpoint | Description | Input | Output |
 |--------|----------|-------------|-------|--------|
 | POST | /users/ | Create a new user | UserCreate (telegram_id, username, full_name) | UserResponse |
-| GET | /users/ | Get a paginated list of users | Query params: username, page, size | PaginatedResponse[UserResponse] |
+| GET | /users/ | Get a paginated list of users | Query params: telegram_id, limit, offset | PaginatedResponse[UserResponse] |
 | GET | /users/{user_id} | Get a user by ID | Path param: user_id | UserResponse |
 | PUT | /users/{user_id} | Update a user | Path param: user_id, Body: UserUpdate | UserResponse |
 | DELETE | /users/{user_id} | Delete a user | Path param: user_id | None (204 No Content) |
-
-### Gully Endpoints
-
-| Method | Endpoint | Description | Input | Output |
-|--------|----------|-------------|-------|--------|
-| POST | /gullies/ | Create a new gully | GullyCreate (name, telegram_group_id, creator_id) | GullyResponse |
-| GET | /gullies/ | Get a paginated list of gullies | Query params: name, status, page, size | PaginatedResponse[GullyResponse] |
-| GET | /gullies/{gully_id} | Get a gully by ID | Path param: gully_id | GullyResponse |
-| PUT | /gullies/{gully_id} | Update a gully | Path param: gully_id, Body: GullyUpdate | GullyResponse |
-| DELETE | /gullies/{gully_id} | Delete a gully | Path param: gully_id | None (204 No Content) |
-| POST | /gullies/{gully_id}/participants | Add a participant to a gully | Path param: gully_id, Body: GullyParticipantCreate | GullyParticipantResponse |
-| GET | /gullies/{gully_id}/participants | Get all participants in a gully | Path param: gully_id | List[GullyParticipantResponse] |
-| PUT | /gullies/{gully_id}/participants/{user_id} | Update a participant's role | Path params: gully_id, user_id, Body: GullyParticipantUpdate | GullyParticipantResponse |
-| DELETE | /gullies/{gully_id}/participants/{user_id} | Remove a participant from a gully | Path params: gully_id, user_id | None (204 No Content) |
 
 ### Player Endpoints
 
 | Method | Endpoint | Description | Input | Output |
 |--------|----------|-------------|-------|--------|
-| POST | /players/ | Create a new player | PlayerCreate (name, player_type, team, etc.) | PlayerResponse |
-| GET | /players/ | Get a paginated list of players | Query params: name, player_type, team, page, size | PaginatedResponse[PlayerResponse] |
+| POST | /players/ | Create a new player | PlayerCreate, Query param: admin_user_id | PlayerResponse |
+| GET | /players/ | Get a paginated list of players | Query params: name, team, player_type, limit, offset | PaginatedResponse[PlayerResponse] |
 | GET | /players/{player_id} | Get a player by ID | Path param: player_id | PlayerResponse |
-| PUT | /players/{player_id} | Update a player | Path param: player_id, Body: PlayerUpdate | PlayerResponse |
-| DELETE | /players/{player_id} | Delete a player | Path param: player_id | None (204 No Content) |
-| GET | /players/{player_id}/stats | Get a player's statistics | Path param: player_id | PlayerStatsResponse |
+| PUT | /players/{player_id} | Update a player | Path param: player_id, Body: PlayerUpdate, Query param: admin_user_id | PlayerResponse |
+| DELETE | /players/{player_id} | Delete a player | Path param: player_id, Query param: admin_user_id | None (204 No Content) |
+| GET | /players/{player_id}/stats | Get statistics for a player | Path param: player_id | PlayerStatsResponse |
+
+### Gully Endpoints
+
+| Method | Endpoint | Description | Input | Output |
+|--------|----------|-------------|-------|--------|
+| GET | /gullies/ | Get a paginated list of gullies | Query params: name, status, user_id, telegram_group_id, limit, offset | PaginatedResponse[GullyResponse] |
+| GET | /gullies/user/{user_id} | Get all gullies for a user | Path param: user_id | List[GullyResponse] |
+| GET | /gullies/group/{telegram_group_id} | Get a gully by Telegram group ID | Path param: telegram_group_id | GullyResponse |
+| POST | /gullies/ | Create a new gully | GullyCreate, Query param: creator_id | GullyResponse |
+| GET | /gullies/{gully_id} | Get a gully by ID | Path param: gully_id | GullyResponse |
+| PUT | /gullies/{gully_id} | Update a gully | Path param: gully_id, Body: GullyUpdate, Query param: user_id | GullyResponse |
+| PUT | /gullies/{gully_id}/status | Update a gully's status | Path param: gully_id, Query params: status, user_id | SuccessResponse |
+| DELETE | /gullies/{gully_id} | Delete a gully | Path param: gully_id, Query param: user_id | SuccessResponse |
+| GET | /gullies/{gully_id}/submission-status | Get submission status for a gully | Path param: gully_id | SubmissionStatusResponse |
 
 ### Fantasy Endpoints
 
@@ -235,34 +235,36 @@ This endpoint is useful for monitoring and health checks in production environme
 | GET | /fantasy/draft-squad/{participant_id} | Get a participant's draft squad | Path param: participant_id | SquadResponse |
 | POST | /fantasy/draft-squad/{participant_id}/add | Add players to a participant's draft squad | Path param: participant_id, Body: BulkPlayerAddRequest | BulkDraftPlayerResponse |
 | POST | /fantasy/draft-squad/{participant_id}/remove | Remove players from a participant's draft squad | Path param: participant_id, Body: BulkPlayerRemoveRequest | BulkDraftPlayerResponse |
-| POST | /fantasy/draft-squad/{participant_id}/submit | Submit a participant's draft squad | Path param: participant_id | SubmitSquadResponse |
-| POST | /fantasy/draft-squad/{participant_id}/unsubmit | Unsubmit a participant's draft squad for editing | Path param: participant_id | SubmitSquadResponse |
-| POST | /fantasy/gully/{gully_id}/finalize-draft | Finalize the draft phase and transition to auction phase | Path param: gully_id | FinalizeDraftResponse |
-| GET | /gullies/{gully_id}/submission-status | Get submission status for a gully | Path param: gully_id | SubmissionStatusResponse |
-| POST | /fantasy/contests/ | Create a new fantasy contest | ContestCreate (name, description, start_time, end_time, etc.) | ContestResponse |
-| GET | /fantasy/contests/ | Get a paginated list of contests | Query params: name, status, page, size | PaginatedResponse[ContestResponse] |
-| GET | /fantasy/contests/{contest_id} | Get a contest by ID | Path param: contest_id | ContestResponse |
-| PUT | /fantasy/contests/{contest_id} | Update a contest | Path param: contest_id, Body: ContestUpdate | ContestResponse |
-| DELETE | /fantasy/contests/{contest_id} | Delete a contest | Path param: contest_id | None (204 No Content) |
-| POST | /fantasy/contests/{contest_id}/teams | Submit a team for a contest | Path param: contest_id, Body: TeamCreate | TeamResponse |
-| GET | /fantasy/teams/ | Get a paginated list of teams | Query params: user_id, contest_id, page, size | PaginatedResponse[TeamResponse] |
-| GET | /fantasy/teams/{team_id} | Get a team by ID | Path param: team_id | TeamResponse |
-| PUT | /fantasy/teams/{team_id} | Update a team | Path param: team_id, Body: TeamUpdate | TeamResponse |
-| DELETE | /fantasy/teams/{team_id} | Delete a team | Path param: team_id | None (204 No Content) |
+| PUT | /fantasy/draft-squad/{participant_id} | Update a participant's entire draft squad | Path param: participant_id, Body: BulkPlayerAddRequest | BulkDraftPlayerResponse |
+
+### Auction Endpoints
+
+| Method | Endpoint | Description | Input | Output |
+|--------|----------|-------------|-------|--------|
+| POST | /auction/gullies/{gully_id}/start | Start auction for a gully | Path param: gully_id | AuctionStartResponse |
+| POST | /auction/gullies/{gully_id}/mark-contested | Mark contested players in a gully | Path param: gully_id | Dict[str, Any] |
+| GET | /auction/gullies/{gully_id}/contested-players | Get contested players for a gully | Path param: gully_id | List[ContestPlayerResponse] |
+| GET | /auction/gullies/{gully_id}/uncontested-players | Get uncontested players for a gully | Path param: gully_id | List[ContestPlayerResponse] |
+| PUT | /auction/queue/{auction_queue_id}/status | Update an auction's status | Path param: auction_queue_id, Query params: status, gully_id | SuccessResponse |
+| POST | /auction/resolve-contested/{player_id}/{winning_participant_id} | Resolve a contested player | Path params: player_id, winning_participant_id | Dict[str, Any] |
 
 ### Admin Endpoints
 
 | Method | Endpoint | Description | Input | Output |
 |--------|----------|-------------|-------|--------|
-| GET | /admin/gullies/{gully_id}/admins | Get all admins for a gully | Path param: gully_id | List[UserResponse] |
+| GET | /admin/gully/{gully_id}/admins | Get all admins for a gully | Path param: gully_id | List[AdminUserResponse] |
+| POST | /admin/gully/{gully_id}/admins/{user_id} | Assign admin role to a user | Path params: gully_id, user_id, Query param: admin_user_id | AdminRoleResponse |
+| DELETE | /admin/gully/{gully_id}/admins/{user_id} | Remove admin role from a user | Path params: gully_id, user_id, Query param: admin_user_id | None (204 No Content) |
+| GET | /admin/user/{user_id}/permissions | Get a user's permissions in a gully | Path param: user_id, Query param: gully_id | Dict[str, Any] |
 
 ### Participant Endpoints
 
 | Method | Endpoint | Description | Input | Output |
 |--------|----------|-------------|-------|--------|
-| GET | /participants/ | Get a paginated list of participants | Query params: user_id, gully_id, page, size | PaginatedResponse[ParticipantResponse] |
+| GET | /participants/ | Get a paginated list of participants | Query params: gully_id, user_id, limit, offset | PaginatedResponse[ParticipantResponse] |
 | GET | /participants/{participant_id} | Get a participant by ID | Path param: participant_id | ParticipantResponse |
-| POST | /participants/ | Add a user to a gully | Body: ParticipantCreate (user_id, gully_id, role, team_name) | ParticipantResponse |
+| GET | /participants/user/{user_id}/gully/{gully_id} | Get a participant by user ID and gully ID | Path params: user_id, gully_id | ParticipantResponse |
+| POST | /participants/ | Add a user to a gully | Body: ParticipantCreate | ParticipantResponse |
 | PUT | /participants/{participant_id} | Update a participant | Path param: participant_id, Body: ParticipantUpdate | ParticipantResponse |
 | DELETE | /participants/{participant_id} | Delete a participant | Path param: participant_id | None (204 No Content) |
 | GET | /participants/user/{user_id} | Get all participations for a user | Path param: user_id | List[ParticipantResponse] |

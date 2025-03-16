@@ -47,6 +47,7 @@ __all__ = [
     "create_gully_for_group",
     "add_admin_to_gully",
     "register_squad_handlers",
+    "squad_entry_point",
     "squad_menu_entry",
     "view_squad",
 ]

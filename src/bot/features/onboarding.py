@@ -56,13 +56,17 @@ async def bot_added_to_group(
     client = await get_onboarding_client()
 
     # Check if user exists, create if not
-    db_user = await client.get_user(user.id)
+    # FIXED: Use correct endpoint - GET /users/ with telegram_id param
+    users = await client.get_users(telegram_id=user.id)
+    db_user = users[0] if users and len(users) > 0 else None
+
     if not db_user:
+        # FIXED: Use correct endpoint - POST /users/
         db_user = await client.create_user(
             telegram_id=user.id,
+            username=user.username,
             first_name=user.first_name,
             last_name=user.last_name,
-            username=user.username,
         )
         if not db_user:
             logger.error(f"Failed to create user {user.id} when adding bot to group")
@@ -72,7 +76,8 @@ async def bot_added_to_group(
             return
 
     # Check if gully already exists for this group
-    existing_gully = await client.get_gully_by_telegram_id(chat.id)
+    # FIXED: Use correct endpoint - GET /gullies/group/{telegram_group_id}
+    existing_gully = await client.get_gully_by_telegram_group_id(chat.id)
 
     # Generate deep link for registration
     deep_link = f"https://t.me/{bot.username}?start=group_{chat.id}"
@@ -91,6 +96,7 @@ async def bot_added_to_group(
         return
 
     # Create new gully
+    # FIXED: Use correct endpoint - POST /gullies/
     gully = await client.create_gully(
         name=chat.title, telegram_group_id=chat.id, creator_id=db_user["id"]
     )
@@ -103,7 +109,14 @@ async def bot_added_to_group(
         return
 
     # Add the user who added the bot as admin
-    await client.join_gully(user_id=db_user["id"], gully_id=gully["id"], role="admin")
+    # FIXED: Use correct endpoint - POST /participants/
+    participant_data = {
+        "user_id": db_user["id"],
+        "gully_id": gully["id"],
+        "team_name": f"{user.first_name}'s Team",
+        "role": "admin",
+    }
+    await client.add_participant(participant_data)
 
     # Send welcome message for new gully
     await update.message.reply_text(
@@ -144,15 +157,18 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             logger.warning(f"Invalid deep link parameter: {args[0]}")
 
     # Check if user exists in database
-    db_user = await client.get_user(user.id)
+    # FIXED: Use correct endpoint - GET /users/ with telegram_id param
+    users = await client.get_users(telegram_id=user.id)
+    db_user = users[0] if users and len(users) > 0 else None
 
     if not db_user:
         # New user, create user in database
+        # FIXED: Use correct endpoint - POST /users/
         db_user = await client.create_user(
             telegram_id=user.id,
+            username=user.username,
             first_name=user.first_name,
             last_name=user.last_name,
-            username=user.username,
         )
 
         if not db_user:
@@ -178,7 +194,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     # Existing user
     if telegram_group_id:
         # User came from a group, check if the gully exists
-        gully = await client.get_gully_by_telegram_id(telegram_group_id)
+        # FIXED: Use correct endpoint - GET /gullies/group/{telegram_group_id}
+        gully = await client.get_gully_by_telegram_group_id(telegram_group_id)
         if not gully:
             await update.message.reply_text(
                 "❌ The gully you're trying to join doesn't exist."
@@ -186,8 +203,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
             return ConversationHandler.END
 
         # Check if user is already in this gully
-        participation = await client.get_user_gully_participation(
-            user_id=db_user["id"], gully_id=gully["id"]
+        # FIXED: Use correct endpoint - GET /participants/user/{user_id}/gully/{gully_id}
+        participation = await client.get_participant_by_user_and_gully(
+            db_user["id"], gully["id"]
         )
 
         if participation:
@@ -306,6 +324,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         # No telegram_group_id, show user's gullies
         try:
             # Get user's gullies
+            # FIXED: Use correct endpoint - GET /gullies/user/{user_id}
             user_gullies = await client.get_user_gullies(db_user["id"])
 
             # Debug log to see the structure
@@ -336,6 +355,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
                     elif "gully_id" in gully:
                         # This is a participation object, need to fetch the gully
                         gully_id = gully["gully_id"]
+                        # FIXED: Use correct endpoint - GET /gullies/{gully_id}
                         gully_obj = await client.get_gully(gully_id)
                         if gully_obj:
                             keyboard.append(
@@ -467,7 +487,10 @@ async def team_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     client = await get_onboarding_client()
 
     # Get user from database
-    db_user = await client.get_user(user.id)
+    # FIXED: Use correct endpoint - GET /users/ with telegram_id param
+    users = await client.get_users(telegram_id=user.id)
+    db_user = users[0] if users and len(users) > 0 else None
+
     if not db_user:
         await update.message.reply_text(
             "❌ Sorry, there was an error with your account. Please try again later."
@@ -479,21 +502,28 @@ async def team_name_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     if telegram_group_id:
         # Try to join the gully
-        gully = await client.get_gully_by_telegram_id(telegram_group_id)
+        # FIXED: Use correct endpoint - GET /gullies/group/{telegram_group_id}
+        gully = await client.get_gully_by_telegram_group_id(telegram_group_id)
 
         if gully:
             # Join the gully
-            result = await client.join_gully(
-                user_id=db_user["id"], gully_id=gully["id"], team_name=team_name
-            )
+            # FIXED: Use correct endpoint - POST /participants/
+            participant_data = {
+                "user_id": db_user["id"],
+                "gully_id": gully["id"],
+                "team_name": team_name,
+                "role": "member",
+            }
+            result = await client.add_participant(participant_data)
 
             if result:
                 # Set as active gully
                 context.user_data["active_gully_id"] = gully["id"]
 
                 # Get participation to check role
-                participation = await client.get_user_gully_participation(
-                    user_id=db_user["id"], gully_id=gully["id"]
+                # FIXED: Use correct endpoint - GET /participants/user/{user_id}/gully/{gully_id}
+                participation = await client.get_participant_by_user_and_gully(
+                    db_user["id"], gully["id"]
                 )
 
                 if participation and participation.get("role") == "admin":
@@ -600,6 +630,7 @@ async def select_gully_callback(
     context.user_data["gully_id"] = gully_id
 
     # Get gully
+    # FIXED: Use correct endpoint - GET /gullies/{gully_id}
     gully = await client.get_gully(gully_id)
     if not gully:
         await query.edit_message_text(
@@ -608,7 +639,10 @@ async def select_gully_callback(
         return ConversationHandler.END
 
     # Get user from database
-    db_user = await client.get_user(user.id)
+    # FIXED: Use correct endpoint - GET /users/ with telegram_id param
+    users = await client.get_users(telegram_id=user.id)
+    db_user = users[0] if users and len(users) > 0 else None
+
     if not db_user:
         await query.edit_message_text(
             "❌ Sorry, there was an error with your account. Please try again later."
@@ -616,8 +650,9 @@ async def select_gully_callback(
         return ConversationHandler.END
 
     # Check if user is already in gully
-    participation = await client.get_user_gully_participation(
-        user_id=db_user["id"], gully_id=gully_id
+    # FIXED: Use correct endpoint - GET /participants/user/{user_id}/gully/{gully_id}
+    participation = await client.get_participant_by_user_and_gully(
+        db_user["id"], gully_id
     )
 
     # If user already has a team name, show welcome back message

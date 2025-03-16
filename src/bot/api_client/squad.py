@@ -1,38 +1,38 @@
 """
-API client for squad-related operations.
+Squad API client for GullyGuru bot.
+Handles all squad-related API calls.
 """
 
 import logging
 from typing import Dict, Any, List, Optional
 
-from src.bot.api_client.base import get_api_client
+from src.bot.api_client.base import BaseApiClient
 
+# Configure logging
 logger = logging.getLogger(__name__)
 
 
-class SquadClient:
-    """Client for squad-related API operations."""
+class SquadApiClient(BaseApiClient):
+    """API client for squad-related endpoints."""
 
-    def __init__(self, api_client):
-        """Initialize the squad client with the API client."""
-        self.api_client = api_client
-
-    async def get_draft_squad(self, participant_id: int) -> Optional[Dict[str, Any]]:
+    async def get_draft_squad(self, participant_id: int) -> Dict[str, Any]:
         """
         Get the draft squad for a participant.
 
         Args:
-            participant_id: The participant ID
+            participant_id: Participant ID
 
         Returns:
-            The draft squad data or None if not found
+            Draft squad data
         """
-        try:
-            response = await self.api_client.get(f"/squads/draft/{participant_id}")
-            return response
-        except Exception as e:
-            logger.error(f"Error getting draft squad: {e}")
-            return None
+        endpoint = f"/fantasy/draft-squad/{participant_id}"
+        response = await self._make_request("GET", endpoint)
+
+        if response.get("success"):
+            return response.get("data", {})
+        else:
+            logger.error(f"Failed to get draft squad: {response.get('error')}")
+            return {}
 
     async def get_available_players(
         self, limit: int = 100, offset: int = 0
@@ -47,42 +47,29 @@ class SquadClient:
         Returns:
             List of player data
         """
-        try:
-            response = await self.api_client.get(
-                f"/players/available?limit={limit}&offset={offset}"
-            )
-            return response or []
-        except Exception as e:
-            logger.error(f"Error getting available players: {e}")
+        # Updated endpoint based on API documentation
+        endpoint = f"/players/?limit={limit}&offset={offset}"
+        response = await self._make_request("GET", endpoint)
+
+        if response.get("success"):
+            # Handle the paginated response format
+            data = response.get("data", {})
+            if isinstance(data, dict) and "items" in data:
+                return data.get("items", [])
+            elif isinstance(data, list):
+                return data
+            else:
+                logger.warning(f"Unexpected response format: {data}")
+                return []
+        else:
+            logger.error(f"Error getting players: {response.get('error')}")
             return []
-
-    async def add_player_to_draft(
-        self, participant_id: int, player_id: int
-    ) -> Dict[str, Any]:
-        """
-        Add a player to a draft squad.
-
-        Args:
-            participant_id: The participant ID
-            player_id: The player ID
-
-        Returns:
-            Response data with success status
-        """
-        try:
-            response = await self.api_client.post(
-                f"/squads/draft/{participant_id}/players", json={"player_id": player_id}
-            )
-            return {"success": True, "data": response}
-        except Exception as e:
-            logger.error(f"Error adding player to draft: {e}")
-            return {"success": False, "error": str(e)}
 
     async def add_multiple_players_to_draft(
         self, participant_id: int, player_ids: List[int]
     ) -> Dict[str, Any]:
         """
-        Add multiple players to a draft squad in a single API call.
+        Add multiple players to a participant's draft squad.
 
         Args:
             participant_id: Participant ID
@@ -95,12 +82,80 @@ class SquadClient:
             logger.error("Both participant_id and player_ids are required")
             return {"success": False, "error": "Missing required parameters"}
 
-        try:
-            response = await self.api_client.post(
-                f"/squads/draft/{participant_id}/players",
-                json={"player_ids": player_ids},
-            )
-            return {"success": True, "data": response}
-        except Exception as e:
-            logger.error(f"Error adding players to draft: {e}")
-            return {"success": False, "error": str(e)}
+        endpoint = f"/fantasy/draft-squad/{participant_id}/add"
+        response = await self._make_request(
+            "POST", endpoint, json={"player_ids": player_ids}
+        )
+
+        if response.get("success"):
+            return {"success": True, "data": response.get("data", {})}
+        else:
+            logger.error(f"Error adding players to draft: {response.get('error')}")
+            return {"success": False, "error": response.get("error")}
+
+    async def remove_multiple_players_from_draft(
+        self, participant_id: int, player_ids: List[int]
+    ) -> Dict[str, Any]:
+        """
+        Remove multiple players from a participant's draft squad.
+
+        Args:
+            participant_id: Participant ID
+            player_ids: List of player IDs to remove
+
+        Returns:
+            Response with results of the operation
+        """
+        if not participant_id or not player_ids:
+            logger.error("Both participant_id and player_ids are required")
+            return {"success": False, "error": "Missing required parameters"}
+
+        endpoint = f"/fantasy/draft-squad/{participant_id}/remove"
+        response = await self._make_request(
+            "POST", endpoint, json={"player_ids": player_ids}
+        )
+
+        if response.get("success"):
+            return {"success": True, "data": response.get("data", {})}
+        else:
+            logger.error(f"Error removing players from draft: {response.get('error')}")
+            return {"success": False, "error": response.get("error")}
+
+    async def update_draft_squad(
+        self, participant_id: int, player_ids: List[int]
+    ) -> Dict[str, Any]:
+        """
+        Update a participant's entire draft squad.
+        This can be used to finalize the squad by setting all desired players at once.
+
+        Args:
+            participant_id: Participant ID
+            player_ids: Complete list of player IDs for the squad
+
+        Returns:
+            Response with results of the operation
+        """
+        if not participant_id:
+            logger.error("participant_id is required")
+            return {"success": False, "error": "Missing required parameter"}
+
+        endpoint = f"/fantasy/draft-squad/{participant_id}"
+        response = await self._make_request(
+            "PUT", endpoint, json={"player_ids": player_ids}
+        )
+
+        if response.get("success"):
+            return {"success": True, "data": response.get("data", {})}
+        else:
+            logger.error(f"Error updating draft squad: {response.get('error')}")
+            return {"success": False, "error": response.get("error")}
+
+
+async def get_squad_client() -> SquadApiClient:
+    """
+    Get an instance of the squad API client.
+
+    Returns:
+        SquadApiClient instance
+    """
+    return SquadApiClient()

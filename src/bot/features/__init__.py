@@ -90,16 +90,12 @@ def register_handlers(application):
     logger.info("Onboarding handlers registered successfully")
 
 
-def register_all_features(application: Application):
-    """
-    Register all feature handlers with the application.
+async def register_all_features(application):
+    """Register all feature handlers."""
+    # Register onboarding handlers
+    register_onboarding_handlers(application, skip_new_chat_members=False)
 
-    Args:
-        application: The application instance
-    """
-    logger.info("Registering all feature handlers")
-
-    # Register squad handlers
-    register_squad_handlers(application)
+    # Register squad handlers - properly await this
+    await register_squad_handlers(application)
 
     logger.info("All feature handlers registered successfully")
