@@ -5,4 +5,5 @@ SELECT * FROM gullies;
 
 SELECT * FROM gully_participants;
 
-DELETE FROM gully_participants WHERE id = 14;
+SELECT * FROM draft_selections
+WHERE gully_participant_id = 14

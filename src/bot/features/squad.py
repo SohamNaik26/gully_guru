@@ -304,21 +304,48 @@ async def show_player_selection(
     selected_player_ids = ctx_manager.get_selected_player_ids(context)
     logger.info(f"Currently selected: {len(selected_player_ids)} players")
 
-    # Log the selected player IDs for debugging
-    logger.info(f"Selected player IDs: {selected_player_ids}")
+    # Create a dictionary of player details by ID for quick lookup
+    player_dict = {player["id"]: player for player in all_players}
+
+    # Get details of selected players
+    selected_players = []
+    for player_id in selected_player_ids:
+        if player_id in player_dict:
+            selected_players.append(player_dict[player_id])
 
     # Create inline keyboard with players for the current page
     reply_markup = await get_player_inline_keyboard(
         all_players, selected_player_ids, page=current_page
     )
 
-    # Send message with player selection keyboard
+    # Build message text with current squad details
     message_text = (
         f"Select your squad (exactly {SQUAD_SIZE} players required).\n\n"
         f"Currently selected: {len(selected_player_ids)}/{SQUAD_SIZE} players.\n\n"
+    )
+
+    # Add current squad details if any players are selected
+    if selected_players:
+        message_text += "Your current squad:\n"
+        for i, player in enumerate(selected_players, 1):
+            message_text += f"{i}. {player['name']} ({player['team']}) - {player.get('base_price', 0)} Cr\n"
+        message_text += "\n"
+
+    message_text += (
         f"Tap a player to select/deselect, use navigation buttons to browse players, "
         f"then tap '✅ Submit Squad' when done."
     )
+
+    # Check if message is too long (Telegram has a 4096 character limit)
+    if len(message_text) > 4000:
+        # Truncate the squad list if needed
+        message_text = (
+            f"Select your squad (exactly {SQUAD_SIZE} players required).\n\n"
+            f"Currently selected: {len(selected_player_ids)}/{SQUAD_SIZE} players.\n\n"
+            f"(Squad list too long to display completely)\n\n"
+            f"Tap a player to select/deselect, use navigation buttons to browse players, "
+            f"then tap '✅ Submit Squad' when done."
+        )
 
     if isinstance(update, Update) and update.callback_query:
         logger.info("Showing player selection from callback query")

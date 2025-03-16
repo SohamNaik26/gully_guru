@@ -102,12 +102,45 @@ async def start_command(
     # If user doesn't exist, create them
     if not db_user:
         logger.info(f"Creating new user for {user.first_name} (ID: {user.id})")
-        db_user = await client.create_user(
-            telegram_id=user.id,
-            first_name=user.first_name,
-            last_name=user.last_name,
-            username=user.username,
-        )
+
+        # Construct full_name from first_name and last_name
+        full_name = user.first_name
+        if user.last_name:
+            full_name += f" {user.last_name}"
+
+        # Handle case where username might be None
+        username = user.username if user.username else f"user_{user.id}"
+
+        # Create user data dictionary
+        user_data = {
+            "telegram_id": user.id,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "username": username,
+            "full_name": full_name,
+        }
+
+        logger.info(f"Sending user data to API: {user_data}")
+
+        # Try direct API call to debug
+        try:
+            endpoint = "/api/users/"
+            response = await client._make_request("POST", endpoint, data=user_data)
+            if response.get("success"):
+                db_user = response.get("data", {})
+                logger.info(f"Successfully created user: {db_user}")
+            else:
+                logger.error(f"Failed to create user via direct API call: {response}")
+                await update.message.reply_text(
+                    "⚠️ There was an error creating your account. Please try again later."
+                )
+                return ConversationHandler.END
+        except Exception as e:
+            logger.error(f"Exception during direct API call: {e}")
+            await update.message.reply_text(
+                "⚠️ There was an error creating your account. Please try again later."
+            )
+            return ConversationHandler.END
 
         if not db_user:
             await update.message.reply_text(
@@ -162,22 +195,30 @@ async def start_command(
             return ConversationHandler.END
 
         # Check if user is already a participant in this gully
-        participant = await client.get_participant_by_user_and_gully(
-            user_id=db_user["id"], gully_id=gully_id
-        )
-
-        if participant:
-            # User is already a participant, set as active gully
-            ctx_manager.set_active_gully_id(context, gully_id)
-            ctx_manager.set_participant_id(context, participant["id"])
-
-            await update.message.reply_text(
-                f"Welcome back to Gully '{gully['name']}'!\n\n"
-                f"Your team: {participant['team_name']}\n\n"
-                f"🏏 Use /squad to manage your squad\n"
-                f"🎟️ Use /gullies to switch gullies"
+        try:
+            participant = await client.get_participant_by_user_and_gully(
+                user_id=db_user["id"], gully_id=gully_id
             )
-            return ConversationHandler.END
+
+            if participant:
+                # User is already a participant, set as active gully
+                ctx_manager.set_active_gully_id(context, gully_id)
+                ctx_manager.set_participant_id(context, participant["id"])
+
+                await update.message.reply_text(
+                    f"Welcome back to Gully '{gully['name']}'!\n\n"
+                    f"Your team: {participant['team_name']}\n\n"
+                    f"🏏 Use /squad to manage your squad\n"
+                    f"🎟️ Use /gullies to switch gullies"
+                )
+                return ConversationHandler.END
+        except Exception as e:
+            # If we get here, the user is not a participant (404 error)
+            logger.info(
+                f"User {db_user['id']} is not a participant in gully {gully_id}: {e}"
+            )
+            # Continue with the registration flow
+            pass
 
         # User is not a participant, ask for team name
         # Store necessary data in user_data dictionary which persists across conversation steps
@@ -267,7 +308,22 @@ async def handle_team_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     try:
         logger.info(f"Adding participant with data: {participant_data}")
-        participant = await client.add_participant(participant_data)
+
+        # Try direct API call to debug
+        endpoint = "/api/participants/"
+        response = await client._make_request("POST", endpoint, data=participant_data)
+
+        if response.get("success"):
+            participant = response.get("data", {})
+            logger.info(f"Successfully created participant: {participant}")
+        else:
+            logger.error(
+                f"Failed to create participant via direct API call: {response}"
+            )
+            await update.message.reply_text(
+                "⚠️ There was an error registering your team. Please try again later."
+            )
+            return ConversationHandler.END
 
         if not participant:
             logger.error("Failed to add participant - API returned None")
@@ -389,12 +445,46 @@ async def handle_new_group(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         # First, create the admin user if they don't exist
         admin_user = await client.get_user_by_telegram_id(user.id)
         if not admin_user:
-            admin_user = await client.create_user(
-                telegram_id=user.id,
-                first_name=user.first_name,
-                last_name=user.last_name,
-                username=user.username,
-            )
+            # Construct full_name from first_name and last_name
+            full_name = user.first_name
+            if user.last_name:
+                full_name += f" {user.last_name}"
+
+            # Handle case where username might be None
+            username = user.username if user.username else f"user_{user.id}"
+
+            # Create user data dictionary
+            user_data = {
+                "telegram_id": user.id,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "username": username,
+                "full_name": full_name,
+            }
+
+            logger.info(f"Sending admin user data to API: {user_data}")
+
+            # Try direct API call to debug
+            try:
+                endpoint = "/api/users/"
+                response = await client._make_request("POST", endpoint, data=user_data)
+                if response.get("success"):
+                    admin_user = response.get("data", {})
+                    logger.info(f"Successfully created admin user: {admin_user}")
+                else:
+                    logger.error(
+                        f"Failed to create admin user via direct API call: {response}"
+                    )
+                    await update.message.reply_text(
+                        "⚠️ There was an error setting up this group as a gully. Please try again later."
+                    )
+                    return
+            except Exception as e:
+                logger.error(f"Exception during direct admin user API call: {e}")
+                await update.message.reply_text(
+                    "⚠️ There was an error setting up this group as a gully. Please try again later."
+                )
+                return
 
         if not admin_user:
             logger.error("Failed to create or get admin user")
