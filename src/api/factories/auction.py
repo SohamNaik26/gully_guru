@@ -106,3 +106,26 @@ class AuctionResponseFactory:
                 "released_players": data.get("released_players", []),
             },
         }
+
+    @staticmethod
+    def create_players_by_participant_response(data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a response for players grouped by participant.
+
+        Args:
+            data: Players by participant data
+
+        Returns:
+            Response data
+        """
+        return {
+            "success": True,
+            "message": f"Retrieved players for gully {data.get('gully_id')}",
+            "data": {
+                "gully_id": data.get("gully_id"),
+                "gully_name": data.get("gully_name"),
+                "gully_status": data.get("gully_status"),
+                "participants": data.get("participants", []),
+                "total_players": data.get("total_players", 0),
+            },
+        }

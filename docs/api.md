@@ -241,12 +241,73 @@ This endpoint is useful for monitoring and health checks in production environme
 
 | Method | Endpoint | Description | Input | Output |
 |--------|----------|-------------|-------|--------|
-| POST | /auction/gullies/{gully_id}/start | Start auction for a gully | Path param: gully_id | AuctionStartResponse |
-| POST | /auction/gullies/{gully_id}/mark-contested | Mark contested players in a gully | Path param: gully_id | Dict[str, Any] |
-| GET | /auction/gullies/{gully_id}/contested-players | Get contested players for a gully | Path param: gully_id | List[ContestPlayerResponse] |
-| GET | /auction/gullies/{gully_id}/uncontested-players | Get uncontested players for a gully | Path param: gully_id | List[ContestPlayerResponse] |
+| POST | /auction/gullies/{gully_id}/start | Start auction for a gully | Path param: gully_id | Dict[str, Any] |
+| POST | /auction/gullies/{gully_id}/stop | Stop auction for a gully | Path param: gully_id | Dict[str, Any] |
+| GET | /auction/gullies/{gully_id}/auction-queue | Get all players from the auction queue | Path param: gully_id | Dict[str, Any] |
+| GET | /auction/gullies/{gully_id}/contested-players | Get contested players for a gully | Path param: gully_id | Dict[str, Any] |
+| GET | /auction/gullies/{gully_id}/uncontested-players | Get uncontested players for a gully | Path param: gully_id | Dict[str, Any] |
+| GET | /auction/gullies/{gully_id}/all-players | Get all players for a gully | Path param: gully_id | Dict[str, Any] |
 | PUT | /auction/queue/{auction_queue_id}/status | Update an auction's status | Path param: auction_queue_id, Query params: status, gully_id | SuccessResponse |
 | POST | /auction/resolve-contested/{player_id}/{winning_participant_id} | Resolve a contested player | Path params: player_id, winning_participant_id | Dict[str, Any] |
+| POST | /auction/participants/{participant_id}/release-players | Release players from a participant | Path param: participant_id, Body: ReleasePlayersRequest | Dict[str, Any] |
+
+#### Response Formats
+
+The auction endpoints now return structured responses that group players by participant:
+
+**Contested/Uncontested/All Players Response:**
+```json
+{
+  "gully_id": 1,
+  "gully_name": "Test Gully",
+  "gully_status": "auction",
+  "participants": [
+    {
+      "participant_id": 1,
+      "user_id": 101,
+      "team_name": "Team Alpha",
+      "players": [
+        {
+          "player_id": 201,
+          "player_name": "Virat Kohli",
+          "team": "RCB",
+          "player_type": "BAT",
+          "base_price": 100.0,
+          "status": "contested"
+        },
+        // More players...
+      ]
+    },
+    // More participants...
+  ],
+  "total_players": 25
+}
+```
+
+**Release Players Request:**
+```json
+{
+  "player_ids": [1, 2, 3]
+}
+```
+
+**Release Players Response:**
+```json
+{
+  "released_count": 3,
+  "released_players": [
+    {
+      "player_id": 1,
+      "player_name": "Player Name",
+      "team": "Team Name",
+      "player_type": "BAT",
+      "base_price": 100.0
+    },
+    // More players...
+  ],
+  "message": "Released 3 players from participant 1"
+}
+```
 
 ### Admin Endpoints
 

@@ -380,7 +380,100 @@ class AuctionService:
         # Commit changes
         await self.db.commit()
 
-    async def get_contested_players(self, gully_id: int) -> List[ContestPlayerResponse]:
+    async def get_players_by_participant(
+        self, gully_id: int, status: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get players grouped by participant for a gully.
+
+        Args:
+            gully_id: Gully ID
+            status: Optional filter for player status (locked, contested, owned)
+
+        Returns:
+            Dict with gully info and participants with their players
+
+        Raises:
+            NotFoundException: If gully not found
+        """
+        # Check if gully exists
+        gully = await self._get_gully(gully_id)
+        if not gully:
+            raise NotFoundException(resource_type="Gully", resource_id=gully_id)
+
+        # Build the query for participant players
+        query = (
+            select(ParticipantPlayer)
+            .join(
+                GullyParticipant,
+                ParticipantPlayer.gully_participant_id == GullyParticipant.id,
+            )
+            .where(GullyParticipant.gully_id == gully_id)
+        )
+
+        # Add status filter if provided
+        if status:
+            query = query.where(ParticipantPlayer.status == status)
+
+        # Execute the query
+        result = await self.db.execute(query)
+        participant_players = result.scalars().all()
+
+        # Get player IDs and participant IDs
+        player_ids = [pp.player_id for pp in participant_players]
+        participant_ids = [pp.gully_participant_id for pp in participant_players]
+
+        # Fetch players
+        stmt = select(Player).where(Player.id.in_(player_ids))
+        result = await self.db.execute(stmt)
+        players = {p.id: p for p in result.scalars().all()}
+
+        # Fetch participants
+        stmt = select(GullyParticipant).where(GullyParticipant.id.in_(participant_ids))
+        result = await self.db.execute(stmt)
+        participants = {p.id: p for p in result.scalars().all()}
+
+        # Group players by participant
+        participant_players_map = {}
+        for participant_player in participant_players:
+            player_id = participant_player.player_id
+            participant_id = participant_player.gully_participant_id
+
+            player = players.get(player_id)
+            participant = participants.get(participant_id)
+
+            if not player or not participant:
+                continue
+
+            if participant_id not in participant_players_map:
+                participant_players_map[participant_id] = {
+                    "participant_id": participant_id,
+                    "user_id": participant.user_id,
+                    "team_name": participant.team_name,
+                    "players": [],
+                }
+
+            participant_players_map[participant_id]["players"].append(
+                {
+                    "player_id": player_id,
+                    "player_name": player.name,
+                    "team": player.team,
+                    "player_type": player.player_type,
+                    "base_price": float(player.base_price or 0),
+                    "status": participant_player.status,
+                }
+            )
+
+        # Create response
+        return {
+            "gully_id": gully_id,
+            "gully_name": gully.name,
+            "gully_status": gully.status,
+            "participants": list(participant_players_map.values()),
+            "total_players": len(participant_players),
+        }
+
+    async def get_contested_players(self, gully_id: int) -> Dict[str, Any]:
         """
         Get contested players for a gully.
 
@@ -388,83 +481,16 @@ class AuctionService:
             gully_id: Gully ID
 
         Returns:
-            List of contested players with participant info
+            Dict with gully info and participants with their contested players
 
         Raises:
             NotFoundException: If gully not found
         """
-        # Check if gully exists
-        gully = await self._get_gully(gully_id)
-        if not gully:
-            raise NotFoundException(resource_type="Gully", resource_id=gully_id)
-
-        # Get all contested participant players for the gully
-        stmt = (
-            select(ParticipantPlayer)
-            .join(
-                GullyParticipant,
-                ParticipantPlayer.gully_participant_id == GullyParticipant.id,
-            )
-            .where(
-                and_(
-                    GullyParticipant.gully_id == gully_id,
-                    ParticipantPlayer.status == UserPlayerStatus.CONTESTED.value,
-                )
-            )
+        return await self.get_players_by_participant(
+            gully_id, UserPlayerStatus.CONTESTED.value
         )
-        result = await self.db.execute(stmt)
-        participant_players = result.scalars().all()
 
-        # Get player IDs and participant IDs
-        player_ids = [pp.player_id for pp in participant_players]
-        participant_ids = [pp.gully_participant_id for pp in participant_players]
-
-        # Fetch players
-        stmt = select(Player).where(Player.id.in_(player_ids))
-        result = await self.db.execute(stmt)
-        players = {p.id: p for p in result.scalars().all()}
-
-        # Fetch participants
-        stmt = select(GullyParticipant).where(GullyParticipant.id.in_(participant_ids))
-        result = await self.db.execute(stmt)
-        participants = {p.id: p for p in result.scalars().all()}
-
-        # Group by player
-        player_map = {}
-        for participant_player in participant_players:
-            player_id = participant_player.player_id
-            player = players.get(player_id)
-            participant = participants.get(participant_player.gully_participant_id)
-
-            if not player or not participant:
-                continue
-
-            if player_id not in player_map:
-                player_map[player_id] = ContestPlayerResponse(
-                    player_id=player_id,
-                    name=player.name,
-                    team=player.team,
-                    player_type=PlayerType(player.player_type),
-                    base_price=float(player.base_price or 0),
-                    contested_by=[],
-                    contest_count=0,
-                )
-
-            # Add participant info
-            player_map[player_id].contested_by.append(
-                ParticipantInfo(
-                    participant_id=participant.id,
-                    user_id=participant.user_id,
-                    team_name=participant.team_name,
-                )
-            )
-            player_map[player_id].contest_count += 1
-
-        return list(player_map.values())
-
-    async def get_uncontested_players(
-        self, gully_id: int
-    ) -> List[UncontestedPlayerResponse]:
+    async def get_uncontested_players(self, gully_id: int) -> Dict[str, Any]:
         """
         Get uncontested players for a gully.
 
@@ -472,73 +498,29 @@ class AuctionService:
             gully_id: Gully ID
 
         Returns:
-            List of uncontested players with participant info
+            Dict with gully info and participants with their uncontested players
 
         Raises:
             NotFoundException: If gully not found
         """
-        # Check if gully exists
-        gully = await self._get_gully(gully_id)
-        if not gully:
-            raise NotFoundException(resource_type="Gully", resource_id=gully_id)
-
-        # Get all uncontested participant players for the gully
-        stmt = (
-            select(ParticipantPlayer)
-            .join(
-                GullyParticipant,
-                ParticipantPlayer.gully_participant_id == GullyParticipant.id,
-            )
-            .where(
-                and_(
-                    GullyParticipant.gully_id == gully_id,
-                    ParticipantPlayer.status == UserPlayerStatus.LOCKED.value,
-                )
-            )
+        return await self.get_players_by_participant(
+            gully_id, UserPlayerStatus.LOCKED.value
         )
-        result = await self.db.execute(stmt)
-        participant_players = result.scalars().all()
 
-        # Get player IDs and participant IDs
-        player_ids = [pp.player_id for pp in participant_players]
-        participant_ids = [pp.gully_participant_id for pp in participant_players]
+    async def get_all_players(self, gully_id: int) -> Dict[str, Any]:
+        """
+        Get all players for a gully.
 
-        # Fetch players
-        stmt = select(Player).where(Player.id.in_(player_ids))
-        result = await self.db.execute(stmt)
-        players = {p.id: p for p in result.scalars().all()}
+        Args:
+            gully_id: Gully ID
 
-        # Fetch participants
-        stmt = select(GullyParticipant).where(GullyParticipant.id.in_(participant_ids))
-        result = await self.db.execute(stmt)
-        participants = {p.id: p for p in result.scalars().all()}
+        Returns:
+            Dict with gully info and participants with all their players
 
-        # Create player list
-        uncontested_players = []
-        for participant_player in participant_players:
-            player = players.get(participant_player.player_id)
-            participant = participants.get(participant_player.gully_participant_id)
-
-            if not player or not participant:
-                continue
-
-            uncontested_players.append(
-                UncontestedPlayerResponse(
-                    player_id=player.id,
-                    player_name=player.name,
-                    team=player.team,
-                    role=player.player_type,
-                    participants=[
-                        ParticipantInfo(
-                            participant_id=participant.id,
-                            user_id=participant.user_id,
-                            team_name=participant.team_name,
-                        )
-                    ],
-                )
-            )
-
-        return uncontested_players
+        Raises:
+            NotFoundException: If gully not found
+        """
+        return await self.get_players_by_participant(gully_id)
 
     async def update_auction_status(
         self, auction_queue_id: int, status: AuctionStatusEnum, gully_id: int

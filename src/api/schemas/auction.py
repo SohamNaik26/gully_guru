@@ -205,12 +205,51 @@ class AuctionQueueListResponse(BaseModel):
 
 class ReleasePlayersRequest(BaseModel):
     """Schema for releasing players request."""
+
     player_ids: List[int] = Field(..., description="List of player IDs to release")
-    participant_id: int = Field(..., description="ID of the participant releasing the players")
 
 
 class ReleasePlayersResponse(BaseModel):
     """Schema for releasing players response."""
+
     released_count: int = Field(..., description="Number of players released")
-    released_players: List[Dict[str, Any]] = Field(..., description="List of released players")
+    released_players: List[Dict[str, Any]] = Field(
+        ..., description="List of released players"
+    )
     message: str = Field(..., description="Release message")
+
+
+class PlayerInfo(BaseModel):
+    """Schema for player information in participant responses."""
+
+    player_id: int = Field(..., description="ID of the player")
+    player_name: str = Field(..., description="Name of the player")
+    team: str = Field(..., description="Team of the player")
+    player_type: str = Field(..., description="Type of player")
+    base_price: float = Field(..., description="Base price of the player")
+    status: str = Field(
+        ..., description="Status of the player (locked, contested, owned)"
+    )
+
+
+class ParticipantWithPlayers(BaseModel):
+    """Schema for participant with their players."""
+
+    participant_id: int = Field(..., description="ID of the participant")
+    user_id: int = Field(..., description="ID of the user")
+    team_name: str = Field(..., description="Team name of the participant")
+    players: List[PlayerInfo] = Field(
+        default_factory=list, description="List of players owned by this participant"
+    )
+
+
+class GullyPlayersResponse(BaseModel):
+    """Schema for gully players response."""
+
+    gully_id: int = Field(..., description="ID of the gully")
+    gully_name: str = Field(..., description="Name of the gully")
+    gully_status: str = Field(..., description="Status of the gully")
+    participants: List[ParticipantWithPlayers] = Field(
+        default_factory=list, description="List of participants with their players"
+    )
+    total_players: int = Field(0, description="Total number of players")

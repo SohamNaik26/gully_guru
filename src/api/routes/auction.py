@@ -149,7 +149,7 @@ async def get_all_players_from_auction_queue(
 
 @router.get(
     "/gullies/{gully_id}/contested-players",
-    response_model=List[ContestPlayerResponse],
+    response_model=Dict[str, Any],
     status_code=status.HTTP_200_OK,
 )
 @handle_exceptions
@@ -165,21 +165,18 @@ async def get_contested_players(
         auction_service: Auction service instance
 
     Returns:
-        List[ContestPlayerResponse]: List of contested players
+        Dict with gully info and participants with their contested players
 
     Raises:
         NotFoundException: If gully not found
     """
-    contested_players = await auction_service.get_contested_players(gully_id)
-    return [
-        ContestPlayerResponseFactory.create_response(player)
-        for player in contested_players
-    ]
+    result = await auction_service.get_contested_players(gully_id)
+    return AuctionResponseFactory.create_players_by_participant_response(result)
 
 
 @router.get(
     "/gullies/{gully_id}/uncontested-players",
-    response_model=List[ContestPlayerResponse],
+    response_model=Dict[str, Any],
     status_code=status.HTTP_200_OK,
 )
 @handle_exceptions
@@ -195,16 +192,40 @@ async def get_uncontested_players(
         auction_service: Auction service instance
 
     Returns:
-        List[ContestPlayerResponse]: List of uncontested players
+        Dict with gully info and participants with their uncontested players
 
     Raises:
         NotFoundException: If gully not found
     """
-    uncontested_players = await auction_service.get_uncontested_players(gully_id)
-    return [
-        ContestPlayerResponseFactory.create_response(player)
-        for player in uncontested_players
-    ]
+    result = await auction_service.get_uncontested_players(gully_id)
+    return AuctionResponseFactory.create_players_by_participant_response(result)
+
+
+@router.get(
+    "/gullies/{gully_id}/all-players",
+    response_model=Dict[str, Any],
+    status_code=status.HTTP_200_OK,
+)
+@handle_exceptions
+async def get_all_players(
+    gully_id: int = Path(..., description="ID of the gully"),
+    auction_service: AuctionService = Depends(get_auction_service),
+):
+    """
+    Get all players for a gully.
+
+    Args:
+        gully_id: Gully ID
+        auction_service: Auction service instance
+
+    Returns:
+        Dict with gully info and participants with all their players
+
+    Raises:
+        NotFoundException: If gully not found
+    """
+    result = await auction_service.get_all_players(gully_id)
+    return AuctionResponseFactory.create_players_by_participant_response(result)
 
 
 @router.put(
@@ -297,11 +318,6 @@ async def release_players(
     Returns:
         Release players response
     """
-    # Validate that the participant ID in the path matches the one in the request
-    if participant_id != request.participant_id:
-        raise ValidationException(
-            f"Participant ID in path ({participant_id}) does not match the one in the request ({request.participant_id})"
-        )
 
     result = await auction_service.release_players(
         participant_id=participant_id,
