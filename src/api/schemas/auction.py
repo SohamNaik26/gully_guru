@@ -158,12 +158,10 @@ class AuctionStatusUpdateRequest(BaseModel):
 
 
 class ResolveContestedPlayerRequest(BaseModel):
-    """Schema for resolving contested player."""
+    """Schema for resolving a contested player."""
 
-    player_id: int = Field(..., description="ID of the player")
-    winning_participant_id: int = Field(
-        ..., description="ID of the winning participant"
-    )
+    auction_queue_id: int = Field(..., description="ID of the auction queue item")
+    bid_amount: float = Field(..., gt=0, description="Final bid amount")
 
 
 class ResolveContestedPlayerResponse(BaseModel):
@@ -253,3 +251,29 @@ class GullyPlayersResponse(BaseModel):
         default_factory=list, description="List of participants with their players"
     )
     total_players: int = Field(0, description="Total number of players")
+
+
+class NextPlayerResponse(BaseModel):
+    """Schema for the next player response."""
+
+    player: Optional[Dict[str, Any]] = Field(
+        None, description="Next player in auction queue"
+    )
+    participants: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="List of participants with their team and budget",
+    )
+
+
+class RevertAuctionRequest(BaseModel):
+    """Schema for reverting an auction result."""
+
+    auction_queue_id: int = Field(..., description="ID of the auction queue item")
+
+
+class RevertAuctionResponse(BaseModel):
+    """Schema for auction reversion response."""
+
+    status: str = Field("success", description="Status of the reversion")
+    auction_queue_id: int = Field(..., description="ID of the auction queue item")
+    message: str = Field(..., description="Reversion message")

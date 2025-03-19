@@ -2,7 +2,7 @@
 Participant schemas for the GullyGuru API.
 """
 
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
 from src.db.models.models import ParticipantRole
@@ -49,14 +49,14 @@ class ParticipantUpdate(BaseModel):
         return v
 
 
-class ParticipantResponse(ParticipantBase):
-    """Model for participant response."""
-
-    id: int = Field(..., description="ID of the participant")
-    created_at: datetime = Field(..., description="Creation timestamp")
-    updated_at: datetime = Field(..., description="Last update timestamp")
-
+class ParticipantResponse(BaseModel):
+    id: int
+    user_id: int
+    gully_id: int
+    role: str
+    team_name: str
+    created_at: datetime
+    updated_at: datetime
+    
     class Config:
-        """Pydantic configuration."""
-
-        from_attributes = True
+        from_attributes = True  # For ORM mode

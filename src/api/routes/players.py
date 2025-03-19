@@ -35,7 +35,6 @@ async def create_player(
         ..., description="ID of the admin user creating the player"
     ),
     db: AsyncSession = Depends(get_db),
-    _: bool = Depends(lambda: check_is_system_admin(admin_user_id, db)),
 ):
     """
     Create a new player.

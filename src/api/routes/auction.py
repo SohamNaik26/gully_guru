@@ -13,6 +13,8 @@ from src.api.schemas.auction import (
     AuctionQueueListResponse,
     ReleasePlayersRequest,
     ReleasePlayersResponse,
+    ResolveContestedPlayerRequest,
+    RevertAuctionRequest,
 )
 from src.api.schemas.fantasy import (
     AuctionStartResponse,
@@ -265,8 +267,39 @@ async def update_auction_status(
     return {"success": True, "message": f"Auction status updated to {status}"}
 
 
+@router.get(
+    "/gullies/{gully_id}/next-player",
+    response_model=Dict[str, Any],
+    summary="Get the next player from the auction queue",
+    status_code=status.HTTP_200_OK,
+)
+@handle_exceptions
+async def get_next_player(
+    gully_id: int = Path(..., description="ID of the gully"),
+    auction_service: AuctionService = Depends(get_auction_service),
+):
+    """
+    Get the next player from the auction queue for a specific gully.
+    Also provides current budget & team details for all participants.
+
+    Args:
+        gully_id: ID of the gully
+        auction_service: Auction service instance
+
+    Returns:
+        Dict with next player and participant information
+
+    Raises:
+        NotFoundException: If gully not found
+        ValidationException: If gully is not in auction state or participants haven't confirmed their players
+    """
+    result = await auction_service.get_next_player(gully_id)
+    return AuctionResponseFactory.create_next_player_response(result)
+
+
 @router.post(
     "/resolve-contested/{player_id}/{winning_participant_id}",
+    response_model=Dict[str, Any],
     summary="Resolve a contested player",
     status_code=status.HTTP_200_OK,
 )
@@ -276,6 +309,7 @@ async def resolve_contested_player(
     winning_participant_id: int = Path(
         ..., description="ID of the winning participant"
     ),
+    request: ResolveContestedPlayerRequest = Body(..., description="Bid details"),
     auction_service: AuctionService = Depends(get_auction_service),
 ):
     """
@@ -284,15 +318,63 @@ async def resolve_contested_player(
     Args:
         player_id: ID of the player
         winning_participant_id: ID of the winning participant
+        request: Bid details including auction_queue_id and bid_amount
         auction_service: Auction service instance
 
     Returns:
-        Updated player data
+        Dict with status and resolution information
+
+    Raises:
+        NotFoundException: If player, participant, or auction queue item not found
+        ValidationException: If bid amount exceeds budget or auction status is not valid
     """
     result = await auction_service.resolve_contested_player(
-        player_id, winning_participant_id
+        player_id=player_id,
+        winning_participant_id=winning_participant_id,
+        auction_queue_id=request.auction_queue_id,
+        bid_amount=request.bid_amount,
     )
-    return result
+    return AuctionResponseFactory.create_resolve_contested_player_response(result)
+
+
+@router.post(
+    "/revert/{player_id}/{winning_participant_id}",
+    response_model=Dict[str, Any],
+    summary="Revert an auction result",
+    status_code=status.HTTP_200_OK,
+)
+@handle_exceptions
+async def revert_auction(
+    player_id: int = Path(..., description="ID of the player"),
+    winning_participant_id: int = Path(
+        ..., description="ID of the winning participant"
+    ),
+    request: RevertAuctionRequest = Body(..., description="Auction queue ID"),
+    auction_service: AuctionService = Depends(get_auction_service),
+):
+    """
+    Revert a previously assigned auctioned player, restoring the auction queue
+    and refunding the bid amount.
+
+    Args:
+        player_id: ID of the player
+        winning_participant_id: ID of the winning participant
+        request: Request body with auction queue ID
+        auction_service: Auction service instance
+
+    Returns:
+        Dict with status and message
+
+    Raises:
+        NotFoundException: If player, participant, or auction queue item not found
+        ValidationException: If the player is not owned by the participant or gully is not in auction state
+    """
+    result = await auction_service.revert_auction(
+        player_id=player_id,
+        winning_participant_id=winning_participant_id,
+        auction_queue_id=request.auction_queue_id,
+    )
+    return AuctionResponseFactory.create_revert_auction_response(result)
 
 
 @router.post(

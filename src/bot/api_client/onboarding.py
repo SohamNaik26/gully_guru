@@ -1,12 +1,7 @@
-"""
-Onboarding API client for GullyGuru.
-Handles user registration, gully creation, and participant management.
-"""
-
 import logging
 from typing import Dict, Any, Optional, List
-
 from src.bot.api_client.base import BaseApiClient, get_api_client
+from src.bot.context import manager as ctx_manager
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -119,7 +114,7 @@ class OnboardingApiClient(BaseApiClient):
 
         Args:
             telegram_id: Telegram user ID
-            first_name: User's first name
+            first_name: 'User\'s first name'
             last_name: User's last name (optional)
             username: Telegram username (optional)
 
@@ -162,12 +157,13 @@ class OnboardingApiClient(BaseApiClient):
 
     # Gully Management Methods
 
-    async def get_gully(self, gully_id: int) -> Optional[Dict[str, Any]]:
+    async def get_gully(self, gully_id: int, context=None) -> Optional[Dict[str, Any]]:
         """
-        Get a gully by ID.
+        Get a gully by ID and update context cache if provided.
 
         Args:
             gully_id: Gully ID
+            context: Context for caching
 
         Returns:
             Gully object if found, None otherwise
@@ -187,6 +183,11 @@ class OnboardingApiClient(BaseApiClient):
             gully_data = response.get("data")
             # Cache the gully data
             self._gully_cache[gully_id] = gully_data
+
+            # If context is provided, update the cache
+            if context and response:
+                ctx_manager.update_gully_data(context, gully_id, response)
+
             return gully_data
         else:
             logger.error(
@@ -195,13 +196,14 @@ class OnboardingApiClient(BaseApiClient):
             return None
 
     async def get_gully_by_telegram_group_id(
-        self, telegram_group_id: int
+        self, telegram_group_id: int, context=None
     ) -> Optional[Dict[str, Any]]:
         """
-        Get a gully by Telegram group ID.
+        Get a gully by Telegram group ID and update context cache if provided.
 
         Args:
             telegram_group_id: Telegram group ID
+            context: Context for caching
 
         Returns:
             Gully object if found, None otherwise
@@ -213,6 +215,9 @@ class OnboardingApiClient(BaseApiClient):
         response = await self._make_request("GET", endpoint)
 
         if response.get("success"):
+            gully_id = response.get("id")
+            if gully_id:
+                ctx_manager.update_gully_data(context, gully_id, response)
             return response.get("data")
         else:
             logger.error(
@@ -257,12 +262,15 @@ class OnboardingApiClient(BaseApiClient):
             logger.error(f"Failed to create gully: {response.get('error')}")
             return None
 
-    async def get_user_gullies(self, user_id: int) -> List[Dict[str, Any]]:
+    async def get_user_gullies(
+        self, user_id: int, context=None
+    ) -> List[Dict[str, Any]]:
         """
-        Get all gullies a user participates in.
+        Get all gullies a user participates in and update context cache if provided.
 
         Args:
             user_id: User ID
+            context: Context for caching
 
         Returns:
             List of gullies
@@ -274,7 +282,16 @@ class OnboardingApiClient(BaseApiClient):
         response = await self._make_request("GET", endpoint)
 
         if response.get("success"):
-            return response.get("data", [])
+            gullies = response.get("data", [])
+
+            # If context is provided, update the cache for each gully
+            if context and response:
+                for gully in gullies:
+                    gully_id = gully.get("id")
+                    if gully_id:
+                        ctx_manager.update_gully_data(context, gully_id, gully)
+
+            return gullies
         else:
             logger.error(f"Failed to get user gullies: {response.get('error')}")
             return []
@@ -345,9 +362,31 @@ class OnboardingApiClient(BaseApiClient):
         Returns:
             List of participants
         """
-        params = {}
+        # If we have a gully_id, use the gully-specific endpoint
         if gully_id:
-            params["gully_id"] = gully_id
+            # This is the correct endpoint path based on your API route
+            endpoint = f"/participants/gully/{gully_id}"
+            logger.info(
+                f"Getting participants for gully {gully_id} from endpoint: {endpoint}"
+            )
+
+            response = await self._make_request("GET", endpoint)
+
+            if response.get("success"):
+                logger.info(f"Successfully retrieved participants for gully {gully_id}")
+                data = response.get("data", [])
+                # Handle both list and dict responses
+                if isinstance(data, dict):
+                    return data.get("items", [])
+                return data
+            else:
+                logger.error(
+                    f"Failed to get participants for gully {gully_id}: {response.get('error')}"
+                )
+                return []
+
+        # If we're filtering by user_id or no filters
+        params = {}
         if user_id:
             params["user_id"] = user_id
 
@@ -355,44 +394,26 @@ class OnboardingApiClient(BaseApiClient):
         response = await self._make_request("GET", endpoint, params=params)
 
         if response.get("success"):
-            data = response.get("data", {})
-            if isinstance(data, dict) and "items" in data:
+            data = response.get("data", [])
+            # Handle both list and dict responses
+            if isinstance(data, dict):
                 return data.get("items", [])
-            elif isinstance(data, list):
-                return data
-            else:
-                logger.warning(f"Unexpected response format: {data}")
-                return []
+            return data
         else:
             logger.error(f"Failed to get participants: {response.get('error')}")
             return []
 
-    async def update_participant(
-        self, participant_id: int, data: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+    async def get_gully_participants(self, gully_id: int) -> List[Dict[str, Any]]:
         """
-        Update a participant's information.
-
-        Args:
-            participant_id: Participant ID
-            data: Data to update
-
-        Returns:
-            Updated participant object or None if participant not found
+        Alias for get_participants with gully_id - for backward compatibility.
         """
-        if not participant_id:
-            raise ValueError("participant_id is required")
-        if not data:
-            raise ValueError("data is required")
+        return await self.get_participants(gully_id=gully_id)
 
-        endpoint = f"/participants/{participant_id}"
-        response = await self._make_request("PUT", endpoint, data=data)
-
-        if response.get("success"):
-            return response.get("data")
-        else:
-            logger.error(f"Failed to update participant: {response.get('error')}")
-            return None
+    async def get_all_participants(self) -> List[Dict[str, Any]]:
+        """
+        Get all participants across all gullies.
+        """
+        return await self.get_participants()
 
 
 # Convenience functions for the bot
@@ -641,3 +662,12 @@ async def handle_complete_onboarding(
     result["success"] = gully is not None and participation is not None
 
     return result
+
+
+def get_initialized_onboarding_client():
+    """
+    Returns an initialized onboarding client.
+    This function is imported by auction.py.
+    """
+    client = get_onboarding_client()
+    return client

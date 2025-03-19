@@ -7,12 +7,9 @@ import asyncio
 import logging
 import os
 from functools import wraps
-from typing import Callable, Any, Optional
-
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import (
-    Application,
     ApplicationBuilder,
     ContextTypes,
 )
@@ -22,9 +19,6 @@ from src.bot.command_scopes import setup_command_scopes
 
 # Import centralized client initialization
 from src.bot.api_client.init import wait_for_api
-
-# Import features
-from src.bot.features import onboarding, squad
 
 # Configure logging
 logging.basicConfig(
@@ -110,13 +104,8 @@ async def main_async():
     # Register handlers
     logger.info("Registering handlers")
 
-    # Register onboarding handlers
-    for handler in onboarding.get_handlers():
-        application.add_handler(handler)
-
-    # Register squad handlers
-    for handler in squad.get_handlers():
-        application.add_handler(handler)
+    # Register feature handlers
+    setup_handlers(application)
 
     # Start the bot
     logger.info("Starting bot...")
@@ -136,6 +125,32 @@ async def main_async():
         await application.updater.stop()
         await application.stop()
         await application.shutdown()
+
+
+def setup_handlers(application):
+    """Set up all command handlers for the bot."""
+    # Import feature modules
+    from src.bot.features import (
+        get_onboarding_handlers,
+        get_squad_handlers,
+        get_auction_handlers,
+        get_player_release_handlers,
+    )
+
+    # Register handlers in order of specificity (most specific first)
+    logger.info("Registering onboarding handlers")
+    application.add_handlers(get_onboarding_handlers())
+
+    logger.info("Registering player release handlers")
+    application.add_handlers(get_player_release_handlers())
+
+    logger.info("Registering auction handlers")
+    application.add_handlers(get_auction_handlers())
+
+    logger.info("Registering squad handlers")
+    application.add_handlers(get_squad_handlers())
+
+    logger.info("All handlers registered successfully")
 
 
 def main():

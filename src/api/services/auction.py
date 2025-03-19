@@ -6,9 +6,10 @@ This module provides business logic for auction-related operations.
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 from decimal import Decimal
-from sqlalchemy import select, update, and_, or_
+from sqlalchemy import select, update, and_, or_, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
+from datetime import datetime, timezone
 
 from src.db.models.models import (
     Gully,
@@ -21,6 +22,7 @@ from src.db.models.models import (
     DraftSelection,
     GullyStatus,
     AuctionType,
+    Bid,
 )
 from src.api.exceptions import NotFoundException, ValidationException
 from src.api.schemas.auction import (
@@ -31,6 +33,10 @@ from src.api.schemas.auction import (
     ResolveContestedPlayerResponse,
     AuctionStatusEnum,
     AuctionQueueResponse,
+    NextPlayerResponse,
+    ResolveContestedPlayerRequest,
+    RevertAuctionRequest,
+    RevertAuctionResponse,
 )
 from src.api.schemas.player import PlayerType
 from src.api.schemas.common import SuccessResponse
@@ -113,211 +119,147 @@ class AuctionService:
         """
         Process draft selections for a gully, categorizing players as contested or uncontested.
 
+        This function:
+        1. Retrieves all draft squad selections for the gully
+        2. Identifies contested and uncontested players
+        3. Moves uncontested players to participant_players
+        4. Adds contested players to the auction queue
+
         Args:
             gully_id: Gully ID
 
         Returns:
-            Tuple containing lists of contested and uncontested players
+            Tuple of (contested_players, uncontested_players)
         """
-        # Get all draft selections for this gully
-        stmt = (
-            select(DraftSelection)
-            .join(
-                GullyParticipant,
-                DraftSelection.gully_participant_id == GullyParticipant.id,
-            )
-            .where(GullyParticipant.gully_id == gully_id)
-        )
-        result = await self.db.execute(stmt)
-        draft_selections = result.scalars().all()
-
-        # Get player IDs and participant IDs
-        player_ids = [ds.player_id for ds in draft_selections]
-        participant_ids = [ds.gully_participant_id for ds in draft_selections]
-
-        # Fetch players
-        stmt = select(Player).where(Player.id.in_(player_ids))
-        result = await self.db.execute(stmt)
-        players = {p.id: p for p in result.scalars().all()}
-
-        # Fetch participants
-        stmt = select(GullyParticipant).where(GullyParticipant.id.in_(participant_ids))
+        # Get all participants for this gully
+        stmt = select(GullyParticipant).where(GullyParticipant.gully_id == gully_id)
         result = await self.db.execute(stmt)
         participants = {p.id: p for p in result.scalars().all()}
 
-        # Count occurrences of each player
-        player_counts = {}
-        for draft_selection in draft_selections:
-            player_id = draft_selection.player_id
-            if player_id in player_counts:
-                player_counts[player_id].append(draft_selection)
-            else:
-                player_counts[player_id] = [draft_selection]
+        # Get all draft selections for this gully
+        draft_selections = []
+        for participant_id in participants.keys():
+            stmt = select(DraftSelection).where(
+                DraftSelection.gully_participant_id == participant_id
+            )
+            result = await self.db.execute(stmt)
+            selections = result.scalars().all()
+            for s in selections:
+                draft_selections.append(
+                    {"participant_id": participant_id, "player_id": s.player_id}
+                )
 
+        # Count player occurrences to identify contested players
+        player_counts = {}
+        for selection in draft_selections:
+            player_id = selection["player_id"]
+            if player_id not in player_counts:
+                player_counts[player_id] = []
+            player_counts[player_id].append(selection["participant_id"])
+
+        # Separate contested and uncontested players
         contested_players = []
         uncontested_players = []
 
-        # Process each player based on selection count
-        for player_id, selections in player_counts.items():
+        # Get player details
+        all_player_ids = list(player_counts.keys())
+        if not all_player_ids:
+            return [], []
+
+        stmt = select(Player).where(Player.id.in_(all_player_ids))
+        result = await self.db.execute(stmt)
+        players = {p.id: p for p in result.scalars().all()}
+
+        # Process each player
+        for player_id, participant_ids in player_counts.items():
             player = players.get(player_id)
             if not player:
                 logger.warning(f"Player {player_id} not found in database")
                 continue
 
-            if len(selections) > 1:
-                # Player is contested - add to auction queue
-                await self._add_contested_player_to_auction(
-                    gully_id, player_id, selections
+            if len(participant_ids) > 1:
+                # CONTESTED: Use ContestPlayerResponse schema directly
+                logger.info(
+                    f"Player {player_id} ({player.name}) is contested among {len(participant_ids)} participants"
                 )
 
-                # Add to contested players list for response
-                contested_players.append(
-                    ContestPlayerResponse(
-                        player_id=player.id,
-                        name=player.name,
-                        team=player.team,
-                        player_type=PlayerType(player.player_type),
-                        base_price=float(player.base_price or 0),
-                        contested_by=[
-                            ParticipantInfo(
-                                participant_id=selection.gully_participant_id,
-                                user_id=participants[
-                                    selection.gully_participant_id
-                                ].user_id,
-                                team_name=participants[
-                                    selection.gully_participant_id
-                                ].team_name,
-                            )
-                            for selection in selections
-                            if selection.gully_participant_id in participants
-                        ],
-                        contest_count=len(selections),
+                # Create participant info objects for each contestant
+                contestant_list = [
+                    ParticipantInfo(
+                        participant_id=pid,
+                        user_id=participants[pid].user_id,
+                        team_name=(
+                            participants[pid].team_name
+                            if pid in participants
+                            else "Unknown"
+                        ),
                     )
-                )
-            else:
-                # Player is uncontested - add directly to participant_player
-                selection = selections[0]
-                await self._add_uncontested_player_to_participant(selection)
+                    for pid in participant_ids
+                ]
 
-                # Add to uncontested players list for response
-                participant = participants.get(selection.gully_participant_id)
-                if participant:
-                    uncontested_players.append(
-                        UncontestedPlayerResponse(
-                            player_id=player.id,
-                            player_name=player.name,
-                            team=player.team,
-                            role=player.player_type,
-                            participants=[
-                                ParticipantInfo(
-                                    participant_id=participant.id,
-                                    user_id=participant.user_id,
-                                    team_name=participant.team_name,
-                                )
-                            ],
-                        )
-                    )
-
-        # Commit all changes
-        await self.db.commit()
-
-        return contested_players, uncontested_players
-
-    async def _add_contested_player_to_auction(
-        self, gully_id: int, player_id: int, selections: List[DraftSelection]
-    ) -> None:
-        """
-        Add a contested player to the auction queue and create participant_player entries with contested status.
-
-        Args:
-            gully_id: Gully ID
-            player_id: Player ID
-            selections: List of draft selections for this player
-        """
-        # Add to auction queue if not already there
-        stmt = select(AuctionQueue).where(
-            and_(
-                AuctionQueue.gully_id == gully_id,
-                AuctionQueue.player_id == player_id,
-            )
-        )
-        result = await self.db.execute(stmt)
-        existing_queue_item = result.scalars().first()
-
-        if not existing_queue_item:
-            # Create new auction queue item
-            new_queue_item = AuctionQueue(
-                gully_id=gully_id,
-                player_id=player_id,
-                auction_type=AuctionType.NEW_PLAYER.value,
-                status=AuctionStatus.PENDING.value,
-            )
-            self.db.add(new_queue_item)
-
-        # Create participant_player entries with contested status for each participant
-        for selection in selections:
-            # Check if participant_player entry already exists
-            stmt = select(ParticipantPlayer).where(
-                and_(
-                    ParticipantPlayer.gully_participant_id
-                    == selection.gully_participant_id,
-                    ParticipantPlayer.player_id == player_id,
-                )
-            )
-            result = await self.db.execute(stmt)
-            existing_participant_player = result.scalars().first()
-
-            if not existing_participant_player:
-                # Get player base price
-                stmt = select(Player).where(Player.id == player_id)
-                result = await self.db.execute(stmt)
-                player = result.scalars().first()
-                base_price = player.base_price or Decimal("0.0")
-
-                # Create new participant_player entry
-                new_participant_player = ParticipantPlayer(
-                    gully_participant_id=selection.gully_participant_id,
+                # Add to contested players list using schema objects
+                contest_player = ContestPlayerResponse(
                     player_id=player_id,
-                    purchase_price=base_price,
-                    status=UserPlayerStatus.CONTESTED.value,
+                    name=player.name,
+                    team=player.team,
+                    player_type=player.player_type,
+                    base_price=float(player.base_price or 0),
+                    contested_by=contestant_list,
+                    contest_count=len(participant_ids),
+                )
+                contested_players.append(contest_player)
+
+                # Add contested players to auction queue ONLY, not to participant_players
+                new_queue_item = AuctionQueue(
+                    gully_id=gully_id,
+                    player_id=player_id,
+                    auction_type=AuctionType.NEW_PLAYER.value,
+                    status=AuctionStatus.PENDING.value,
+                )
+                self.db.add(new_queue_item)
+
+            else:
+                # UNCONTESTED: Use UncontestedPlayerResponse schema directly
+                participant_id = participant_ids[0]
+                logger.info(
+                    f"Player {player_id} ({player.name}) is uncontested for participant {participant_id}"
+                )
+
+                # Create participant info for the owner
+                participant_info = ParticipantInfo(
+                    participant_id=participant_id,
+                    user_id=participants[participant_id].user_id,
+                    team_name=(
+                        participants[participant_id].team_name
+                        if participant_id in participants
+                        else "Unknown"
+                    ),
+                )
+
+                # Add to uncontested players list using schema objects
+                uncontested_player = UncontestedPlayerResponse(
+                    player_id=player_id,
+                    player_name=player.name,
+                    team=player.team,
+                    role=player.player_type,
+                    participants=[participant_info],
+                )
+                uncontested_players.append(uncontested_player)
+
+                # Add to participant_players with a purchase_price value
+                new_participant_player = ParticipantPlayer(
+                    gully_participant_id=participant_id,
+                    player_id=player_id,
+                    status=UserPlayerStatus.LOCKED.value,  # Locked until release window
+                    purchase_price=player.base_price,  # Always set to base_price during squad selection
+                    is_captain=False,
+                    is_vice_captain=False,
+                    is_playing_xi=True,
                 )
                 self.db.add(new_participant_player)
 
-    async def _add_uncontested_player_to_participant(
-        self, selection: DraftSelection
-    ) -> None:
-        """
-        Add an uncontested player directly to participant_player with locked status.
-
-        Args:
-            selection: Draft selection for this player
-        """
-        # Check if participant_player entry already exists
-        stmt = select(ParticipantPlayer).where(
-            and_(
-                ParticipantPlayer.gully_participant_id
-                == selection.gully_participant_id,
-                ParticipantPlayer.player_id == selection.player_id,
-            )
-        )
-        result = await self.db.execute(stmt)
-        existing_participant_player = result.scalars().first()
-
-        if not existing_participant_player:
-            # Get player base price
-            stmt = select(Player).where(Player.id == selection.player_id)
-            result = await self.db.execute(stmt)
-            player = result.scalars().first()
-            base_price = player.base_price or Decimal("0.0")
-
-            # Create new participant_player entry
-            new_participant_player = ParticipantPlayer(
-                gully_participant_id=selection.gully_participant_id,
-                player_id=selection.player_id,
-                purchase_price=base_price,
-                status=UserPlayerStatus.LOCKED.value,
-            )
-            self.db.add(new_participant_player)
+        await self.db.commit()
+        return contested_players, uncontested_players
 
     async def _add_players_to_auction_queue_from_player_list(
         self, gully_id: int
@@ -509,7 +451,7 @@ class AuctionService:
 
     async def get_all_players(self, gully_id: int) -> Dict[str, Any]:
         """
-        Get all players for a gully.
+        Get all players for a gully. Uncontested + Contested players are not included.
 
         Args:
             gully_id: Gully ID
@@ -565,107 +507,286 @@ class AuctionService:
             ),
         )
 
+    async def get_next_player(self, gully_id: int) -> Dict[str, Any]:
+        """
+        Get the next player from the auction queue for a specific gully.
+        Also provides current budget & team details for all participants.
+
+        Args:
+            gully_id: ID of the gully
+
+        Returns:
+            Dict with next player and participant information
+
+        Raises:
+            NotFoundException: If gully not found
+            ValidationException: If gully is not in auction state or if participants
+                                haven't confirmed their initial players
+        """
+        # Ensure gully exists and is in auction state
+        gully = await self._get_gully(gully_id)
+        if not gully:
+            raise NotFoundException(resource_type="Gully", resource_id=gully_id)
+
+        if gully.status != GullyStatus.AUCTION.value:
+            raise ValidationException(
+                f"Gully {gully_id} is not in auction state. Current state: {gully.status}"
+            )
+
+        async with self.db as session:
+            # Check if all participants have confirmed their initial players
+            # Get all participants for this gully
+            stmt = select(GullyParticipant).where(GullyParticipant.gully_id == gully_id)
+            result = await session.execute(stmt)
+            gully_participants = result.scalars().all()
+
+            # For each participant, check if they have any players that are not in "owned" status
+            for participant in gully_participants:
+                stmt = select(ParticipantPlayer).where(
+                    ParticipantPlayer.gully_participant_id == participant.id,
+                    ParticipantPlayer.status != UserPlayerStatus.OWNED.value,
+                )
+                result = await session.execute(stmt)
+                non_owned_players = result.scalars().all()
+
+                if non_owned_players:
+                    raise ValidationException(
+                        f"Participant {participant.id} ({participant.team_name}) has players that are not in 'owned' status"
+                    )
+
+            # Get a random pending player from the auction queue
+            stmt = (
+                select(AuctionQueue)
+                .where(
+                    AuctionQueue.gully_id == gully_id,
+                    AuctionQueue.status == AuctionStatus.PENDING.value,
+                )
+                .order_by(func.random())
+                .limit(1)
+            )
+            result = await session.execute(stmt)
+            next_auction_item = result.scalar_one_or_none()
+
+            # If no pending player, try to find any in "bidding" status
+            if not next_auction_item:
+                stmt = (
+                    select(AuctionQueue)
+                    .where(
+                        AuctionQueue.gully_id == gully_id,
+                        AuctionQueue.status == AuctionStatus.BIDDING.value,
+                    )
+                    .order_by(func.random())
+                    .limit(1)
+                )
+                result = await session.execute(stmt)
+                next_auction_item = result.scalar_one_or_none()
+
+            # If a player is found, update status to "bidding"
+            if (
+                next_auction_item
+                and next_auction_item.status == AuctionStatus.PENDING.value
+            ):
+                next_auction_item.status = AuctionStatus.BIDDING.value
+                await session.commit()
+
+            # Prepare the next player info
+            player_info = None
+            if next_auction_item:
+                # Get the player details
+                stmt = select(Player).where(Player.id == next_auction_item.player_id)
+                result = await session.execute(stmt)
+                player = result.scalar_one_or_none()
+
+                if player:
+                    player_info = {
+                        "auction_queue_id": next_auction_item.id,
+                        "player_id": player.id,
+                        "name": player.name,
+                        "team": player.team,
+                        "player_type": player.player_type,
+                        "base_price": (
+                            float(player.base_price) if player.base_price else 0.0
+                        ),
+                    }
+
+            # Get all participants with their budget and current team
+            participants_info = []
+            for participant in gully_participants:
+                # Get the player information for this participant
+                stmt = (
+                    select(ParticipantPlayer, Player)
+                    .join(Player, ParticipantPlayer.player_id == Player.id)
+                    .where(
+                        ParticipantPlayer.gully_participant_id == participant.id,
+                        ParticipantPlayer.status == UserPlayerStatus.OWNED.value,
+                    )
+                )
+                result = await session.execute(stmt)
+                owned_players = result.all()
+
+                # Calculate players owned and remaining
+                players_owned = len(owned_players)
+                max_squad_size = 18  # This should be configurable or from a constant
+                players_remaining = max_squad_size - players_owned
+
+                # Format each player info
+                team = []
+                for pp, player in owned_players:
+                    team.append(
+                        {
+                            "player_id": player.id,
+                            "name": player.name,
+                            "purchase_price": float(pp.purchase_price),
+                        }
+                    )
+
+                participants_info.append(
+                    {
+                        "participant_id": participant.id,
+                        "team_name": participant.team_name,
+                        "budget": float(participant.budget),
+                        "players_owned": players_owned,
+                        "players_remaining": players_remaining,
+                        "team": team,
+                    }
+                )
+
+            return {"player": player_info, "participants": participants_info}
+
     async def resolve_contested_player(
-        self, player_id: int, winning_participant_id: int
-    ) -> ResolveContestedPlayerResponse:
+        self,
+        player_id: int,
+        winning_participant_id: int,
+        auction_queue_id: int,
+        bid_amount: float,
+    ) -> Dict[str, Any]:
         """
         Resolve a contested player by assigning it to the winning participant.
 
         Args:
-            player_id: Player ID
+            player_id: ID of the player
             winning_participant_id: ID of the winning participant
+            auction_queue_id: ID of the auction queue item
+            bid_amount: Amount of the winning bid
 
         Returns:
-            ResolveContestedPlayerResponse with updated player data
+            Dict with resolution information
 
         Raises:
-            NotFoundException: If player or participant not found
-            ValidationException: If player is not contested
+            NotFoundException: If player, participant, or auction queue item not found
+            ValidationException: If bid amount exceeds budget or auction status is not valid
         """
-        # Check if player exists
-        stmt = select(Player).where(Player.id == player_id)
-        result = await self.db.execute(stmt)
-        player = result.scalars().first()
-        if not player:
-            raise NotFoundException(resource_type="Player", resource_id=player_id)
-
-        # Check if winning participant exists
-        stmt = select(GullyParticipant).where(
-            GullyParticipant.id == winning_participant_id
-        )
-        result = await self.db.execute(stmt)
-        winning_participant = result.scalars().first()
-        if not winning_participant:
-            raise NotFoundException(
-                resource_type="Participant", resource_id=winning_participant_id
+        async with self.db as session:
+            # Verify the auction queue item exists and is in bidding status
+            stmt = select(AuctionQueue).where(
+                AuctionQueue.id == auction_queue_id,
+                AuctionQueue.player_id == player_id,
+                AuctionQueue.status == AuctionStatus.BIDDING.value,
             )
+            result = await session.execute(stmt)
+            auction_item = result.scalar_one_or_none()
 
-        # Get all participant players for this player in the same gully
-        gully_id = winning_participant.gully_id
-        stmt = (
-            select(ParticipantPlayer)
-            .join(
-                GullyParticipant,
-                ParticipantPlayer.gully_participant_id == GullyParticipant.id,
+            if not auction_item:
+                raise NotFoundException(
+                    f"Player {player_id} not found in auction queue or not in bidding status"
+                )
+
+            # Get gully ID from auction item
+            gully_id = auction_item.gully_id
+
+            # Verify gully is in auction state
+            stmt = select(Gully).where(Gully.id == gully_id)
+            result = await session.execute(stmt)
+            gully = result.scalar_one_or_none()
+
+            if not gully or gully.status != GullyStatus.AUCTION.value:
+                raise ValidationException(f"Gully {gully_id} is not in auction state")
+
+            # Verify the winning participant exists and belongs to this gully
+            stmt = select(GullyParticipant).where(
+                GullyParticipant.id == winning_participant_id,
+                GullyParticipant.gully_id == gully_id,
             )
-            .where(
+            result = await session.execute(stmt)
+            participant = result.scalar_one_or_none()
+
+            if not participant:
+                raise NotFoundException(
+                    f"Participant {winning_participant_id} not found in gully {gully_id}"
+                )
+
+            # Check budget is sufficient
+            if float(participant.budget) < bid_amount:
+                raise ValidationException(
+                    f"Participant {winning_participant_id} has insufficient budget: {participant.budget} < {bid_amount}"
+                )
+
+            # Get player details for response
+            stmt = select(Player).where(Player.id == player_id)
+            result = await session.execute(stmt)
+            player = result.scalar_one_or_none()
+
+            if not player:
+                raise NotFoundException(resource_type="Player", resource_id=player_id)
+
+            # 1. Register the final bid
+            bid = Bid(
+                auction_queue_id=auction_queue_id,
+                gully_participant_id=winning_participant_id,
+                bid_amount=bid_amount,
+                bid_time=datetime.now(timezone.utc),
+            )
+            session.add(bid)
+
+            # 2. Update player status to owned
+            stmt = select(ParticipantPlayer).where(
                 and_(
                     ParticipantPlayer.player_id == player_id,
-                    GullyParticipant.gully_id == gully_id,
+                    ParticipantPlayer.gully_participant_id == winning_participant_id,
                 )
             )
-        )
-        result = await self.db.execute(stmt)
-        participant_players = result.scalars().all()
+            result = await session.execute(stmt)
+            participant_player = result.scalar_one_or_none()
 
-        # Check if player is contested
-        if len(participant_players) <= 1:
-            raise ValidationException(f"Player {player_id} is not contested")
+            if not participant_player:
+                raise NotFoundException(
+                    f"Participant player for player {player_id} and participant {winning_participant_id} not found"
+                )
 
-        # Find the winning participant player
-        winning_participant_player = None
-        for participant_player in participant_players:
-            if participant_player.gully_participant_id == winning_participant_id:
-                winning_participant_player = participant_player
-                break
+            participant_player.status = UserPlayerStatus.OWNED.value
 
-        if not winning_participant_player:
-            raise ValidationException(
-                f"Participant {winning_participant_id} did not select player {player_id}"
+            # 3. Update auction queue item status to completed
+            stmt = select(AuctionQueue).where(
+                and_(
+                    AuctionQueue.id == auction_queue_id,
+                    AuctionQueue.player_id == player_id,
+                )
             )
+            result = await session.execute(stmt)
+            auction_item = result.scalar_one_or_none()
 
-        # Update winning participant player status
-        winning_participant_player.status = UserPlayerStatus.OWNED.value
+            if not auction_item:
+                raise NotFoundException(
+                    f"Auction queue item for player {player_id} not found"
+                )
 
-        # Delete other participant players
-        for participant_player in participant_players:
-            if participant_player.gully_participant_id != winning_participant_id:
-                await self.db.delete(participant_player)
+            auction_item.status = AuctionStatus.COMPLETED.value
 
-        # Update auction queue item if it exists
-        stmt = select(AuctionQueue).where(
-            and_(
-                AuctionQueue.player_id == player_id,
-                AuctionQueue.gully_id == gully_id,
-            )
-        )
-        result = await self.db.execute(stmt)
-        auction_queue_item = result.scalars().first()
+            # Commit changes
+            await session.commit()
 
-        if auction_queue_item:
-            auction_queue_item.status = AuctionStatus.COMPLETED.value
-
-        # Commit changes
-        await self.db.commit()
-
-        return ResolveContestedPlayerResponse(
-            player_id=player_id,
-            player_name=player.name,
-            winning_participant_id=winning_participant_id,
-            winning_team_name=winning_participant.team_name,
-            status="resolved",
-            message=f"Player {player.name} has been assigned to {winning_participant.team_name}",
-        )
+            return {
+                "success": True,
+                "message": f"Player {player.name} has been assigned to {participant.team_name}",
+                "data": {
+                    "status": "resolved",
+                    "auction_queue_id": auction_queue_id,
+                    "player_id": player_id,
+                    "player_name": player.name,
+                    "winning_participant_id": winning_participant_id,
+                    "winning_team_name": participant.team_name,
+                },
+            }
 
     async def _get_gully(self, gully_id: int) -> Optional[Gully]:
         """
@@ -800,104 +921,244 @@ class AuctionService:
     ) -> Dict[str, Any]:
         """
         Release players from a participant and add them to the auction queue.
-
-        This function:
-        1. Validates the participant exists
-        2. Validates the players are owned by the participant
-        3. Removes the players from the participant_players table
-        4. Adds the players to the auction queue
+        Also updates the status of remaining locked players to owned and
+        deducts their cost from participant's budget.
 
         Args:
-            participant_id: ID of the participant releasing the players
-            player_ids: List of player IDs to release
+            participant_id: ID of the participant
+            player_ids: IDs of the players to release
 
         Returns:
-            Dict with release status and released players
-
-        Raises:
-            NotFoundException: If participant not found
-            ValidationException: If players are not owned by the participant
+            Dict with released player information and budget impact
         """
         # Check if participant exists
         stmt = select(GullyParticipant).where(GullyParticipant.id == participant_id)
         result = await self.db.execute(stmt)
         participant = result.scalars().first()
-
         if not participant:
             raise NotFoundException(
-                resource_type="Participant", resource_id=participant_id
+                resource_type="GullyParticipant", resource_id=participant_id
             )
 
         gully_id = participant.gully_id
 
-        # Get all participant players for this participant
-        stmt = select(ParticipantPlayer).where(
-            and_(
-                ParticipantPlayer.gully_participant_id == participant_id,
-                ParticipantPlayer.player_id.in_(player_ids),
-                ParticipantPlayer.status.in_(
-                    [UserPlayerStatus.LOCKED.value, UserPlayerStatus.OWNED.value]
-                ),
+        # Get players from participant
+        stmt = (
+            select(ParticipantPlayer, Player)
+            .join(Player, ParticipantPlayer.player_id == Player.id)
+            .where(
+                and_(
+                    ParticipantPlayer.gully_participant_id == participant_id,
+                    ParticipantPlayer.player_id.in_(player_ids),
+                )
             )
         )
         result = await self.db.execute(stmt)
-        participant_players = result.scalars().all()
+        participant_players = result.all()
 
-        # Check if all players are owned by the participant
-        found_player_ids = [pp.player_id for pp in participant_players]
-        missing_player_ids = set(player_ids) - set(found_player_ids)
-
-        if missing_player_ids:
-            raise ValidationException(
-                f"Players with IDs {missing_player_ids} are not owned by participant {participant_id}"
+        if not participant_players:
+            raise NotFoundException(
+                f"No players found for participant {participant_id}"
             )
 
-        # Get player details for response
-        player_ids_to_release = [pp.player_id for pp in participant_players]
-        stmt = select(Player).where(Player.id.in_(player_ids_to_release))
-        result = await self.db.execute(stmt)
-        players = {p.id: p for p in result.scalars().all()}
-
         released_players = []
-
-        # Process each player
-        for participant_player in participant_players:
-            player_id = participant_player.player_id
-            player = players.get(player_id)
-
-            if not player:
-                logger.warning(f"Player {player_id} not found in database")
-                continue
+        for pp, player in participant_players:
+            # Delete the participant player entry
+            await self.db.delete(pp)
 
             # Add to auction queue
-            new_queue_item = AuctionQueue(
+            auction_queue = AuctionQueue(
                 gully_id=gully_id,
-                player_id=player_id,
+                player_id=player.id,
                 seller_participant_id=participant_id,
                 auction_type=AuctionType.TRANSFER.value,
                 status=AuctionStatus.PENDING.value,
             )
-            self.db.add(new_queue_item)
+            self.db.add(auction_queue)
 
-            # Add to released players list for response
             released_players.append(
                 {
-                    "player_id": player_id,
+                    "player_id": player.id,
                     "player_name": player.name,
                     "team": player.team,
                     "player_type": player.player_type,
-                    "base_price": float(player.base_price or 0),
+                    "base_price": (
+                        float(player.base_price) if player.base_price else 0.0
+                    ),
                 }
             )
 
-            # Delete from participant_players
-            await self.db.delete(participant_player)
+        # Find all LOCKED players and update their status to OWNED
+        stmt = select(ParticipantPlayer).where(
+            and_(
+                ParticipantPlayer.gully_participant_id == participant_id,
+                ParticipantPlayer.status == UserPlayerStatus.LOCKED.value,
+            )
+        )
+        result = await self.db.execute(stmt)
+        remaining_players = result.scalars().all()
 
-        # Commit changes
+        updated_count = 0
+        updated_budget = Decimal("0.0")
+
+        # For each LOCKED player: update status to OWNED and track base price
+        for player in remaining_players:
+            # Get the player's base price
+            stmt = select(Player).where(Player.id == player.player_id)
+            result = await self.db.execute(stmt)
+            player_obj = result.scalar_one_or_none()
+
+            # Update status to OWNED
+            player.status = UserPlayerStatus.OWNED.value
+
+            # Track the price to deduct from budget
+            if player_obj and player_obj.base_price:
+                updated_budget += player_obj.base_price
+
+            updated_count += 1
+
+        # Update participant's budget if any players were changed to OWNED
+        if updated_budget > Decimal("0.0"):
+            # Ensure participant has enough budget
+            if participant.budget < updated_budget:
+                raise ValidationException(
+                    f"Participant {participant_id} has insufficient budget: {participant.budget} < {updated_budget}"
+                )
+
+            # Deduct the budget for owned players
+            stmt = (
+                update(GullyParticipant)
+                .where(GullyParticipant.id == participant_id)
+                .values(budget=GullyParticipant.budget - updated_budget)
+            )
+            await self.db.execute(stmt)
+
+        # Commit all changes
         await self.db.commit()
 
         return {
             "released_count": len(released_players),
+            "updated_count": updated_count,
             "released_players": released_players,
-            "message": f"Released {len(released_players)} players from participant {participant_id}",
+            "budget_updated": float(updated_budget),
+            "message": f"Released {len(released_players)} players and updated status for {updated_count} players for participant {participant_id}",
         }
+
+    async def revert_auction(
+        self, player_id: int, winning_participant_id: int, auction_queue_id: int
+    ) -> Dict[str, Any]:
+        """
+        Revert a previously assigned auctioned player, restoring the auction queue
+        and refunding the bid amount. Ensures participant's budget doesn't exceed 120.0.
+
+        Args:
+            player_id: ID of the player to revert
+            winning_participant_id: ID of the participant that won the player
+            auction_queue_id: ID of the auction queue item
+
+        Returns:
+            Dict with status and message
+
+        Raises:
+            NotFoundException: If player, participant, or auction queue item not found
+            ValidationException: If the player is not owned by the participant or gully is not in auction state
+        """
+        async with self.db as session:
+            # Verify auction queue item exists
+            stmt = select(AuctionQueue).where(AuctionQueue.id == auction_queue_id)
+            result = await session.execute(stmt)
+            auction_item = result.scalar_one_or_none()
+
+            if not auction_item:
+                raise NotFoundException(
+                    resource_type="AuctionQueue", resource_id=auction_queue_id
+                )
+
+            # Verify gully is in auction state
+            gully_id = auction_item.gully_id
+            stmt = select(Gully).where(Gully.id == gully_id)
+            result = await session.execute(stmt)
+            gully = result.scalar_one_or_none()
+
+            if not gully or gully.status != GullyStatus.AUCTION.value:
+                raise ValidationException(f"Gully {gully_id} is not in auction state")
+
+            # Verify participant owns the player
+            stmt = select(ParticipantPlayer).where(
+                ParticipantPlayer.gully_participant_id == winning_participant_id,
+                ParticipantPlayer.player_id == player_id,
+                ParticipantPlayer.status == UserPlayerStatus.OWNED.value,
+            )
+            result = await session.execute(stmt)
+            participant_player = result.scalar_one_or_none()
+
+            if not participant_player:
+                raise ValidationException(
+                    f"Player {player_id} is not owned by participant {winning_participant_id}"
+                )
+
+            # Get bid amount - first check bid table, then fallback to purchase price
+            stmt = select(Bid).where(
+                Bid.auction_queue_id == auction_queue_id,
+                Bid.gully_participant_id == winning_participant_id,
+            )
+            result = await session.execute(stmt)
+            bid = result.scalar_one_or_none()
+
+            if bid:
+                bid_amount = bid.bid_amount
+            else:
+                # If no bid is found, use the purchase price from ParticipantPlayer
+                bid_amount = participant_player.purchase_price
+
+            # Get participant to check current budget
+            stmt = select(GullyParticipant).where(
+                GullyParticipant.id == winning_participant_id
+            )
+            result = await session.execute(stmt)
+            participant = result.scalar_one_or_none()
+
+            if not participant:
+                raise NotFoundException(
+                    resource_type="GullyParticipant", resource_id=winning_participant_id
+                )
+
+            # Calculate new budget (refund the bid amount)
+            new_budget = participant.budget + bid_amount
+
+            # Cap budget at 120.0 if it exceeds the maximum
+            max_budget = Decimal("120.0")
+            if new_budget > max_budget:
+                new_budget = max_budget
+
+            # 1. Refund the bid amount to participant's budget (with cap)
+            stmt = (
+                update(GullyParticipant)
+                .where(GullyParticipant.id == winning_participant_id)
+                .values(budget=new_budget)
+            )
+            await session.execute(stmt)
+
+            # 2. Remove player from participant's squad
+            stmt = delete(ParticipantPlayer).where(
+                ParticipantPlayer.gully_participant_id == winning_participant_id,
+                ParticipantPlayer.player_id == player_id,
+            )
+            await session.execute(stmt)
+
+            # 3. Reset the auction queue item status to "pending"
+            stmt = (
+                update(AuctionQueue)
+                .where(AuctionQueue.id == auction_queue_id)
+                .values(status=AuctionStatus.PENDING.value)
+            )
+            await session.execute(stmt)
+
+            # Commit the transaction
+            await session.commit()
+
+            return {
+                "status": "success",
+                "auction_queue_id": auction_queue_id,
+                "message": "Auction result reverted. Player returned to auction queue.",
+            }

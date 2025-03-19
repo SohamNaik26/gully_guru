@@ -129,3 +129,69 @@ class AuctionResponseFactory:
                 "total_players": data.get("total_players", 0),
             },
         }
+
+    @staticmethod
+    def create_next_player_response(data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a response for next player request.
+
+        Args:
+            data: Next player data
+
+        Returns:
+            Response data
+        """
+        return {
+            "success": True,
+            "message": "Next player in auction queue",
+            "data": {
+                "player": data.get("player"),
+                "participants": data.get("participants", []),
+            },
+        }
+
+    @staticmethod
+    def create_resolve_contested_player_response(
+        data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Create a response for resolving contested player.
+
+        Args:
+            data: Resolution data
+
+        Returns:
+            Response data
+        """
+        return {
+            "success": True,
+            "message": data.get("message", "Player successfully assigned."),
+            "data": {
+                "status": data.get("status", "success"),
+                "auction_queue_id": data.get("auction_queue_id"),
+                "player_id": data.get("player_id"),
+                "player_name": data.get("player_name"),
+                "winning_participant_id": data.get("winning_participant_id"),
+                "winning_team_name": data.get("winning_team_name"),
+            },
+        }
+
+    @staticmethod
+    def create_revert_auction_response(data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a response for auction reversion.
+
+        Args:
+            data: Reversion data
+
+        Returns:
+            Response data
+        """
+        return {
+            "success": True,
+            "message": data.get("message", "Auction result reverted"),
+            "data": {
+                "auction_queue_id": data.get("auction_queue_id"),
+                "status": data.get("status", "success"),
+            },
+        }

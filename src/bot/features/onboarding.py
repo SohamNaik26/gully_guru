@@ -203,7 +203,8 @@ async def start_command(
             if participant:
                 # User is already a participant, set as active gully
                 ctx_manager.set_active_gully_id(context, gully_id)
-                ctx_manager.set_participant_id(context, participant["id"])
+                ctx_manager.set_participant_id(context, participant["id"], gully_id)
+                ctx_manager.set_team_name(context, participant["team_name"], gully_id)
 
                 await update.message.reply_text(
                     f"Welcome back to Gully '{gully['name']}'!\n\n"
@@ -332,8 +333,10 @@ async def handle_team_name(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             )
             return ConversationHandler.END
 
-        # Store participant ID in context
-        ctx_manager.set_participant_id(context, participant["id"])
+        # Store in gully-specific context
+        ctx_manager.set_active_gully_id(context, gully_id)
+        ctx_manager.set_participant_id(context, participant["id"], gully_id)
+        ctx_manager.set_team_name(context, team_name, gully_id)
 
         # Registration successful
         await update.message.reply_text(
@@ -597,13 +600,12 @@ async def gullies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
         if participant:
             team_name = participant["team_name"]
+            # Ensure IDs are properly formatted
+            button_text = f"{gully['name']} ({team_name})"
+            callback_data = f"gully:{gully['id']}:{participant['id']}"
+            logger.info(f"Creating gully button with callback data: {callback_data}")
             keyboard.append(
-                [
-                    InlineKeyboardButton(
-                        f"{gully['name']} ({team_name})",
-                        callback_data=f"gully:{gully['id']}:{participant['id']}",
-                    )
-                ]
+                [InlineKeyboardButton(button_text, callback_data=callback_data)]
             )
 
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -629,44 +631,71 @@ async def handle_gully_selection(
     # Parse callback data
     data = query.data.split(":")
     if len(data) != 3 or data[0] != "gully":
+        logger.error(f"Invalid callback data format: {query.data}")
         await query.edit_message_text(
             "⚠️ Invalid selection. Please try again with /gullies."
         )
         return
 
-    gully_id = int(data[1])
-    participant_id = int(data[2])
-
-    # Store in context
-    ctx_manager.set_active_gully_id(context, gully_id)
-    ctx_manager.set_participant_id(context, participant_id)
-
-    # Get gully details
-    client = await get_initialized_onboarding_client()
-    gully = await client.get_gully(gully_id)
-
-    if not gully:
+    # Validate IDs are integers
+    try:
+        gully_id = int(data[1])
+        participant_id = int(data[2])
+    except ValueError:
+        logger.error(f"Invalid gully selection data: {data}")
         await query.edit_message_text(
-            "⚠️ The selected gully doesn't exist or has been deleted. Please try again with /gullies."
+            "⚠️ Invalid selection data. Please try again with /gullies."
         )
         return
 
-    # Get participant details
-    participant = await client.get_participant_by_user_and_gully(
-        user_id=ctx_manager.get_user_id(context), gully_id=gully_id
-    )
+    logger.info(f"Selecting gully {gully_id} with participant {participant_id}")
 
-    if not participant:
-        await query.edit_message_text(
-            "⚠️ You are no longer a participant in this gully. Please try again with /gullies."
+    try:
+        # Get gully details
+        client = await get_initialized_onboarding_client()
+        gully = await client.get_gully(gully_id)
+
+        if not gully:
+            logger.error(f"Gully {gully_id} not found")
+            await query.edit_message_text(
+                "⚠️ The selected gully doesn't exist or has been deleted. Please try again with /gullies."
+            )
+            return
+
+        # Get participant details for team name
+        participant = await client.get_participant_by_user_and_gully(
+            user_id=ctx_manager.get_user_id(context), gully_id=gully_id
         )
-        return
 
-    await query.edit_message_text(
-        f"Gully '{gully['name']}' activated!\n\n"
-        f"Your team: {participant['team_name']}\n\n"
-        f"🏏 Use /squad to manage your squad"
-    )
+        if not participant:
+            logger.error(f"Participant not found for user in gully {gully_id}")
+            await query.edit_message_text(
+                "⚠️ You are no longer a participant in this gully. Please try again with /gullies."
+            )
+            return
+
+        team_name = participant.get("team_name", "Unknown Team")
+
+        # Store in gully-specific context
+        ctx_manager.set_active_gully_id(context, gully_id)
+        ctx_manager.set_participant_id(context, participant_id, gully_id)
+        ctx_manager.set_team_name(context, team_name, gully_id)
+
+        logger.info(
+            f"Successfully set active gully {gully_id} and participant {participant_id}"
+        )
+
+        await query.edit_message_text(
+            f"Gully '{gully['name']}' activated!\n\n"
+            f"Your team: {team_name}\n\n"
+            f"🏏 Use /squad to manage your squad"
+        )
+    except Exception as e:
+        logger.error(f"Error in handle_gully_selection: {e}")
+        logger.exception("Detailed traceback:")
+        await query.edit_message_text(
+            "⚠️ An error occurred while activating the gully. Please try again later."
+        )
 
 
 def get_handlers():

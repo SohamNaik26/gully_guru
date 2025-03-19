@@ -28,6 +28,9 @@ from src.bot.api_client.init import (
 )
 from src.bot.context import manager as ctx_manager
 
+# Use the utility function
+from src.bot.utils.callbacks import create_feature_callback_data
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -42,10 +45,7 @@ PAGE_KEY = "player_page"  # Key for storing current page in context
 
 def create_callback_data(action: str, data: Dict[str, Any] = None) -> str:
     """Create a callback data string with action and optional data."""
-    callback_data = {"a": action}
-    if data:
-        callback_data.update(data)
-    return json.dumps(callback_data)
+    return create_feature_callback_data("squad", action, data)
 
 
 def parse_callback_data(callback_data: str) -> Dict[str, Any]:
@@ -127,169 +127,120 @@ async def get_player_inline_keyboard(
 async def squad_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> Optional[int]:
-    """Handle the /squad command."""
-    logger.info(f"Squad command called by user {update.effective_user.id}")
-
-    # Reset page to 0 when starting squad command
-    context.user_data[PAGE_KEY] = 0
+    """
+    Handle the /squad command.
+    This command allows participants to view and edit their squad during the draft phase,
+    and only view during other phases like auction.
+    """
+    logger.info(f"Squad: Command called by user {update.effective_user.id}")
 
     # Check if API is available
-    try:
-        client = await get_initialized_onboarding_client()
-        if not client:
-            raise Exception("Failed to initialize client")
-    except Exception as e:
-        logger.error(f"API not available in command: {e}")
+    if not await wait_for_api():
         await update.message.reply_text(
             "⚠️ The GullyGuru service is currently unavailable. Please try again later."
         )
         return ConversationHandler.END
 
-    # Get user ID from context or fetch from API
-    user_id = ctx_manager.get_user_id(context)
-    logger.info(f"User ID from context: {user_id}")
+    # Get the telegram user
+    telegram_user_id = update.effective_user.id
 
-    if not user_id:
-        logger.info(
-            f"User ID not found in context, fetching from API for Telegram ID {update.effective_user.id}"
-        )
+    try:
+        # Get user from database
         client = await get_initialized_onboarding_client()
-        db_user = await client.get_user_by_telegram_id(update.effective_user.id)
+        db_user = await client.get_user_by_telegram_id(telegram_user_id)
 
         if not db_user:
-            logger.warning(
-                f"User with Telegram ID {update.effective_user.id} not found in database"
-            )
             await update.message.reply_text(
                 "⚠️ Your account was not found. Please use /start to register."
             )
             return ConversationHandler.END
 
         user_id = db_user["id"]
-        logger.info(f"User ID fetched from API: {user_id}")
-        ctx_manager.set_user_id(context, user_id)
 
-    # Get active gully and participant
-    active_gully_id = ctx_manager.get_active_gully_id(context)
-    participant_id = ctx_manager.get_participant_id(context)
-    logger.info(f"Active gully ID: {active_gully_id}, Participant ID: {participant_id}")
+        # Get user's active gully from context
+        active_gully_id = ctx_manager.get_active_gully_id(context)
 
-    # If no active gully, check if user has any gullies
-    if not active_gully_id or not participant_id:
-        logger.info("No active gully or participant ID, checking user's gullies")
-        client = await get_initialized_onboarding_client()
-        user_gullies = await client.get_user_gullies(user_id)
-        logger.info(f"User has {len(user_gullies)} gullies")
+        # If no active gully set, get available gullies and prompt to select one
+        if not active_gully_id:
+            # Get user's gullies
+            user_gullies = await client.get_user_gullies(user_id)
 
-        if not user_gullies:
-            logger.warning(f"User {user_id} has no gullies")
-            await update.message.reply_text(
-                "You are not part of any gullies yet. Ask your friends to add you to their gully "
-                "or create a new one by adding this bot to a Telegram group."
-            )
-            return ConversationHandler.END
-
-        # If user has only one gully, set it as active
-        if len(user_gullies) == 1:
-            gully = user_gullies[0]
-            active_gully_id = gully["id"]
-            logger.info(f"Setting active gully ID to {active_gully_id}")
-            ctx_manager.set_active_gully_id(context, active_gully_id)
-
-            # Get participant ID
-            participant = await client.get_participant_by_user_and_gully(
-                user_id=user_id, gully_id=active_gully_id
-            )
-
-            if participant:
-                participant_id = participant["id"]
-                logger.info(f"Setting participant ID to {participant_id}")
-                ctx_manager.set_participant_id(context, participant_id)
-            else:
-                logger.warning(
-                    f"User {user_id} is not a participant in gully {active_gully_id}"
-                )
+            if not user_gullies:
                 await update.message.reply_text(
-                    "⚠️ You are not a participant in this gully. Please use /start to register."
+                    "⚠️ You are not a participant in any gully."
                 )
                 return ConversationHandler.END
-        else:
-            # User has multiple gullies, ask them to select one
-            logger.info(f"User has multiple gullies, asking to select one")
+
+            # If only one gully, set it as active
+            if len(user_gullies) == 1:
+                active_gully_id = user_gullies[0]["id"]
+                ctx_manager.set_active_gully_id(context, active_gully_id)
+            else:
+                # Multiple gullies, prompt to select one
+                return await show_gully_selection(update, context, user_gullies)
+
+        # Get the gully info
+        gully = await client.get_gully(active_gully_id)
+
+        if not gully:
             await update.message.reply_text(
-                "Please select a gully first using /gullies command."
+                "⚠️ Failed to retrieve information for the selected gully."
             )
             return ConversationHandler.END
 
-    # Check gully status - only allow squad selection if gully is in draft status
-    logger.info(f"Checking status for gully {active_gully_id}")
-    gully = await client.get_gully(active_gully_id)
+        gully_name = gully.get("name", "Unknown Gully")
+        gully_status = gully.get("status", "unknown").lower()
 
-    if not gully:
-        logger.error(f"Failed to fetch gully {active_gully_id}")
-        await update.message.reply_text(
-            "⚠️ Failed to fetch gully information. Please try again later."
-        )
-        return ConversationHandler.END
-
-    gully_status = gully.get("status", "").lower()
-    logger.info(f"Gully status: {gully_status}")
-
-    if gully_status != "draft":
         logger.info(
-            f"Squad selection not allowed for gully with status: {gully_status}"
+            f"Processing squad for gully: {gully_name} (status: {gully_status})"
         )
-        await update.message.reply_text(
-            "Squad selection process is completed, you can no longer select a squad."
+
+        # Get participant info
+        participant = await client.get_participant_by_user_and_gully(
+            user_id=user_id, gully_id=active_gully_id
         )
-        return ConversationHandler.END
 
-    # Get the squad for this participant
-    logger.info(f"Fetching squad for participant {participant_id}")
-    squad_client = await get_initialized_squad_client()
-    squad_data = await squad_client.get_draft_squad(participant_id)
-
-    # Check if squad exists and has players
-    squad_players = squad_data.get("players", [])
-    logger.info(f"Squad has {len(squad_players)} players")
-
-    # Store current squad in context
-    ctx_manager.set_current_squad(context, squad_players)
-
-    # Set selected player IDs in context
-    selected_player_ids = [player["id"] for player in squad_players]
-    ctx_manager.set_selected_player_ids(context, selected_player_ids)
-
-    # If squad is empty or incomplete, go directly to player selection
-    if len(squad_players) < SQUAD_SIZE:
-        logger.info(
-            f"Squad is incomplete ({len(squad_players)}/{SQUAD_SIZE}), showing player selection"
-        )
-        return await show_player_selection(update, context)
-
-    # Show current squad with edit option
-    logger.info("Showing current squad with edit option")
-    squad_text = "Your current squad:\n\n"
-
-    for i, player in enumerate(squad_players, 1):
-        squad_text += f"{i}. {player['name']} - {player['team']} - {player.get('base_price', 0)} Cr\n"
-
-    # Create inline keyboard for squad actions
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "🏏 Edit Squad", callback_data=create_callback_data("edit")
+        if not participant:
+            await update.message.reply_text(
+                "⚠️ You are not registered as a participant in the selected gully."
             )
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+            return ConversationHandler.END
 
-    await update.message.reply_text(
-        f"{squad_text}\n\nYou have {len(squad_players)}/{SQUAD_SIZE} players selected.",
-        reply_markup=reply_markup,
-    )
+        participant_id = participant["id"]
+        team_name = participant.get("team_name", "Your Team")
 
-    return ConversationHandler.END
+        # Store important IDs in context
+        ctx_manager.set_participant_id(context, participant_id, active_gully_id)
+        ctx_manager.set_team_name(context, team_name, active_gully_id)
+
+        # Check if squad selection is allowed for editing based on gully status
+        edit_allowed_states = ["draft"]  # Only allow editing in draft state
+        view_only_mode = gully_status not in edit_allowed_states
+
+        # If view-only mode, inform the user to use /my_team command instead
+        if view_only_mode:
+            await update.message.reply_text(
+                f"⚠️ Squad selection is only available during the draft phase.\n\n"
+                f"The current phase for {gully_name} is: {gully_status}.\n\n"
+                f"Please use /my_team to view the players you currently own."
+            )
+            return ConversationHandler.END
+
+        # For draft state, continue with the normal squad selection flow
+        # Get all available players for this gully
+        await update.message.reply_text(
+            f"Loading available players for {gully_name}..."
+        )
+
+        return SELECTING_PLAYERS
+
+    except Exception as e:
+        logger.error(f"Error in squad_command: {e}")
+        logger.exception("Detailed error traceback:")
+        await update.message.reply_text(
+            "⚠️ Something went wrong while retrieving your squad information. Please try again later."
+        )
+        return ConversationHandler.END
 
 
 async def show_player_selection(
@@ -302,13 +253,20 @@ async def show_player_selection(
     current_page = context.user_data.get(PAGE_KEY, 0)
     logger.info(f"Current page: {current_page}")
 
+    # Get active gully ID
+    active_gully_id = ctx_manager.get_active_gully_id(context)
+
     # Get all available players
-    all_players = context.user_data.get("all_players")
+    # Note: We store this in user_data rather than gully-specific context
+    # because player data is common across all gullies and can be reused
+    all_players = context.user_data.get(f"all_players_{active_gully_id}")
     if not all_players:
         squad_client = await get_initialized_squad_client()
         all_players = await squad_client.get_available_players(max_players=250)
-        context.user_data["all_players"] = all_players
-        logger.info(f"Fetched {len(all_players)} available players")
+        context.user_data[f"all_players_{active_gully_id}"] = all_players
+        logger.info(
+            f"Fetched {len(all_players)} available players for gully {active_gully_id}"
+        )
 
     if not all_players:
         logger.warning("No players available")
@@ -323,8 +281,8 @@ async def show_player_selection(
             await update.message.reply_text(message)
         return ConversationHandler.END
 
-    # Get selected player IDs from context
-    selected_player_ids = ctx_manager.get_selected_player_ids(context)
+    # Get selected player IDs from gully-specific context
+    selected_player_ids = ctx_manager.get_selected_player_ids(context, active_gully_id)
     logger.info(f"Currently selected: {len(selected_player_ids)} players")
 
     # Create a dictionary of player details by ID for quick lookup
@@ -382,100 +340,82 @@ async def show_player_selection(
     return SELECTING_PLAYERS
 
 
-async def handle_callback_query(
+async def handle_squad_callback_query(
     update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> Optional[int]:
-    """Handle callback queries from the inline keyboard."""
+):
+    """
+    Handle callback queries from the inline keyboard for squad management.
+    """
     query = update.callback_query
     callback_data = query.data
-    logger.info(f"Raw callback data received: {callback_data}")
+    logger.info(f"Squad: Raw callback data received: {callback_data}")
 
-    # Parse the callback data
-    data = parse_callback_data(callback_data)
-    action = data.get("a", "unknown")
-    logger.info(f"Parsed action: {action}")
+    try:
+        # Parse the callback data
+        data = json.loads(callback_data)
 
-    # Answer the callback query to stop the loading indicator
-    await query.answer()
+        # Check if this callback is meant for the squad feature
+        if "feature" in data and data.get("feature") != "squad":
+            logger.info(f"Squad: Ignoring callback for feature: {data.get('feature')}")
+            return
 
-    # Get current page from context or default to 0
-    current_page = context.user_data.get(PAGE_KEY, 0)
+        action = data.get("a", "unknown")
+        logger.info(f"Squad: Parsed action: {action}")
 
-    # Handle different actions
-    if action == "next":
-        # Go to next page
-        context.user_data[PAGE_KEY] = current_page + 1
-        logger.info(f"Navigating to next page: {current_page + 1}")
-        return await show_player_selection(update, context)
+        # Answer the callback query to stop the loading indicator
+        await query.answer()
 
-    elif action == "prev":
-        # Go to previous page
-        if current_page > 0:
-            context.user_data[PAGE_KEY] = current_page - 1
-            logger.info(f"Navigating to previous page: {current_page - 1}")
-        return await show_player_selection(update, context)
+        # Get active gully ID
+        active_gully_id = ctx_manager.get_active_gully_id(context)
 
-    elif action == "page":
-        # Page indicator (do nothing)
-        logger.info("Page indicator clicked (no action)")
-        return SELECTING_PLAYERS
-
-    elif action == "submit":
-        # Submit squad
-        logger.info("Submit button pressed")
-        return await handle_squad_submission(update, context)
-
-    elif action == "toggle":
-        # Toggle player selection
-        player_id = data.get("id")
-        if player_id is not None:
-            logger.info(f"Toggling player with ID: {player_id}")
-
+        # Handle different actions
+        if action == "toggle":
             # Toggle player selection
-            selected_player_ids = ctx_manager.get_selected_player_ids(context)
+            player_id = data.get("id")
+            if player_id is not None:
+                logger.info(f"Toggling player with ID: {player_id}")
 
-            if player_id in selected_player_ids:
-                # Remove player
-                selected_player_ids.remove(player_id)
-                logger.info(f"Removed player ID: {player_id}")
-            else:
-                # Check if adding this player would exceed the maximum squad size
-                if len(selected_player_ids) >= SQUAD_SIZE:
-                    logger.warning(
-                        f"Cannot add more than {SQUAD_SIZE} players to squad"
-                    )
-                    await query.answer(
-                        f"⚠️ You cannot select more than {SQUAD_SIZE} players. Please remove a player first.",
-                        show_alert=True,
-                    )
-                    return SELECTING_PLAYERS
+                # Toggle player in gully-specific context
+                ctx_manager.toggle_selected_player_id(
+                    context, player_id, active_gully_id
+                )
 
-                # Add player
-                selected_player_ids.append(player_id)
-                logger.info(f"Added player ID: {player_id}")
+                # Show updated selection
+                await show_player_selection(update, context)
 
-            # Update context
-            ctx_manager.set_selected_player_ids(context, selected_player_ids)
-            logger.info(
-                f"Updated selected players: {len(selected_player_ids)}/{SQUAD_SIZE}"
-            )
+        elif action == "prev":
+            # Go to previous page
+            current_page = context.user_data.get(PAGE_KEY, 0)
+            if current_page > 0:
+                context.user_data[PAGE_KEY] = current_page - 1
+                await show_player_selection(update, context)
 
-            # Show updated player selection
-            return await show_player_selection(update, context)
+        elif action == "next":
+            # Go to next page
+            current_page = context.user_data.get(PAGE_KEY, 0)
+            context.user_data[PAGE_KEY] = current_page + 1
+            await show_player_selection(update, context)
+
+        elif action == "page":
+            # Do nothing for page number display
+            pass
+
+        elif action == "submit":
+            # Handle squad submission
+            await handle_squad_submission(update, context)
+
+        elif action == "edit":
+            # Handle edit squad
+            await handle_edit_squad(update, context)
+
         else:
-            logger.error("Player ID not found in callback data")
+            logger.warning(f"Unknown action: {action}")
 
-    elif action == "edit":
-        # Edit squad
-        logger.info("Edit squad button pressed")
-        # Reset page to 0 when starting edit
-        context.user_data[PAGE_KEY] = 0
-        return await handle_edit_squad(update, context)
-
-    else:
-        logger.warning(f"Unknown action: {action}")
-
-    return SELECTING_PLAYERS
+    except json.JSONDecodeError:
+        logger.error(f"Failed to parse callback data: {callback_data}")
+    except Exception as e:
+        logger.error(f"Error in handle_squad_callback_query: {e}")
+        logger.exception("Detailed traceback:")
 
 
 async def handle_edit_squad(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -484,46 +424,22 @@ async def handle_edit_squad(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     query = update.callback_query
     await query.answer()
 
+    # Get active gully ID
+    active_gully_id = ctx_manager.get_active_gully_id(context)
+
+    if not active_gully_id:
+        logger.error("Active gully ID not found in context")
+        await query.answer(
+            "⚠️ Active gully information not found. Please use /squad to start over.",
+            show_alert=True,
+        )
+        return ConversationHandler.END
+
     # Reset page to 0 when starting edit
     context.user_data[PAGE_KEY] = 0
 
-    # Get participant ID and active gully ID from context
-    participant_id = ctx_manager.get_participant_id(context)
-    active_gully_id = ctx_manager.get_active_gully_id(context)
-
-    if not participant_id or not active_gully_id:
-        logger.error("Participant ID or Gully ID not found in context")
-        await query.answer(
-            "⚠️ Participant or Gully information not found. Please use /squad to start over.",
-            show_alert=True,
-        )
-        return ConversationHandler.END
-
-    # Check gully status - only allow squad editing if gully is in draft status
-    logger.info(f"Checking status for gully {active_gully_id}")
-    client = await get_initialized_onboarding_client()
-    gully = await client.get_gully(active_gully_id)
-
-    if not gully:
-        logger.error(f"Failed to fetch gully {active_gully_id}")
-        await query.answer(
-            "⚠️ Failed to fetch gully information. Please try again later.",
-            show_alert=True,
-        )
-        return ConversationHandler.END
-
-    gully_status = gully.get("status", "").lower()
-    logger.info(f"Gully status: {gully_status}")
-
-    if gully_status != "draft":
-        logger.info(f"Squad editing not allowed for gully with status: {gully_status}")
-        await query.edit_message_text(
-            "Squad selection process is completed, you can no longer select a squad."
-        )
-        return ConversationHandler.END
-
-    # Clear the selected player IDs in context to start fresh
-    ctx_manager.set_selected_player_ids(context, [])
+    # Clear the selected player IDs in gully-specific context
+    ctx_manager.set_selected_player_ids(context, [], active_gully_id)
     logger.info("Cleared selected players for fresh squad selection")
 
     # Show a message to the user
@@ -541,8 +457,11 @@ async def handle_squad_submission(
     """Handle squad submission."""
     logger.info("handle_squad_submission called")
 
-    # Get selected player IDs from context
-    selected_player_ids = ctx_manager.get_selected_player_ids(context)
+    # Get active gully ID
+    active_gully_id = ctx_manager.get_active_gully_id(context)
+
+    # Get selected player IDs from gully-specific context
+    selected_player_ids = ctx_manager.get_selected_player_ids(context, active_gully_id)
     logger.info(f"Submitting squad with {len(selected_player_ids)} players")
 
     # Validate squad size
@@ -561,8 +480,8 @@ async def handle_squad_submission(
             await update.message.reply_text(error_message)
             return await show_player_selection(update, context)
 
-    # Get participant ID from context
-    participant_id = ctx_manager.get_participant_id(context)
+    # Get participant ID for this specific gully
+    participant_id = ctx_manager.get_participant_id(context, active_gully_id)
     logger.info(f"Participant ID: {participant_id}")
 
     if not participant_id:
@@ -594,13 +513,13 @@ async def handle_squad_submission(
             await update.message.reply_text(f"⚠️ Failed to submit squad: {error_msg}")
             return ConversationHandler.END
 
-    # Clear selected player IDs from context
-    ctx_manager.clear_squad_selection(context)
+    # Clear squad selection from gully-specific context
+    ctx_manager.clear_squad_selection(context, active_gully_id)
     logger.info("Squad selection cleared from context")
 
-    # Clear cached players and page
-    if "all_players" in context.user_data:
-        del context.user_data["all_players"]
+    # Clear cached players and page with gully-specific keys
+    if f"all_players_{active_gully_id}" in context.user_data:
+        del context.user_data[f"all_players_{active_gully_id}"]
     if PAGE_KEY in context.user_data:
         del context.user_data[PAGE_KEY]
 
@@ -609,8 +528,8 @@ async def handle_squad_submission(
     squad_players = squad_data.get("players", [])
     logger.info(f"Updated squad has {len(squad_players)} players")
 
-    # Store current squad in context
-    ctx_manager.set_current_squad(context, squad_players)
+    # Store current squad in gully-specific context
+    ctx_manager.set_current_squad(context, squad_players, active_gully_id)
 
     # Show success message with squad details
     squad_text = "✅ Your squad has been updated successfully!\n\n"
@@ -628,6 +547,39 @@ async def handle_squad_submission(
     return ConversationHandler.END
 
 
+async def show_gully_selection(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    user_gullies: List[Dict[str, Any]],
+):
+    """Show gully selection when user has multiple gullies."""
+    logger.info("Showing gully selection options")
+
+    # Create a keyboard with gully options
+    keyboard = []
+    for gully in user_gullies:
+        gully_id = gully.get("id")
+        gully_name = gully.get("name", "Unknown Gully")
+        button_text = f"🏏 {gully_name}"
+
+        # Create a callback for selecting this gully
+        callback_data = create_feature_callback_data(
+            "squad", "select_gully", {"id": gully_id}
+        )
+        keyboard.append(
+            [InlineKeyboardButton(button_text, callback_data=callback_data)]
+        )
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "You are part of multiple gullies. Please select one to view/manage your squad:",
+        reply_markup=reply_markup,
+    )
+
+    # Return to a state that will handle this selection
+    return SELECTING_PLAYERS
+
+
 def get_handlers():
     """Get all handlers for squad management features."""
     logger.info("Registering squad handlers")
@@ -638,11 +590,11 @@ def get_handlers():
     # Create the conversation handler for player selection with a catch-all callback query handler
     squad_conv_handler = ConversationHandler(
         entry_points=[
-            CallbackQueryHandler(handle_callback_query),
+            CallbackQueryHandler(handle_squad_callback_query),
         ],
         states={
             SELECTING_PLAYERS: [
-                CallbackQueryHandler(handle_callback_query),
+                CallbackQueryHandler(handle_squad_callback_query),
             ]
         },
         fallbacks=[CommandHandler("squad", squad_command)],

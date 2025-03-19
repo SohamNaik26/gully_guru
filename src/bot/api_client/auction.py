@@ -1,18 +1,22 @@
 """
 API client for auction functionality.
-Handles auction operations, contested players, and auction status.
+Handles auction operations, contested players, and auction queue management.
 """
 
 import logging
 from typing import Dict, Any, Optional, List
 
-from src.bot.api_client.base import get_api_client, BaseApiClient
+from src.bot.api_client.base import BaseApiClient
+from src.bot.context import manager as ctx_manager
+from src.bot.api_client.onboarding import (
+    get_onboarding_client as get_initialized_onboarding_client,
+)
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
 
-class AuctionApiClient:
+class AuctionApiClient(BaseApiClient):
     """API client for auction functionality."""
 
     def __init__(self, api_client: Optional[BaseApiClient] = None):
@@ -22,20 +26,64 @@ class AuctionApiClient:
         Args:
             api_client: Optional API client instance
         """
-        self._api_client = api_client
+        super().__init__(api_client)
 
-    async def _get_client(self) -> BaseApiClient:
+    async def start_auction(self, gully_id: int) -> Dict[str, Any]:
         """
-        Get the API client instance.
+        Start auction for a gully.
+
+        Args:
+            gully_id: Gully ID
 
         Returns:
-            BaseApiClient instance
+            Auction start response
         """
-        if self._api_client is None:
-            self._api_client = await get_api_client()
-        return self._api_client
+        response = await self._make_request(
+            "POST", f"/api/auction/gullies/{gully_id}/start"
+        )
+        return response
 
-    async def get_contested_players(self, gully_id: int) -> List[Dict[str, Any]]:
+    async def stop_auction(self, gully_id: int, context=None) -> Dict[str, Any]:
+        """
+        Stop auction for a gully and update context cache.
+
+        Args:
+            gully_id: Gully ID
+            context: Optional context object
+
+        Returns:
+            Success response
+        """
+        response = await self._make_request(
+            "POST", f"/api/auction/gullies/{gully_id}/stop"
+        )
+
+        # If context is provided and response was successful, update gully status in cache
+        if context and response and response.get("success"):
+            # Force refresh of gully data after status change
+            onboarding_client = await get_initialized_onboarding_client()
+            gully_data = await onboarding_client.get_gully(gully_id)
+            if gully_data:
+                ctx_manager.update_gully_data(context, gully_id, gully_data)
+
+        return response
+
+    async def get_auction_queue(self, gully_id: int) -> Dict[str, Any]:
+        """
+        Get all players from the auction queue for a specific gully.
+
+        Args:
+            gully_id: Gully ID
+
+        Returns:
+            List of players in the auction queue
+        """
+        response = await self._make_request(
+            "GET", f"/api/auction/gullies/{gully_id}/auction-queue"
+        )
+        return response
+
+    async def get_contested_players(self, gully_id: int) -> Dict[str, Any]:
         """
         Get contested players for a gully.
 
@@ -43,23 +91,14 @@ class AuctionApiClient:
             gully_id: Gully ID
 
         Returns:
-            List of contested players if successful, empty list otherwise
+            Dict with gully info and participants with their contested players
         """
-        client = await self._get_client()
+        response = await self._make_request(
+            "GET", f"/api/auction/gullies/{gully_id}/contested-players"
+        )
+        return response
 
-        logger.info(f"Getting contested players for gully {gully_id}")
-
-        # Use the auction endpoint
-        response = await client.get(f"auction/gullies/{gully_id}/contested-players")
-
-        if response and isinstance(response, list):
-            logger.info(f"Got {len(response)} contested players for gully {gully_id}")
-            return response
-        else:
-            logger.error(f"Failed to get contested players for gully {gully_id}")
-            return []
-
-    async def get_uncontested_players(self, gully_id: int) -> List[Dict[str, Any]]:
+    async def get_uncontested_players(self, gully_id: int) -> Dict[str, Any]:
         """
         Get uncontested players for a gully.
 
@@ -67,25 +106,31 @@ class AuctionApiClient:
             gully_id: Gully ID
 
         Returns:
-            List of uncontested players if successful, empty list otherwise
+            Dict with gully info and participants with their uncontested players
         """
-        client = await self._get_client()
+        response = await self._make_request(
+            "GET", f"/api/auction/gullies/{gully_id}/uncontested-players"
+        )
+        return response
 
-        logger.info(f"Getting uncontested players for gully {gully_id}")
+    async def get_all_players(self, gully_id: int) -> Dict[str, Any]:
+        """
+        Get all players for a gully.
 
-        # Use the auction endpoint
-        response = await client.get(f"auction/gullies/{gully_id}/uncontested-players")
+        Args:
+            gully_id: Gully ID
 
-        if response and isinstance(response, list):
-            logger.info(f"Got {len(response)} uncontested players for gully {gully_id}")
-            return response
-        else:
-            logger.error(f"Failed to get uncontested players for gully {gully_id}")
-            return []
+        Returns:
+            Dict with gully info and participants with all their players
+        """
+        response = await self._make_request(
+            "GET", f"/api/auction/gullies/{gully_id}/all-players"
+        )
+        return response
 
     async def update_auction_status(
         self, auction_queue_id: int, status: str, gully_id: int
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Dict[str, Any]:
         """
         Update an auction's status.
 
@@ -95,98 +140,66 @@ class AuctionApiClient:
             gully_id: Gully ID
 
         Returns:
-            Success response if successful, None otherwise
+            Success response
         """
-        client = await self._get_client()
-
-        logger.info(
-            f"Updating auction status for auction {auction_queue_id} to {status} in gully {gully_id}"
-        )
-
-        # Use the auction endpoint
-        response = await client.put(
-            f"auction/queue/{auction_queue_id}/status",
+        response = await self._make_request(
+            "PUT",
+            f"/api/auction/queue/{auction_queue_id}/status",
             json={"status": status, "gully_id": gully_id},
         )
-
-        if response:
-            logger.info(f"Updated auction status successfully")
-            return response
-        else:
-            logger.error(f"Failed to update auction status")
-            return None
-
-    async def start_auction(self, gully_id: int) -> Optional[Dict[str, Any]]:
-        """
-        Start auction for a gully.
-
-        Args:
-            gully_id: Gully ID
-
-        Returns:
-            Auction start response if successful, None otherwise
-        """
-        client = await self._get_client()
-
-        logger.info(f"Starting auction for gully {gully_id}")
-
-        # Use the auction endpoint
-        response = await client.post(f"auction/gullies/{gully_id}/start")
-
-        if response:
-            logger.info(f"Started auction for gully {gully_id} successfully")
-            return response
-        else:
-            logger.error(f"Failed to start auction for gully {gully_id}")
-            return None
+        return response
 
     async def resolve_contested_player(
         self, player_id: int, winning_participant_id: int
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Dict[str, Any]:
         """
         Resolve a contested player by assigning it to the winning participant.
 
         Args:
-            player_id: Player ID
+            player_id: ID of the player
             winning_participant_id: ID of the winning participant
 
         Returns:
-            Resolution response if successful, None otherwise
+            Updated player data
         """
-        client = await self._get_client()
-
-        logger.info(
-            f"Resolving contested player {player_id} for participant {winning_participant_id}"
+        response = await self._make_request(
+            "POST",
+            f"/api/auction/resolve-contested/{player_id}/{winning_participant_id}",
         )
+        return response.get("data", {})
 
-        # Use the auction endpoint
-        response = await client.post(
-            f"auction/resolve-contested/{player_id}/{winning_participant_id}"
+    async def release_players(
+        self, participant_id: int, player_ids: List[int]
+    ) -> Dict[str, Any]:
+        """
+        Release players from a participant and add them to the auction queue.
+
+        Args:
+            participant_id: ID of the participant
+            player_ids: List of player IDs to release
+
+        Returns:
+            Release players response
+        """
+        response = await self._make_request(
+            "POST",
+            f"/api/auction/participants/{participant_id}/release-players",
+            data={"player_ids": player_ids},
         )
-
-        if response:
-            logger.info(f"Resolved contested player successfully")
-            return response
-        else:
-            logger.error(f"Failed to resolve contested player")
-            return None
+        return response.get("data", {})
 
 
-# Singleton instance
-_auction_client = None
-
-
-async def get_auction_client() -> AuctionApiClient:
+# Factory function to get auction client
+async def get_auction_client(
+    api_client: Optional[BaseApiClient] = None,
+) -> AuctionApiClient:
     """
-    Get the auction API client instance.
+    Get an instance of the auction API client.
+
+    Args:
+        api_client: Optional API client instance
 
     Returns:
         AuctionApiClient instance
     """
-    global _auction_client
-    if _auction_client is None:
-        api_client = await get_api_client()
-        _auction_client = AuctionApiClient(api_client)
-        logger.info("Initialized auction API client")
-
-    return _auction_client
+    return AuctionApiClient(api_client)

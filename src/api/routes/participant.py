@@ -27,7 +27,6 @@ router = APIRouter(prefix="/participants", tags=["participants"])
 async def get_participants(
     gully_id: Optional[int] = Query(None, description="Filter by gully ID"),
     user_id: Optional[int] = Query(None, description="Filter by user ID"),
-    pagination: PaginationParams = Depends(pagination_params),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -43,19 +42,12 @@ async def get_participants(
         Paginated list of participants
     """
     participant_service = ParticipantService(db)
-    participants, total = await participant_service.get_participants(
+    participants = await participant_service.get_participants(
         gully_id=gully_id,
         user_id=user_id,
-        skip=pagination.offset,
-        limit=pagination.limit,
     )
 
-    return ParticipantResponseFactory.create_paginated_response(
-        items=participants,
-        total=total,
-        limit=pagination.limit,
-        offset=pagination.offset,
-    )
+    return ParticipantResponseFactory.create_response_list(participants)
 
 
 @router.get("/{participant_id}", response_model=ParticipantResponse)
@@ -256,6 +248,7 @@ async def get_gully_participants(
         List of participants
     """
     participant_service = ParticipantService(db)
-    participants = await participant_service.get_participants(gully_id=gully_id)
+    participants, _ = await participant_service.get_participants(gully_id=gully_id)
 
-    return ParticipantResponseFactory.create_response_list(participants)
+    # Return participants directly as a list
+    return participants

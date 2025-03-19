@@ -10,6 +10,7 @@ from typing import Dict, Any, Optional
 from src.bot.api_client.base import get_api_client
 from src.bot.api_client.onboarding import get_onboarding_client
 from src.bot.api_client.squad import get_squad_client
+from src.bot.api_client.auction import get_auction_client
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 # Global client instances
 _onboarding_client = None
 _squad_client = None
+_auction_client = None
 _api_client = None
 _initialized = False
 _initialization_lock = asyncio.Lock()
@@ -29,7 +31,7 @@ async def initialize_clients() -> bool:
     Returns:
         bool: True if initialization was successful, False otherwise
     """
-    global _onboarding_client, _squad_client, _api_client, _initialized
+    global _onboarding_client, _squad_client, _auction_client, _api_client, _initialized
 
     # Use a lock to prevent multiple concurrent initializations
     async with _initialization_lock:
@@ -46,6 +48,7 @@ async def initialize_clients() -> bool:
             # Initialize other clients using the base client
             _onboarding_client = await get_onboarding_client()
             _squad_client = await get_squad_client()
+            _auction_client = await get_auction_client()
 
             # Test connection with a simple API call
             users = await _onboarding_client.get_users()
@@ -90,6 +93,23 @@ async def get_initialized_squad_client():
             return None
 
     return _squad_client
+
+
+async def get_initialized_auction_client():
+    """
+    Get the initialized auction client.
+
+    Returns:
+        AuctionApiClient or None if initialization failed
+    """
+    global _auction_client, _initialized
+
+    if not _initialized:
+        success = await initialize_clients()
+        if not success:
+            return None
+
+    return _auction_client
 
 
 async def wait_for_api(max_attempts: int = 5, delay: int = 2) -> bool:

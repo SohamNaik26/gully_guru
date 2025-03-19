@@ -128,7 +128,7 @@ class BaseApiClient:
             # If not JSON, get text
             text = response.text
             logger.warning(f"Non-JSON response: {text[:100]}...")
-            return {"success": True, "data": {"text": text}}
+            return {"success": False, "error": "Invalid JSON response", "text": text}
 
 
 class APIClient:
