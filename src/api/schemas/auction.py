@@ -18,6 +18,7 @@ class AuctionStatusEnum(str, Enum):
     PENDING = "pending"
     BIDDING = "bidding"
     COMPLETED = "completed"
+    REJECTED = "rejected"
 
 
 class AuctionTypeEnum(str, Enum):
@@ -277,3 +278,19 @@ class RevertAuctionResponse(BaseModel):
     status: str = Field("success", description="Status of the reversion")
     auction_queue_id: int = Field(..., description="ID of the auction queue item")
     message: str = Field(..., description="Reversion message")
+
+
+class SkipPlayerRequest(BaseModel):
+    """Schema for skipping a player in the auction queue."""
+
+    auction_queue_id: int = Field(..., description="ID of the auction queue item")
+
+
+class SkipPlayerResponse(BaseModel):
+    """Schema for skip player response."""
+
+    status: str = Field("success", description="Status of the operation")
+    auction_queue_id: int = Field(..., description="ID of the auction queue item")
+    player_id: int = Field(..., description="ID of the player")
+    player_name: str = Field(..., description="Name of the player")
+    message: str = Field(..., description="Skip message")

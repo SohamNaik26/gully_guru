@@ -9,6 +9,10 @@ from dotenv import load_dotenv
 # Import all models to ensure they're registered with SQLModel.metadata
 # This import is used for its side effect of registering models with SQLModel.metadata
 import src.db.models  # noqa: F401
+from src.db.models.ipl_fixures import *
+from src.db.models.kaggle import *
+from src.db.models.models import *
+from src.db.models.cricsheet import *
 
 # Load environment variables
 load_dotenv()

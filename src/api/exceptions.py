@@ -58,16 +58,26 @@ class ConflictException(GullyGuruException):
         super().__init__(status_code=status.HTTP_409_CONFLICT, detail=detail)
 
 
+class APIException(GullyGuruException):
+    """Exception raised when an API request fails."""
+
+    def __init__(self, detail: str):
+        super().__init__(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail
+        )
+
+
 def handle_exceptions(func):
     """
     Decorator to handle exceptions consistently.
-    
+
     Args:
         func: The function to wrap with exception handling
-        
+
     Returns:
         Wrapped function with standardized exception handling
     """
+
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
         try:
@@ -81,6 +91,7 @@ def handle_exceptions(func):
             # Return a sanitized error message
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="An internal server error occurred"
+                detail="An internal server error occurred",
             )
+
     return wrapper

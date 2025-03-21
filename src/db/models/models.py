@@ -4,7 +4,7 @@ from decimal import Decimal
 from enum import Enum
 from sqlmodel import SQLModel, Field, Relationship
 from pydantic import field_validator
-from sqlalchemy import TypeDecorator, DateTime, BigInteger, event
+from sqlalchemy import TypeDecorator, DateTime, BigInteger, event, ForeignKeyConstraint
 import sqlalchemy
 
 
@@ -32,12 +32,17 @@ class AuctionType(str, Enum):
     TRANSFER = "transfer"  # Weekly transfer window auction
 
 
+# TODO: Consider using PostgreSQL's native ENUM type for better migration support
+# This would allow Alembic to automatically detect enum value changes and generate
+# the appropriate migration scripts. Currently, adding values to string-based enums
+# requires manual constraint updates in separate migrations.
 class AuctionStatus(str, Enum):
     """Enum for auction status."""
 
     PENDING = "pending"  # Waiting for auction to start
     BIDDING = "bidding"  # Active bidding phase
     COMPLETED = "completed"  # Auction has concluded
+    REJECTED = "rejected"  # Player has been rejected
 
 
 class GullyStatus(str, Enum):
@@ -512,22 +517,12 @@ class BankTransaction(TimeStampedModel, table=True):
 class Bid(TimeStampedModel, table=True):
     """
     Model for tracking bids on auction items.
-
-    Represents a bid placed by a user on a player in the auction queue,
-    including the bid amount and when it was placed.
-
-    Attributes:
-        id: Primary key
-        auction_queue_id: Reference to the AuctionQueue item
-        gully_participant_id: Reference to the GullyParticipant who placed the bid
-        bid_amount: Amount of the bid
-        bid_time: When the bid was placed
     """
 
     __tablename__ = "bids"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    auction_queue_id: int = Field(foreign_key="auction_queue.id", index=True)
+    auction_queue_id: int = Field(index=True)  # No foreign_key here
     gully_participant_id: int = Field(foreign_key="gully_participants.id", index=True)
     bid_amount: Decimal = Field(description="Bid amount")
     bid_time: datetime = Field(
@@ -535,17 +530,11 @@ class Bid(TimeStampedModel, table=True):
         sa_type=sqlalchemy.DateTime(timezone=True),
     )
 
-    # Define unique constraint and composite index
+    # Add table constraints including ON DELETE CASCADE
     __table_args__ = (
-        sqlalchemy.UniqueConstraint(
-            "auction_queue_id",
-            "gully_participant_id",
-            name="uq_bid_auction_participant",
+        ForeignKeyConstraint(
+            ["auction_queue_id"], ["auction_queue.id"], ondelete="CASCADE"
         ),
-        sqlalchemy.Index("ix_bids_auction_amount", "auction_queue_id", "bid_amount"),
-        # Note: PostgreSQL doesn't support subqueries in CHECK constraints
-        # The security check to prevent users from bidding on their own listed players
-        # will be implemented at the application level
     )
 
     # Relationships will be defined after all classes are defined

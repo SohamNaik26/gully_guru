@@ -15,6 +15,7 @@ from src.api.schemas.auction import (
     ReleasePlayersResponse,
     ResolveContestedPlayerRequest,
     RevertAuctionRequest,
+    SkipPlayerRequest,
 )
 from src.api.schemas.fantasy import (
     AuctionStartResponse,
@@ -407,3 +408,36 @@ async def release_players(
     )
 
     return AuctionResponseFactory.create_release_players_response(result)
+
+
+@router.post(
+    "/gullies/{gully_id}/skip-player",
+    response_model=Dict[str, Any],
+    summary="Skip player from auction queue",
+    status_code=status.HTTP_200_OK,
+)
+@handle_exceptions
+async def skip_player(
+    gully_id: int = Path(..., description="ID of the gully"),
+    request: SkipPlayerRequest = Body(..., description="Skip player request"),
+    auction_service: AuctionService = Depends(get_auction_service),
+):
+    """
+    Skip/reject a player from the auction queue when all participants agree.
+
+    Args:
+        gully_id: ID of the gully
+        request: Skip player request with auction_queue_id
+        auction_service: Auction service instance
+
+    Returns:
+        Dict with status and skip information
+
+    Raises:
+        NotFoundException: If gully, player, or auction queue item not found
+        ValidationException: If gully is not in auction state or auction status is not bidding
+    """
+    result = await auction_service.skip_player(
+        gully_id=gully_id, auction_queue_id=request.auction_queue_id
+    )
+    return AuctionResponseFactory.create_skip_player_response(result)

@@ -145,12 +145,16 @@ class AuctionApiClient(BaseApiClient):
         response = await self._make_request(
             "PUT",
             f"/api/auction/queue/{auction_queue_id}/status",
-            json={"status": status, "gully_id": gully_id},
+            data={"status": status, "gully_id": gully_id},
         )
         return response
 
     async def resolve_contested_player(
-        self, player_id: int, winning_participant_id: int
+        self,
+        player_id: int,
+        winning_participant_id: int,
+        auction_queue_id: int,
+        bid_amount: float,
     ) -> Dict[str, Any]:
         """
         Resolve a contested player by assigning it to the winning participant.
@@ -158,15 +162,19 @@ class AuctionApiClient(BaseApiClient):
         Args:
             player_id: ID of the player
             winning_participant_id: ID of the winning participant
+            auction_queue_id: ID of the auction queue item
+            bid_amount: Final bid amount for the player
 
         Returns:
             Updated player data
         """
+        payload = {"auction_queue_id": auction_queue_id, "bid_amount": bid_amount}
         response = await self._make_request(
             "POST",
             f"/api/auction/resolve-contested/{player_id}/{winning_participant_id}",
+            data=payload,
         )
-        return response.get("data", {})
+        return response
 
     async def release_players(
         self, participant_id: int, player_ids: List[int]
@@ -187,6 +195,60 @@ class AuctionApiClient(BaseApiClient):
             data={"player_ids": player_ids},
         )
         return response.get("data", {})
+
+    async def get_next_player(self, gully_id: int) -> Dict[str, Any]:
+        """
+        Get the next player in the auction queue for a gully.
+
+        Args:
+            gully_id: Gully ID
+
+        Returns:
+            Next player information and eligible participants
+        """
+        response = await self._make_request(
+            "GET", f"/api/auction/gullies/{gully_id}/next-player"
+        )
+        return response
+
+    async def revert_auction(
+        self, player_id: int, winning_participant_id: int, auction_queue_id: int
+    ) -> Dict[str, Any]:
+        """
+        Revert an auction result, returning the player to the queue.
+
+        Args:
+            player_id: ID of the player
+            winning_participant_id: ID of the winning participant
+            auction_queue_id: ID of the auction queue item
+
+        Returns:
+            Reversion operation response
+        """
+        response = await self._make_request(
+            "POST",
+            f"/api/auction/revert/{player_id}/{winning_participant_id}",
+            data={"auction_queue_id": auction_queue_id},
+        )
+        return response
+
+    async def skip_player(self, gully_id: int, auction_queue_id: int) -> Dict[str, Any]:
+        """
+        Skip/reject a player from the auction queue.
+
+        Args:
+            gully_id: Gully ID
+            auction_queue_id: Auction queue ID of the player to skip
+
+        Returns:
+            Skip player response
+        """
+        response = await self._make_request(
+            "POST",
+            f"/api/auction/gullies/{gully_id}/skip-player",
+            data={"auction_queue_id": auction_queue_id},
+        )
+        return response
 
 
 # Factory function to get auction client

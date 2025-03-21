@@ -39,14 +39,14 @@ async def setup_command_scopes(application: Application) -> None:
         # Auction commands for private chats
         BotCommand("release_players", "Select players to release during auction"),
         BotCommand("my_team", "View your current team"),
-        BotCommand("reset_auction", "Reset auction for the active gully"),
+        # never open this:
+        # BotCommand("reset_auction", "Reset auction for the active gully"),
     ]
 
     # Visible group commands
     group_commands = [
-        BotCommand("hello", "Hello!!"),
         BotCommand("start_auction", "Start the auction process for the gully"),
-        BotCommand("pause_auction", "Temporarily pause the auction"),
+        BotCommand("next_player", "Get the next player from the auction queue"),
     ]
 
     try:

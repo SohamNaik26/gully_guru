@@ -195,3 +195,27 @@ class AuctionResponseFactory:
                 "status": data.get("status", "success"),
             },
         }
+
+    @staticmethod
+    def create_skip_player_response(data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a response for skipping a player from auction queue.
+
+        Args:
+            data: Skip player operation data
+
+        Returns:
+            Response data
+        """
+        return {
+            "success": True,
+            "message": data.get(
+                "message", "Player successfully skipped from auction queue"
+            ),
+            "data": {
+                "status": data.get("status", "success"),
+                "auction_queue_id": data.get("auction_queue_id"),
+                "player_id": data.get("player_id"),
+                "player_name": data.get("player_name"),
+            },
+        }

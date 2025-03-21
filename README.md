@@ -283,3 +283,60 @@ The following questions need to be addressed in future development:
    - What formula should be used to calculate the fair price of a player?
    - Should fair price be based on performance, original price, or a combination?
    - How often should fair prices be recalculated?
+
+
+# How to play
+
+# GullyGuru Fantasy Cricket - User Journey & Points Guide
+
+## User Journey: From Joining to Season End
+
+1. **First-Time Setup**: After joining a GullyGuru group in Telegram, start a private chat with the bot using `/start` to register and name your team.
+
+2. **Initial Squad Selection**: Use `/squad` in private chat to select 15-18 players for your initial team within your 100 credit budget.
+
+3. **Draft Phase**: Players wanted by multiple members enter the auction queue. Use the group chat to view contested players.
+
+4. **Auction Participation**: When a contested player appears in auction (via `/next_player`), place your bids in the group chat to secure them.
+
+5. **Team Completion**: After auctions conclude, check your final team with `/my_team`. Any missing slots are auto-filled to ensure a complete squad.
+
+6. **Pre-Gameweek Planning**: Before matches begin, set your playing XI from your squad to maximize potential points.
+
+7. **Live Scoring**: During matches, player performances are updated in real-time, with points accumulating based on their actions.
+
+8. **Weekly Transfer Window**: At the end of each gameweek, use `/release_players` to release underperforming players and participate in the new mini-auction.
+
+9. **Season Progress**: Track your position on the leaderboard as the season progresses, making strategic transfers to optimize your team.
+
+10. **Season Conclusion**: At the end of the tournament, final rankings determine the gully champion.
+
+## Points Calculation System
+
+11. **Dream11-Style Scoring**: Points are awarded for batting, bowling, and fielding actions similar to Dream11:
+    - Runs: 1 point per run
+    - Boundaries: Bonus points (4 for fours, 6 for sixes)
+    - Wickets: 25 points per wicket
+    - Catches/Stumpings: 10 points each
+    - Economy rate bonuses for bowlers
+    - Strike rate bonuses for batsmen
+
+12. **Unique Teams**: Unlike Dream11, each player can only be owned by one participant, making strategic selection crucial.
+
+13. **Captain Bonus**: Your designated captain earns 2x points, while vice-captain earns 1.5x points.
+
+14. **Performance Bonuses**: Additional points for milestones (centuries, five-wicket hauls, etc.).
+
+15. **Transfer Strategy**: Weekly transfers allow adapting to player form and injuries, with limited transfers to encourage long-term planning.
+
+16. **Transfer Market**: Players released enter a mini-auction where remaining budget and team needs determine bidding strategy.
+
+17. **Budget Management**: Each player has a dynamic value that can increase/decrease based on performance, affecting your transfer capabilities.
+
+18. **Team Balance**: Maintain a balanced squad across batting, bowling, and all-rounder categories to maximize point potential.
+
+19. **Matchup Strategy**: Consider upcoming fixtures when selecting players for your XI each week.
+
+20. **Long-term Planning**: Balance immediate points potential against future transfer flexibility for tournament knockout stages.
+
+*Note: All team management is done in private chat with the bot, while auction and gully-wide activities happen in the group chat.*

@@ -35,6 +35,7 @@ app.add_middleware(
     allow_headers=["*"],  # Allow all headers
 )
 
+
 # Add exception handlers
 @app.exception_handler(GullyGuruException)
 async def gullyguru_exception_handler(request: Request, exc: GullyGuruException):
@@ -44,6 +45,7 @@ async def gullyguru_exception_handler(request: Request, exc: GullyGuruException)
         content={"detail": exc.detail},
     )
 
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Handle request validation errors."""
@@ -51,6 +53,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         status_code=422,
         content={"detail": exc.errors()},
     )
+
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
@@ -60,6 +63,7 @@ async def general_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"detail": "An internal server error occurred"},
     )
+
 
 # Include API router directly at the root path instead of with /api prefix
 # This change ensures the bot can access endpoints at the root path

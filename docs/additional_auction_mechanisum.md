@@ -1,257 +1,122 @@
-Final API Specification with Auction Queue ID for Faster DB Queries
+📌 Updated Streamlined Auction Queue Flow with Requested Changes
 
-I have updated all responses to include auction_queue_id, ensuring faster lookups and better performance during database transactions.
-
-⸻
-
-1️⃣ GET /auction/gullies/{gully_id}/next-player
-
-Purpose
-
-Fetch the next player from the auction queue and provide current budget & team details for all participants in the Gully.
-
-Input
-
-Parameter	Type	Required	Description
-gully_id	int	✅ Yes	The ID of the Gully for which the auction is ongoing.
-
-Output
-
-{
-  "player": {
-    "auction_queue_id": 501,  
-    "player_id": 205,
-    "name": "Shubman Gill",
-    "team": "GT",
-    "player_type": "BAT",
-    "base_price": 80.0
-  },
-  "participants": [
-    {
-      "participant_id": 101,
-      "team_name": "Team Alpha",
-      "budget": 60.0,
-      "players_owned": 15,
-      "players_remaining": 3,
-      "team": [
-        {
-          "player_id": 201,
-          "name": "Virat Kohli",
-          "purchase_price": 120.0
-        },
-        {
-          "player_id": 301,
-          "name": "Rohit Sharma",
-          "purchase_price": 140.0
-        }
-      ]
-    },
-    {
-      "participant_id": 102,
-      "team_name": "Team Beta",
-      "budget": 90.0,
-      "players_owned": 13,
-      "players_remaining": 5,
-      "team": [
-        {
-          "player_id": 305,
-          "name": "MS Dhoni",
-          "purchase_price": 110.0
-        }
-      ]
-    }
-  ]
-}
-
-
+Changes Implemented:
+✅ Step 1 Validation is removed from bot logic; the API response itself determines whether the auction can proceed.
+✅ Skipping Mechanism:
+	•	Individual skips are not posted in the group chat.
+	•	A skip counter is maintained internally.
+	•	If all participants skip, the player is skipped, and the next player is fetched.
 
 ⸻
 
-State Changes in Database
+🚀 Streamlined Auction Queue Flow (Updated)
 
-🔹 No state changes occur in this route. This is a read-only operation.
+1️⃣ Step 1: Initiating the Next Player
+
+Trigger:
+	•	/next_player command is called in the Telegram group.
+
+API Request:
+
+GET /auction/gullies/{gully_id}/next-player
+
+Bot UI Update:
+	•	Display the player details (based on API response):
+
+Player: Virat Kohli 🏏
+Team: RCB
+Player Type: BAT
+Base Price: 2.0 CR
+
+
+	•	Reply Keyboard (Telegram Inline Buttons):
+
+[ 💰 Bid ]    [ ⏭️ Skip ]
+
+
+
+✅ No additional validation is needed. The bot only uses API response for displaying the player.
 
 ⸻
+
+2️⃣ Step 2: Handling Skips Efficiently
+
+Trigger:
+	•	A participant presses Skip.
+
+Implementation:
+	•	Do not post a “Skip” message in the group.
+	•	Maintain a context variable to track who has skipped.
+
+✅ Check for Full Skips:
+	•	If all participants have pressed Skip, the bot does:
+
+POST /auction/gullies/{gully_id}/skip-player
+
+	•	This marks the player as skipped in the auction queue.
+	•	Then, the bot automatically fetches the next player.
+
+Bot UI Update (Only When All Participants Skip):
+
+🚫 All participants skipped. Moving to the next player...
+
+✅ Next Step: Fetch a new player via:
+
+GET /auction/gullies/{gully_id}/next-player
 
 
 
 ⸻
 
-2️⃣ POST /auction/resolve-contested/{player_id}/{winning_participant_id}
+3️⃣ Step 3: Bidding Process
 
-Purpose
+Trigger:
+	•	A participant presses Bid.
 
-Assigns a contested player to the winning participant, updates the participant’s budget, registers the final bid in the Bid table, and removes the player from the auction queue.
+API Request:
 
-Input
+POST /auction/bid
 
-Parameter	Type	Required	Description
-player_id	int	✅ Yes	The ID of the contested player being auctioned.
-winning_participant_id	int	✅ Yes	The ID of the participant who won the bid.
+Bid Increment Logic:
 
-Request Body
+Current Price (CR)	Increment (CR)
+< 2	+0.1
+2 - 5	+0.5
+5 - 10	+1.0
+> 10	+2.0
 
-{
-  "auction_queue_id": 501,
-  "bid_amount": 120.0
-}
+Bot UI Update:
 
-Output
+💰 Bid of 2.5 CR placed by @username
 
-{
-  "status": "success",
-  "auction_queue_id": 501,
-  "message": "Player successfully assigned."
-}
-
-
+✅ Bid Timer: Every bid resets a 15-second countdown.
 
 ⸻
 
-Steps Executed by this Route
+4️⃣ Step 4: Winning a Bid
 
-1️⃣ Validate Inputs
-	•	Ensure that player_id exists in AuctionQueue and has status "bidding".
-	•	Ensure that winning_participant_id exists in GullyParticipant.
-	•	Ensure that bid_amount is within the winning participant’s budget.
+Trigger:
+	•	No bids for 15 seconds, the last bid wins.
 
-2️⃣ Register the Final Bid in Bid Table
-	•	Insert the winning bid into the Bid table:
+API Request:
 
-INSERT INTO Bid (auction_queue_id, gully_participant_id, bid_amount, bid_time)
-VALUES (:auction_queue_id, :winning_participant_id, :bid_amount, NOW());
+POST /auction/resolve-contested/{player_id}/{winning_participant_id}
 
+Bot UI Update:
 
+🎉 @username won the bid for Virat Kohli at 2.5 CR!
 
-3️⃣ Assign Player to the Participant
-	•	Insert a new row in ParticipantPlayer:
-
-INSERT INTO ParticipantPlayer (gully_participant_id, player_id, purchase_price, purchase_date, status)
-VALUES (:winning_participant_id, :player_id, :bid_amount, NOW(), "owned");
-
-
-
-4️⃣ Deduct the Winning Amount from Budget
-	•	Update the budget in GullyParticipant:
-
-UPDATE GullyParticipant
-SET budget = budget - :bid_amount
-WHERE id = :winning_participant_id;
-
-
-
-5️⃣ Remove Player from the Auction Queue
-	•	Update AuctionQueue to mark this player’s auction as "completed":
-
-UPDATE AuctionQueue
-SET status = "completed"
-WHERE id = :auction_queue_id;
-
-
-
-6️⃣ Return Success Response
-	•	Send a minimal response confirming the transaction.
-
-⸻
-
-State Changes in Database
-
-Table	Action
-Bid	INSERT: Stores the final bid details.
-ParticipantPlayer	INSERT: Adds the player to the winning participant’s team.
-GullyParticipant	UPDATE: Deducts the bid amount from the participant’s budget.
-AuctionQueue	UPDATE: Marks the auction as "completed".
-
-
+✅ Next Step: Call /next_player to continue.
 
 ⸻
 
 
-
 ⸻
 
-3️⃣ POST /auction/revert/{player_id}/{winning_participant_id}
+✅ Final API Endpoints Used
 
-Purpose
-
-Reverts a previously assigned auctioned player, restoring the auction queue and refunding the bid amount.
-
-Input
-
-Parameter	Type	Required	Description
-player_id	int	✅ Yes	The ID of the player whose assignment should be reverted.
-winning_participant_id	int	✅ Yes	The ID of the participant to whom the player was assigned.
-
-Request Body
-
-{
-  "auction_queue_id": 501
-}
-
-Output
-
-{
-  "status": "success",
-  "auction_queue_id": 501,
-  "message": "Auction result reverted. Player returned to auction queue."
-}
-
-
-
-⸻
-
-Steps Executed by this Route
-
-1️⃣ Validate Inputs
-	•	Ensure the player_id is currently owned by winning_participant_id in ParticipantPlayer.
-	•	Ensure that a bid was registered in Bid for this player_id.
-
-2️⃣ Refund the Winning Participant’s Budget
-	•	Retrieve the bid_amount from the Bid table.
-	•	Update the budget in GullyParticipant:
-
-UPDATE GullyParticipant
-SET budget = budget + :bid_amount
-WHERE id = :winning_participant_id;
-
-
-
-3️⃣ Remove Player from ParticipantPlayer
-	•	Delete the player from ParticipantPlayer:
-
-DELETE FROM ParticipantPlayer
-WHERE gully_participant_id = :winning_participant_id AND player_id = :player_id;
-
-
-
-4️⃣ Restore the Player to AuctionQueue
-	•	Update the AuctionQueue table to set the status back to "pending":
-
-UPDATE AuctionQueue
-SET status = "pending"
-WHERE id = :auction_queue_id;
-
-
-
-5️⃣ Return Success Response
-	•	Send a minimal response confirming the reversion.
-
-⸻
-
-State Changes in Database
-
-Table	Action
-GullyParticipant	UPDATE: Restores the refunded amount.
-ParticipantPlayer	DELETE: Removes the player from the participant’s squad.
-AuctionQueue	UPDATE: Restores player to the auction queue.
-
-
-
-⸻
-
-Final Summary
-
-Route	HTTP Method	Purpose	State Changes
-/auction/gullies/{gully_id}/next-player	GET	Fetches the next player for auction	❌ No state changes
-/auction/resolve-contested/{player_id}/{winning_participant_id}	POST	Assigns the player & registers bid	✅ Updates bid, budget, player ownership, auction queue
-/auction/revert/{player_id}/{winning_participant_id}	POST	Reverts auction result	✅ Restores budget, removes player, resets auction queue
+API Endpoint	Method	Purpose
+/auction/gullies/{gully_id}/next-player	GET	Fetches the next player for auction
+/auction/gullies/{gully_id}/skip-player	POST	Skips player if all participants press skip
+/auction/bid	POST	Places a bid on the current player
+/auction/resolve-contested/{player_id}/{winning_participant_id}	POST	Assigns a player to the winning participant

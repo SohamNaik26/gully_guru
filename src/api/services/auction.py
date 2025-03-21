@@ -24,7 +24,7 @@ from src.db.models.models import (
     AuctionType,
     Bid,
 )
-from src.api.exceptions import NotFoundException, ValidationException
+from src.api.exceptions import NotFoundException, ValidationException, APIException
 from src.api.schemas.auction import (
     AuctionStartResponse,
     ContestPlayerResponse,
@@ -37,6 +37,8 @@ from src.api.schemas.auction import (
     ResolveContestedPlayerRequest,
     RevertAuctionRequest,
     RevertAuctionResponse,
+    SkipPlayerRequest,
+    SkipPlayerResponse,
 )
 from src.api.schemas.player import PlayerType
 from src.api.schemas.common import SuccessResponse
@@ -61,23 +63,26 @@ class AuctionService:
         """
         Start auction for a gully by transitioning from draft to auction state.
 
-        This function:
-        1. Validates the gully exists and is in draft state
-        2. Processes draft selections, categorizing players as contested or uncontested
-        3. Moves uncontested players directly to participant_players with "locked" status
-        4. Adds contested players to the auction queue with "pending" status
-        5. Adds remaining players from the master player list to the auction queue
-        6. Updates the gully status to "auction"
+        Step-by-step process:
+        1. Verify gully exists and is in DRAFT state
+        2. Process draft selections to categorize players:
+           - Count occurrences of each player across all participants
+           - Players selected by multiple participants → contested
+           - Players selected by single participant → uncontested
+        3. For contested players:
+           - Add to contested_players list with contestant details
+           - Add to auction queue with PENDING status
+        4. For uncontested players:
+           - Add to uncontested_players list
+           - Add directly to participant_players with LOCKED status
+        5. Add remaining players from master player list to auction queue
+        6. Update gully status to AUCTION
+        7. Return success response with contested/uncontested counts
 
-        Args:
-            gully_id: Gully ID
-
-        Returns:
-            AuctionStartResponse with auction start status and player counts
-
-        Raises:
-            NotFoundException: If gully not found
-            ValidationException: If auction cannot be started
+        Database state changes:
+        1. ParticipantPlayer table: Creates records for uncontested players with LOCKED status
+        2. AuctionQueue table: Adds contested players and master list players with PENDING status
+        3. Gully table: Updates status from DRAFT to AUCTION
         """
         # Check if gully exists
         gully = await self._get_gully(gully_id)
@@ -119,17 +124,24 @@ class AuctionService:
         """
         Process draft selections for a gully, categorizing players as contested or uncontested.
 
-        This function:
-        1. Retrieves all draft squad selections for the gully
-        2. Identifies contested and uncontested players
-        3. Moves uncontested players to participant_players
-        4. Adds contested players to the auction queue
+        Step-by-step process:
+        1. Get all participants in the gully
+        2. Get all draft selections for all gully participants
+        3. Count how many participants selected each player
+        4. For each player:
+           - If selected by multiple participants (contested):
+             - Create contestant info list with participant details
+             - Add to contested_players list
+             - Add to auction queue with PENDING status
+           - If selected by only one participant (uncontested):
+             - Add to uncontested_players list
+             - Add to participant_players with LOCKED status
+        5. Commit changes to database
+        6. Return contested and uncontested player lists
 
-        Args:
-            gully_id: Gully ID
-
-        Returns:
-            Tuple of (contested_players, uncontested_players)
+        Database state changes:
+        1. ParticipantPlayer table: Creates records for uncontested players with LOCKED status
+        2. AuctionQueue table: Creates entries for contested players with PENDING status
         """
         # Get all participants for this gully
         stmt = select(GullyParticipant).where(GullyParticipant.gully_id == gully_id)
@@ -267,10 +279,17 @@ class AuctionService:
         """
         Add players from the master Player table to the auction queue if they're not already assigned.
 
-        This ensures all available players are in the auction queue for future transfers.
+        Step-by-step process:
+        1. Get all players from master Player table for current season
+        2. Get list of player IDs already in auction queue for this gully
+        3. Get list of player IDs already assigned to participants in this gully
+        4. For each player in master list:
+           - If not already in queue and not already assigned
+           - Add to auction queue with PENDING status and NEW_PLAYER type
+        5. Commit changes to database
 
-        Args:
-            gully_id: Gully ID
+        Database state changes:
+        - AuctionQueue table: Creates entries for unassigned players with PENDING status
         """
         logger.info(
             f"Adding players from master list to auction queue for gully {gully_id}"
@@ -326,17 +345,22 @@ class AuctionService:
         self, gully_id: int, status: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Get players grouped by participant for a gully.
+        Get players grouped by participant for a gully, optionally filtered by status.
 
-        Args:
-            gully_id: Gully ID
-            status: Optional filter for player status (locked, contested, owned)
+        Step-by-step process:
+        1. Verify gully exists
+        2. Build query for participant players, filtering by status if provided
+        3. Execute query to get all matching participant_player records
+        4. Extract player IDs and participant IDs from results
+        5. Fetch player details for all player IDs
+        6. Fetch participant details for all participant IDs
+        7. Group players by participant:
+           - For each participant_player, get corresponding player and participant
+           - Add player details to participant's players list
+        8. Return gully information and grouped participant data
 
-        Returns:
-            Dict with gully info and participants with their players
-
-        Raises:
-            NotFoundException: If gully not found
+        Database state changes:
+        - None (read-only operation)
         """
         # Check if gully exists
         gully = await self._get_gully(gully_id)
@@ -419,14 +443,12 @@ class AuctionService:
         """
         Get contested players for a gully.
 
-        Args:
-            gully_id: Gully ID
+        Step-by-step process:
+        1. Call get_players_by_participant with CONTESTED status filter
+        2. Return filtered player data grouped by participant
 
-        Returns:
-            Dict with gully info and participants with their contested players
-
-        Raises:
-            NotFoundException: If gully not found
+        Database state changes:
+        - None (read-only operation)
         """
         return await self.get_players_by_participant(
             gully_id, UserPlayerStatus.CONTESTED.value
@@ -436,14 +458,12 @@ class AuctionService:
         """
         Get uncontested players for a gully.
 
-        Args:
-            gully_id: Gully ID
+        Step-by-step process:
+        1. Call get_players_by_participant with LOCKED status filter
+        2. Return filtered player data grouped by participant
 
-        Returns:
-            Dict with gully info and participants with their uncontested players
-
-        Raises:
-            NotFoundException: If gully not found
+        Database state changes:
+        - None (read-only operation)
         """
         return await self.get_players_by_participant(
             gully_id, UserPlayerStatus.LOCKED.value
@@ -451,16 +471,14 @@ class AuctionService:
 
     async def get_all_players(self, gully_id: int) -> Dict[str, Any]:
         """
-        Get all players for a gully. Uncontested + Contested players are not included.
+        Get all players for a gully regardless of status.
 
-        Args:
-            gully_id: Gully ID
+        Step-by-step process:
+        1. Call get_players_by_participant with no status filter
+        2. Return all player data grouped by participant
 
-        Returns:
-            Dict with gully info and participants with all their players
-
-        Raises:
-            NotFoundException: If gully not found
+        Database state changes:
+        - None (read-only operation)
         """
         return await self.get_players_by_participant(gully_id)
 
@@ -470,16 +488,15 @@ class AuctionService:
         """
         Update an auction's status.
 
-        Args:
-            auction_queue_id: Auction queue ID
-            status: New status
-            gully_id: Gully ID
+        Step-by-step process:
+        1. Construct update query to change auction queue item's status
+        2. Execute query, filtering by both auction_queue_id and gully_id
+        3. Commit changes to database
+        4. Check if any rows were affected by the update
+        5. Return success response with appropriate message
 
-        Returns:
-            SuccessResponse indicating whether the update was successful
-
-        Raises:
-            ValidationException: If status is invalid
+        Database state changes:
+        - AuctionQueue table: Updates status field for matching auction queue item
         """
         # Update auction status
         stmt = (
@@ -512,16 +529,19 @@ class AuctionService:
         Get the next player from the auction queue for a specific gully.
         Also provides current budget & team details for all participants.
 
-        Args:
-            gully_id: ID of the gully
+        Step-by-step process:
+        1. Verify gully exists and is in AUCTION state
+        2. Verify all participants have confirmed their initial players (all in OWNED status)
+        3. Select a random player with PENDING status from the auction queue
+        4. If a PENDING player is found, update status to BIDDING
+        5. Gather player details (id, name, team, etc.)
+        6. For each participant in the gully:
+           - Calculate current budget
+           - Count owned players and remaining slots
+           - List all currently owned players with purchase prices
 
-        Returns:
-            Dict with next player and participant information
-
-        Raises:
-            NotFoundException: If gully not found
-            ValidationException: If gully is not in auction state or if participants
-                                haven't confirmed their initial players
+        Database state changes:
+        - Updates AuctionQueue.status from PENDING to BIDDING for the selected player
         """
         # Ensure gully exists and is in auction state
         gully = await self._get_gully(gully_id)
@@ -566,20 +586,6 @@ class AuctionService:
             )
             result = await session.execute(stmt)
             next_auction_item = result.scalar_one_or_none()
-
-            # If no pending player, try to find any in "bidding" status
-            if not next_auction_item:
-                stmt = (
-                    select(AuctionQueue)
-                    .where(
-                        AuctionQueue.gully_id == gully_id,
-                        AuctionQueue.status == AuctionStatus.BIDDING.value,
-                    )
-                    .order_by(func.random())
-                    .limit(1)
-                )
-                result = await session.execute(stmt)
-                next_auction_item = result.scalar_one_or_none()
 
             # If a player is found, update status to "bidding"
             if (
@@ -661,20 +667,27 @@ class AuctionService:
         bid_amount: float,
     ) -> Dict[str, Any]:
         """
-        Resolve a contested player by assigning it to the winning participant.
+        Resolve a contested player by assigning it to the winning participant,
+        deducting the bid amount from their budget, and completing the auction.
 
-        Args:
-            player_id: ID of the player
-            winning_participant_id: ID of the winning participant
-            auction_queue_id: ID of the auction queue item
-            bid_amount: Amount of the winning bid
+        Step-by-step process:
+        1. Verify the auction queue item exists and is in BIDDING status
+        2. Verify the gully is in AUCTION state
+        3. Verify the winning participant exists and belongs to this gully
+        4. Ensure participant has sufficient budget for the bid
+        5. Get player details for the response
+        6. Create a bid record with the final bid amount
+        7. Assign or update player ownership:
+           - If player already exists in participant's team, update status to OWNED
+           - If not, create new ParticipantPlayer record with OWNED status
+        8. Deduct bid amount from participant's budget
+        9. Update auction queue item status to COMPLETED
 
-        Returns:
-            Dict with resolution information
-
-        Raises:
-            NotFoundException: If player, participant, or auction queue item not found
-            ValidationException: If bid amount exceeds budget or auction status is not valid
+        Database state changes:
+        1. Bid table: Creates new bid record with final amount
+        2. ParticipantPlayer table: Creates or updates player ownership with OWNED status
+        3. GullyParticipant table: Deducts bid_amount from participant's budget
+        4. AuctionQueue table: Updates status from BIDDING to COMPLETED
         """
         async with self.db as session:
             # Verify the auction queue item exists and is in bidding status
@@ -738,7 +751,7 @@ class AuctionService:
             )
             session.add(bid)
 
-            # 2. Update player status to owned
+            # 2. Update player status to owned or create new ownership
             stmt = select(ParticipantPlayer).where(
                 and_(
                     ParticipantPlayer.player_id == player_id,
@@ -749,11 +762,20 @@ class AuctionService:
             participant_player = result.scalar_one_or_none()
 
             if not participant_player:
-                raise NotFoundException(
-                    f"Participant player for player {player_id} and participant {winning_participant_id} not found"
+                # Create a new ParticipantPlayer record if not found
+                participant_player = ParticipantPlayer(
+                    player_id=player_id,
+                    gully_participant_id=winning_participant_id,
+                    status=UserPlayerStatus.OWNED.value,
+                    purchase_price=bid_amount,  # Important: Set the purchase price
                 )
-
-            participant_player.status = UserPlayerStatus.OWNED.value
+                session.add(participant_player)
+            else:
+                # Update the existing record
+                participant_player.status = UserPlayerStatus.OWNED.value
+                participant_player.purchase_price = (
+                    bid_amount  # Important: Update the purchase price
+                )
 
             # 3. Update auction queue item status to completed
             stmt = select(AuctionQueue).where(
@@ -792,84 +814,71 @@ class AuctionService:
         """
         Get a gully by ID.
 
-        Args:
-            gully_id: Gully ID
+        Step-by-step process:
+        1. Construct query to select gully by ID
+        2. Execute query
+        3. Return first result or None if not found
 
-        Returns:
-            Gully if found, None otherwise
+        Database state changes:
+        - None (read-only operation)
         """
         stmt = select(Gully).where(Gully.id == gully_id)
         result = await self.db.execute(stmt)
         return result.scalars().first()
 
     async def stop_auction(self, gully_id: int) -> SuccessResponse:
-        """
-        Stop auction for a gully by transitioning from auction back to draft state.
-
-        This function:
-        1. Validates the gully exists and is in auction state
-        2. Deletes participant players that were created during the auction process
-        3. Deletes auction queue items that were created during the auction process
-        4. Reverts the gully status back to draft
-
-        Args:
-            gully_id: Gully ID
-
-        Returns:
-            SuccessResponse with success status and message
-
-        Raises:
-            NotFoundException: If gully not found
-            ValidationException: If auction cannot be stopped
-        """
-        # Check if gully exists
+        """Stop an auction and clean up resources."""
+        # Check if gully exists and is in the right state
         gully = await self._get_gully(gully_id)
-        if not gully:
-            raise NotFoundException(resource_type="Gully", resource_id=gully_id)
-
-        # Ensure gully is in auction state
-        if gully.status != GullyStatus.AUCTION.value:
+        if not gully or gully.status != GullyStatus.AUCTION.value:
             raise ValidationException(
-                f"Gully must be in auction state to stop auction, current state: {gully.status}"
+                f"Gully {gully_id} not found or not in auction state"
             )
 
-        # Get all participant players for this gully
-        stmt = (
-            select(ParticipantPlayer)
-            .join(
-                GullyParticipant,
-                ParticipantPlayer.gully_participant_id == GullyParticipant.id,
+        try:
+
+            # Step 1: Delete all bids associated with auction queue items for this gully
+            bid_delete_stmt = delete(Bid).where(
+                Bid.auction_queue_id.in_(
+                    select(AuctionQueue.id).where(AuctionQueue.gully_id == gully_id)
+                )
             )
-            .where(GullyParticipant.gully_id == gully_id)
-        )
-        result = await self.db.execute(stmt)
-        participant_players = result.scalars().all()
+            await self.db.execute(bid_delete_stmt)
 
-        # Delete all participant players
-        for participant_player in participant_players:
-            await self.db.delete(participant_player)
+            # Step 2: Now safe to delete auction queue items
+            queue_delete_stmt = delete(AuctionQueue).where(
+                AuctionQueue.gully_id == gully_id
+            )
+            await self.db.execute(queue_delete_stmt)
 
-        # Delete all auction queue items for this gully
-        stmt = select(AuctionQueue).where(AuctionQueue.gully_id == gully_id)
-        result = await self.db.execute(stmt)
-        auction_queue_items = result.scalars().all()
+            # Step 3: Delete participant players for this gully (fixed query)
+            # Get all participant IDs for this gully first
+            participant_ids_stmt = select(GullyParticipant.id).where(
+                GullyParticipant.gully_id == gully_id
+            )
+            result = await self.db.execute(participant_ids_stmt)
+            participant_ids = [row[0] for row in result.fetchall()]
 
-        for auction_queue_item in auction_queue_items:
-            await self.db.delete(auction_queue_item)
+            if participant_ids:
+                participant_player_delete_stmt = delete(ParticipantPlayer).where(
+                    ParticipantPlayer.gully_participant_id.in_(participant_ids)
+                )
+                await self.db.execute(participant_player_delete_stmt)
 
-        # Reset draft selections' is_submitted flag
-        # NEW IMPLEMENTATION: no need to reset draft selections' is_submitted flag
+            # Step 4: Update gully status back to draft
+            gully.status = GullyStatus.DRAFT.value
 
-        # Update gully status back to draft
-        gully.status = GullyStatus.DRAFT.value
+            await self.db.commit()
 
-        # Commit changes
-        await self.db.commit()
+            return {
+                "success": True,
+                "message": f"Auction stopped for gully {gully_id}",
+            }
 
-        return SuccessResponse(
-            success=True,
-            message=f"Auction stopped for gully {gully_id}. Gully status reverted to draft.",
-        )
+        except Exception as e:
+            # Don't rollback - the outer transaction will handle it
+            logger.error(f"Error stopping auction: {str(e)}")
+            raise APIException(f"Failed to stop auction: {str(e)}")
 
     # method to get all players from the auction queue
     async def get_all_players_from_auction_queue(
@@ -878,11 +887,18 @@ class AuctionService:
         """
         Get all players from the auction queue for a specific gully.
 
-        Args:
-            gully_id: Gully ID
+        Step-by-step process:
+        1. Query auction queue for all items matching gully_id
+        2. Extract player IDs from queue items
+        3. Fetch player details for all player IDs
+        4. For each auction queue item:
+           - Get corresponding player details
+           - Combine auction queue data with player data
+           - Add to response list
+        5. Return list of auction queue items with player details
 
-        Returns:
-            List of AuctionQueueResponse objects
+        Database state changes:
+        - None (read-only operation)
         """
         stmt = select(AuctionQueue).where(AuctionQueue.gully_id == gully_id)
         result = await self.db.execute(stmt)
@@ -920,16 +936,30 @@ class AuctionService:
         self, participant_id: int, player_ids: List[int]
     ) -> Dict[str, Any]:
         """
-        Release players from a participant and add them to the auction queue.
-        Also updates the status of remaining locked players to owned and
-        deducts their cost from participant's budget.
+        Release specified players from a participant's squad and add them to the auction queue.
+        Also updates any remaining LOCKED players to OWNED status and deducts their cost.
 
-        Args:
-            participant_id: ID of the participant
-            player_ids: IDs of the players to release
+        Step-by-step process:
+        1. Verify participant exists and get the gully_id
+        2. Find all specified players owned by the participant
+        3. For each player to be released:
+           - Remove from participant's squad (delete ParticipantPlayer record)
+           - Add to auction queue with PENDING status and TRANSFER type
+           - Track player details for response
+        4. Find all remaining players with LOCKED status for this participant
+        5. For each LOCKED player:
+           - Update status to OWNED
+           - Calculate total budget impact from players' base prices
+        6. If budget needs updating:
+           - Verify participant has sufficient budget
+           - Deduct total base price from participant's budget
 
-        Returns:
-            Dict with released player information and budget impact
+        Database state changes:
+        1. ParticipantPlayer table:
+           - Deletes records for released players
+           - Updates status from LOCKED to OWNED for remaining players
+        2. AuctionQueue table: Creates new entries for released players with PENDING status
+        3. GullyParticipant table: Deducts total base price of newly OWNED players from budget
         """
         # Check if participant exists
         stmt = select(GullyParticipant).where(GullyParticipant.id == participant_id)
@@ -1048,20 +1078,27 @@ class AuctionService:
         self, player_id: int, winning_participant_id: int, auction_queue_id: int
     ) -> Dict[str, Any]:
         """
-        Revert a previously assigned auctioned player, restoring the auction queue
-        and refunding the bid amount. Ensures participant's budget doesn't exceed 120.0.
+        Revert a previously assigned auctioned player, restoring the auction queue,
+        removing the player from participant's squad, and refunding the bid amount.
 
-        Args:
-            player_id: ID of the player to revert
-            winning_participant_id: ID of the participant that won the player
-            auction_queue_id: ID of the auction queue item
+        Step-by-step process:
+        1. Verify auction queue item exists
+        2. Verify gully is in AUCTION state
+        3. Verify participant owns the player with OWNED status
+        4. Determine refund amount:
+           - First check for bid in Bid table for this auction_queue_id and participant
+           - If not found, use the purchase_price from ParticipantPlayer record
+        5. Calculate new participant budget:
+           - Add refund amount to current budget
+           - Cap budget at maximum value (120.0)
+        6. Update participant's budget with the refund amount (capped)
+        7. Remove player from participant's squad (delete ParticipantPlayer record)
+        8. Reset auction queue item status back to PENDING
 
-        Returns:
-            Dict with status and message
-
-        Raises:
-            NotFoundException: If player, participant, or auction queue item not found
-            ValidationException: If the player is not owned by the participant or gully is not in auction state
+        Database state changes:
+        1. GullyParticipant table: Increases budget by refund amount (maximum 120.0)
+        2. ParticipantPlayer table: Deletes player ownership record
+        3. AuctionQueue table: Updates status from COMPLETED to PENDING
         """
         async with self.db as session:
             # Verify auction queue item exists
@@ -1161,4 +1198,66 @@ class AuctionService:
                 "status": "success",
                 "auction_queue_id": auction_queue_id,
                 "message": "Auction result reverted. Player returned to auction queue.",
+            }
+
+    async def skip_player(self, gully_id: int, auction_queue_id: int) -> Dict[str, Any]:
+        """
+        Skip/reject a player from the auction queue.
+
+        Step-by-step process:
+        1. Verify gully exists and is in AUCTION state
+        2. Verify auction queue item exists and is in BIDDING status
+        3. Update auction queue item status to REJECTED
+        4. Get player details for the response
+        5. Return success response with player info
+
+        Database state changes:
+        - AuctionQueue table: Updates status from BIDDING to REJECTED
+        """
+        async with self.db as session:
+            # Verify gully exists and is in auction state
+            stmt = select(Gully).where(Gully.id == gully_id)
+            result = await session.execute(stmt)
+            gully = result.scalar_one_or_none()
+
+            if not gully:
+                raise NotFoundException(resource_type="Gully", resource_id=gully_id)
+
+            if gully.status != GullyStatus.AUCTION.value:
+                raise ValidationException(f"Gully {gully_id} is not in auction state")
+
+            # Verify auction queue item exists and is in bidding status
+            stmt = select(AuctionQueue).where(
+                AuctionQueue.id == auction_queue_id,
+                AuctionQueue.gully_id == gully_id,
+                AuctionQueue.status == AuctionStatus.BIDDING.value,
+            )
+            result = await session.execute(stmt)
+            auction_item = result.scalar_one_or_none()
+
+            if not auction_item:
+                raise NotFoundException(
+                    f"Player not found in auction queue or not in bidding status"
+                )
+
+            # Get player details for response
+            stmt = select(Player).where(Player.id == auction_item.player_id)
+            result = await session.execute(stmt)
+            player = result.scalar_one_or_none()
+
+            if not player:
+                raise NotFoundException(
+                    resource_type="Player", resource_id=auction_item.player_id
+                )
+
+            # Update auction queue item status to REJECTED
+            auction_item.status = AuctionStatus.REJECTED.value
+            await session.commit()
+
+            return {
+                "status": "success",
+                "auction_queue_id": auction_queue_id,
+                "player_id": player.id,
+                "player_name": player.name,
+                "message": f"Player {player.name} has been skipped/rejected from the auction queue",
             }

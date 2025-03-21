@@ -135,9 +135,23 @@ def setup_handlers(application):
         get_squad_handlers,
         get_auction_handlers,
         get_player_release_handlers,
+        get_auction_queue_handlers,
     )
 
-    # Register handlers in order of specificity (most specific first)
+    # Register auction callback handlers FIRST for higher priority
+    logger.info("Registering auction queue handlers")
+    auction_queue_handlers = get_auction_queue_handlers()
+    for handler in auction_queue_handlers:
+        if callable(handler):
+            # Call the callback registration function first
+            handler(application)
+
+    # Then register regular handlers
+    for handler in auction_queue_handlers:
+        if not callable(handler):
+            application.add_handler(handler)
+
+    # Register onboarding handlers
     logger.info("Registering onboarding handlers")
     application.add_handlers(get_onboarding_handlers())
 
@@ -147,6 +161,7 @@ def setup_handlers(application):
     logger.info("Registering auction handlers")
     application.add_handlers(get_auction_handlers())
 
+    # Register squad handlers LAST to ensure lower priority
     logger.info("Registering squad handlers")
     application.add_handlers(get_squad_handlers())
 
