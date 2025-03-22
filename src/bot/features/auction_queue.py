@@ -477,6 +477,7 @@ async def next_player_command(
         player_name = player_data.get("name", "Unknown Player")
         player_team = player_data.get("team", "Unknown Team")
         player_type = player_data.get("player_type", "Unknown Type")
+        sold_price = player_data.get("sold_price", 0)
 
         # THEN send private messages
         await send_private_messages_to_participants(
@@ -489,7 +490,8 @@ async def next_player_command(
         await update.message.reply_text(
             f"🏏 <b>{player_name}</b> ({player_team})\n"
             f"Type: {player_type}\n"
-            f"Base: {base_price} CR\n\n"
+            f"Base: {base_price} CR\n"
+            f"Sold Price 2025: {sold_price} CR\n\n"
             f"<b>BIDDING OPEN</b> - Press Bid or Skip",
             parse_mode="HTML",
             reply_markup=reply_markup,
@@ -652,10 +654,34 @@ async def handle_bid_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # Update last bidder - this person will get the player if timer expires now
         auction_data["last_bidder"] = bid_info
 
+        # Calculate current bid amount
+        base_price = float(auction_data.get("base_price", 0))
+        if global_bid_count == 1:
+            # First bid is same as base price
+            current_amount = base_price
+        else:
+            # After first bid, add one increment per additional bid
+            current_amount = base_price + ((global_bid_count - 1) * BID_INCREMENT)
+
+        # Round to 2 decimal places instead of 1
+        current_amount = round(current_amount, 2)
+
         # Log clear bid information with global counter
         logger.info(
-            f"GLOBAL BID #{global_bid_count}: User {user_id} ({bid_info['team_name']})"
+            f"GLOBAL BID #{global_bid_count}: User {user_id} ({bid_info['team_name']}) - Amount: {current_amount} CR"
         )
+
+        # Send message to group about the bid
+        player_name = auction_data.get("current_player", {}).get(
+            "name", "Unknown Player"
+        )
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"🏏 {bid_info['team_name']} bids {current_amount} CR for {player_name}!",
+            )
+        except Exception as e:
+            logger.error(f"Error sending bid notification to group: {e}")
 
         # Save auction data BEFORE extending timer - CRITICAL
         set_auction_data(context, gully_id, auction_data)
@@ -744,25 +770,27 @@ async def scheduled_finalize_auction(context, chat_id, gully_id, delay):
             return
 
         # Calculate final amount with FIRST BID SPECIAL RULE
-        # First bid is base price + (2 * BID_INCREMENT), then each additional bid adds BID_INCREMENT
+        # First bid is same as base price, then each additional bid adds BID_INCREMENT
         if global_bid_count == 1:
-            # First bid is treated specially
-            total_amount = base_price + (2 * BID_INCREMENT)
+            # First bid is same as base price
+            total_amount = base_price
         else:
-            # After first bid, add one increment per additional bid (plus the 2 from first bid)
-            total_amount = (
-                base_price
-                + (2 * BID_INCREMENT)
-                + ((global_bid_count - 1) * BID_INCREMENT)
-            )
+            # After first bid, add one increment per additional bid
+            total_amount = base_price + ((global_bid_count - 1) * BID_INCREMENT)
 
-        total_amount = round(total_amount, 1)
+        # Round to 2 decimal places instead of 1
+        total_amount = round(total_amount, 2)
 
         # Log calculation details
-        logger.info(
-            f"PRICE CALCULATION: {base_price} (base) + {2 * BID_INCREMENT} (first bid) + "
-            f"{(global_bid_count - 1) * BID_INCREMENT if global_bid_count > 1 else 0} (additional bids) = {total_amount} CR"
-        )
+        if global_bid_count == 1:
+            logger.info(
+                f"PRICE CALCULATION: {base_price} (base price) = {total_amount} CR"
+            )
+        else:
+            logger.info(
+                f"PRICE CALCULATION: {base_price} (base) + "
+                f"{(global_bid_count - 1) * BID_INCREMENT} (additional bids) = {total_amount} CR"
+            )
 
         # Get bidder details
         team_name = last_bidder.get("team_name", "Unknown Team")
