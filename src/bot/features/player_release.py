@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 # Conversation states
 SELECTING_PLAYERS_TO_RELEASE = 1
-RELEASE_WINDOW_MINUTES = 1
+RELEASE_WINDOW_MINUTES = 5
 
 # Module identifier constant
 MODULE_ID = "release"  # Short but descriptive

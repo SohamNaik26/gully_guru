@@ -236,21 +236,39 @@ async def start_auction_command(
         # Then display contested players that will go to auction queue
         if contested_count > 0:
             contest_message = f"⚔️ Contested players ({contested_count}) that will enter the auction queue:\n\n"
+            player_messages = []
+            current_message = contest_message
+
             for player in contested_players:
                 player_name = player.get("name")
                 team = player.get("team")
                 contest_count = player.get("contest_count", 0)
 
-                contest_message += f"🏏 {player_name} ({team})\n"
-                contest_message += f"   Contested by {contest_count} participants: "
+                player_text = f"🏏 {player_name} ({team})\n"
+                player_text += f"   Contested by {contest_count} participants: "
 
                 contested_by = []
                 for participant in player.get("contested_by", []):
                     contested_by.append(participant.get("team_name", "Unknown"))
 
-                contest_message += f"{', '.join(contested_by)}\n\n"
+                player_text += f"{', '.join(contested_by)}\n\n"
 
-            await update.message.reply_text(contest_message)
+                # Check if adding this player would make the message too long
+                if (
+                    len(current_message) + len(player_text) > 4000
+                ):  # Safe limit for Telegram
+                    player_messages.append(current_message)
+                    current_message = player_text
+                else:
+                    current_message += player_text
+
+            # Add the last message if it's not empty
+            if current_message:
+                player_messages.append(current_message)
+
+            # Send all the message chunks
+            for message in player_messages:
+                await update.message.reply_text(message)
 
         # Send message about release window
         await update.message.reply_text(

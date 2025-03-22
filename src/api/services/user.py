@@ -131,7 +131,7 @@ class UserService(BaseService):
         return user_dict
 
     async def get_users_by_telegram_id(
-        self, telegram_id: int, limit: int = 10, offset: int = 0
+        self, telegram_id: int, limit: int = None, offset: int = None
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Get users filtered by Telegram ID.
@@ -141,22 +141,14 @@ class UserService(BaseService):
 
         Args:
             telegram_id: Telegram ID to filter by
-            limit: Maximum number of users to return
-            offset: Number of users to skip
+            limit: DEPRECATED - Kept for backward compatibility
+            offset: DEPRECATED - Kept for backward compatibility
 
         Returns:
-            Tuple of (list of user dictionaries, total count)
+            Tuple of (list of user dictionaries, total count) for backward compatibility
         """
         # Build query with telegram_id filter
         query = select(User).where(User.telegram_id == telegram_id)
-
-        # Get total count
-        count_query = select(func.count()).select_from(query.subquery())
-        total_result = await self.db.execute(count_query)
-        total = total_result.scalar() or 0
-
-        # Apply pagination
-        query = query.offset(offset).limit(limit)
 
         # Execute query
         result = await self.db.execute(query)
@@ -175,21 +167,22 @@ class UserService(BaseService):
             }
             user_dicts.append(user_dict)
 
-        return user_dicts, total
+        # Return tuple of (user_dicts, total) for backward compatibility
+        return user_dicts, len(user_dicts)
 
     async def get_users(
-        self, limit: int = 10, offset: int = 0, filters: Dict[str, Any] = None
+        self, limit: int = None, offset: int = None, filters: Dict[str, Any] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Get a list of users with optional filtering.
 
         Args:
-            limit: Maximum number of users to return
-            offset: Number of users to skip
+            limit: DEPRECATED - Kept for backward compatibility
+            offset: DEPRECATED - Kept for backward compatibility
             filters: Dictionary of field names and values to filter by
 
         Returns:
-            Tuple of (list of user dictionaries, total count)
+            Tuple of (list of user dictionaries, total count) for backward compatibility
         """
         # Build query with filters
         query = select(User)
@@ -198,19 +191,11 @@ class UserService(BaseService):
                 if hasattr(User, field) and value is not None:
                     query = query.where(getattr(User, field) == value)
 
-        # Get total count
-        count_query = select(func.count()).select_from(query.subquery())
-        total_result = await self.db.execute(count_query)
-        total = total_result.scalar() or 0
-
-        # Apply pagination
-        query = query.offset(offset).limit(limit)
-
         # Execute query
         result = await self.db.execute(query)
         users = result.scalars().all()
 
-        # Convert SQLModels to dicts and add gully_ids
+        # Convert SQLModels to dicts
         user_dicts = []
         for user in users:
             user_dict = {
@@ -223,7 +208,8 @@ class UserService(BaseService):
             }
             user_dicts.append(user_dict)
 
-        return user_dicts, total
+        # Return tuple of (user_dicts, total) for backward compatibility
+        return user_dicts, len(user_dicts)
 
     async def update_user(
         self, user_id: int, update_data: Dict[str, Any]
@@ -360,3 +346,66 @@ class UserService(BaseService):
         }
 
         return player_dict
+
+    async def get_users_simple(self) -> List[Dict[str, Any]]:
+        """
+        Get a list of all users without pagination.
+
+        Returns:
+            List of user dictionaries
+        """
+        # Build simple query
+        query = select(User)
+
+        # Execute query
+        result = await self.db.execute(query)
+        users = result.scalars().all()
+
+        # Convert SQLModels to dicts
+        user_dicts = []
+        for user in users:
+            user_dict = {
+                "id": user.id,
+                "telegram_id": user.telegram_id,
+                "username": user.username,
+                "full_name": user.full_name,
+                "created_at": user.created_at,
+                "updated_at": user.updated_at,
+            }
+            user_dicts.append(user_dict)
+
+        return user_dicts
+
+    async def get_users_by_telegram_id_simple(
+        self, telegram_id: int
+    ) -> List[Dict[str, Any]]:
+        """
+        Get users filtered by Telegram ID without pagination.
+
+        Args:
+            telegram_id: Telegram ID to filter by
+
+        Returns:
+            List of user dictionaries
+        """
+        # Build query with telegram_id filter
+        query = select(User).where(User.telegram_id == telegram_id)
+
+        # Execute query
+        result = await self.db.execute(query)
+        users = result.scalars().all()
+
+        # Convert SQLModels to dicts
+        user_dicts = []
+        for user in users:
+            user_dict = {
+                "id": user.id,
+                "telegram_id": user.telegram_id,
+                "username": user.username,
+                "full_name": user.full_name,
+                "created_at": user.created_at,
+                "updated_at": user.updated_at,
+            }
+            user_dicts.append(user_dict)
+
+        return user_dicts

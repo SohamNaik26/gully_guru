@@ -27,10 +27,7 @@ router = APIRouter(prefix="/users", tags=["Users"])
 
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 @handle_exceptions
-async def create_user(
-    user: UserCreate, 
-    db: AsyncSession = Depends(get_db)
-):
+async def create_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
     """
     Create a new user.
 
@@ -46,52 +43,43 @@ async def create_user(
     return UserResponseFactory.create_response(user_data)
 
 
-@router.get("/", response_model=PaginatedResponse[UserResponse])
+@router.get("/", response_model=List[UserResponse])
 @handle_exceptions
 async def get_users(
     telegram_id: Optional[int] = Query(None, description="Filter by Telegram ID"),
-    pagination: PaginationParams = Depends(pagination_params),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Get a paginated list of users with optional filtering.
+    Get a list of users with optional filtering.
 
     Args:
         telegram_id: Optional filter by Telegram ID
-        pagination: Pagination parameters
         db: Database session
 
     Returns:
-        PaginatedResponse[UserResponse]: Paginated list of users
+        List[UserResponse]: List of users
     """
     user_service = UserService(db)
 
     # Prioritize telegram_id filtering for bot integration
     if telegram_id is not None:
-        users, total = await user_service.get_users_by_telegram_id(
-            telegram_id=telegram_id,
-            limit=pagination.limit,
-            offset=pagination.offset,
+        # Still unpack the tuple but no need to pass pagination parameters
+        user_dicts, _ = await user_service.get_users_by_telegram_id(
+            telegram_id=telegram_id
         )
     else:
-        users, total = await user_service.get_users(
-            limit=pagination.limit,
-            offset=pagination.offset,
-        )
+        # Still unpack the tuple but no need to pass pagination parameters
+        user_dicts, _ = await user_service.get_users()
 
-    return {
-        "items": [UserResponseFactory.create_response(user) for user in users],
-        "total": total,
-        "limit": pagination.limit,
-        "offset": pagination.offset,
-    }
+    # Use the factory with the properly formatted dictionaries
+    return [UserResponseFactory.create_response(user_dict) for user_dict in user_dicts]
 
 
 @router.get("/{user_id}", response_model=UserResponse)
 @handle_exceptions
 async def get_user(
     user_id: int = Path(..., description="ID of the user"),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get a user by ID.
@@ -118,7 +106,7 @@ async def get_user(
 async def update_user(
     user_id: int = Path(..., description="ID of the user"),
     user_update: UserUpdate = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Update a user by ID.
@@ -145,7 +133,7 @@ async def update_user(
 @handle_exceptions
 async def delete_user(
     user_id: int = Path(..., description="ID of the user"),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Delete a user by ID.

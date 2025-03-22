@@ -71,10 +71,17 @@ class OnboardingApiClient(BaseApiClient):
         response = await self._make_request("GET", endpoint, params=params)
 
         if response.get("success"):
-            data = response.get("data", {})
+            data = response.get("data", [])
+            # The API now directly returns a list of users instead of a paginated response
+            # Just ensure we handle both formats for backward compatibility
             if isinstance(data, dict) and "items" in data:
+                # Legacy paginated format (for compatibility)
+                logger.warning(
+                    "Received paginated response from /users/ endpoint which should now return a list"
+                )
                 return data.get("items", [])
             elif isinstance(data, list):
+                # New direct list format
                 return data
             else:
                 logger.warning(f"Unexpected response format: {data}")
