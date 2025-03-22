@@ -10,7 +10,7 @@ from sqlmodel import select
 from sqlalchemy import func
 
 from src.api.services.base import BaseService
-from src.db.models.models import GullyParticipant, User
+from src.db.models.models import GullyParticipant, User, Gully, ParticipantPlayer
 
 logger = logging.getLogger(__name__)
 
@@ -72,10 +72,34 @@ class ParticipantService(BaseService):
                 "gully_id": participant.gully_id,
                 "user_id": participant.user_id,
                 "role": participant.role,
+                "budget": participant.budget,
                 "team_name": participant.team_name,
                 "created_at": participant.created_at,
                 "updated_at": participant.updated_at,
             }
+
+            # Calculate budget and player count from participant_players table
+            try:
+                # Query to count owned players
+                player_count_query = (
+                    select(func.count())
+                    .where(
+                        ParticipantPlayer.gully_participant_id == participant.id,
+                        ParticipantPlayer.status == "owned",
+                    )
+                    .select_from(ParticipantPlayer)
+                )
+                player_count_result = await self.db.execute(player_count_query)
+                player_count = player_count_result.scalar() or 0
+
+                participant_dict["player_count"] = player_count
+
+            except Exception as e:
+                logger.error(
+                    f"Error calculating budget for participant {participant.id}: {e}"
+                )
+                raise e
+
             participant_dicts.append(participant_dict)
 
         return participant_dicts, total

@@ -26,6 +26,8 @@ class ParticipantResponseFactory:
             "gully_id": data.get("gully_id"),
             "role": data.get("role"),
             "team_name": data.get("team_name"),
+            "budget": data.get("budget", 120.0),  # Default to 120.0 if not present
+            "player_count": data.get("player_count", 0),  # Default to 0 if not present
             "created_at": data.get("created_at"),
             "updated_at": data.get("updated_at"),
         }

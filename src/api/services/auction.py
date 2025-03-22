@@ -865,8 +865,29 @@ class AuctionService:
                 )
                 await self.db.execute(participant_player_delete_stmt)
 
-            # Step 4: Update gully status back to draft
+            # Step 4: Update gully status back to draft and set gully_participant budget to 120.0
             gully.status = GullyStatus.DRAFT.value
+
+            # Fix the participant fetching and iteration
+            result = await self.db.execute(
+                select(GullyParticipant).where(GullyParticipant.gully_id == gully_id)
+            )
+            participants = result.scalars().all()  # Properly fetch all participants
+
+            # Log the number of participants being updated
+            logger.info(
+                f"Resetting budget for {len(participants)} participants in gully {gully_id}"
+            )
+
+            for participant in participants:
+                await self.db.execute(
+                    update(GullyParticipant)
+                    .where(GullyParticipant.id == participant.id)
+                    .values(budget=120.0)
+                )
+                logger.info(
+                    f"Reset budget to 120.0 for participant ID {participant.id}"
+                )
 
             await self.db.commit()
 
@@ -939,10 +960,13 @@ class AuctionService:
         Release specified players from a participant's squad and add them to the auction queue.
         Also updates any remaining LOCKED players to OWNED status and deducts their cost.
 
+        If player_ids is empty, no players will be released but the function will still
+        update LOCKED players to OWNED status.
+
         Step-by-step process:
         1. Verify participant exists and get the gully_id
         2. Find all specified players owned by the participant
-        3. For each player to be released:
+        3. For each player to be released (if any):
            - Remove from participant's squad (delete ParticipantPlayer record)
            - Add to auction queue with PENDING status and TRANSFER type
            - Track player details for response
@@ -956,7 +980,7 @@ class AuctionService:
 
         Database state changes:
         1. ParticipantPlayer table:
-           - Deletes records for released players
+           - Deletes records for released players (if any)
            - Updates status from LOCKED to OWNED for remaining players
         2. AuctionQueue table: Creates new entries for released players with PENDING status
         3. GullyParticipant table: Deducts total base price of newly OWNED players from budget
@@ -971,54 +995,53 @@ class AuctionService:
             )
 
         gully_id = participant.gully_id
+        released_players = []
 
-        # Get players from participant
-        stmt = (
-            select(ParticipantPlayer, Player)
-            .join(Player, ParticipantPlayer.player_id == Player.id)
-            .where(
-                and_(
-                    ParticipantPlayer.gully_participant_id == participant_id,
-                    ParticipantPlayer.player_id.in_(player_ids),
+        # Only process player releases if player_ids is not empty
+        if player_ids:
+            # Get players from participant
+            stmt = (
+                select(ParticipantPlayer, Player)
+                .join(Player, ParticipantPlayer.player_id == Player.id)
+                .where(
+                    and_(
+                        ParticipantPlayer.gully_participant_id == participant_id,
+                        ParticipantPlayer.player_id.in_(player_ids),
+                    )
                 )
             )
-        )
-        result = await self.db.execute(stmt)
-        participant_players = result.all()
+            result = await self.db.execute(stmt)
+            participant_players = result.all()
 
-        if not participant_players:
-            raise NotFoundException(
-                f"No players found for participant {participant_id}"
-            )
+            # Process players to release (if any found)
+            for pp, player in participant_players:
+                # Delete the participant player entry
+                await self.db.delete(pp)
 
-        released_players = []
-        for pp, player in participant_players:
-            # Delete the participant player entry
-            await self.db.delete(pp)
+                # Add to auction queue
+                auction_queue = AuctionQueue(
+                    gully_id=gully_id,
+                    player_id=player.id,
+                    seller_participant_id=participant_id,
+                    auction_type=AuctionType.TRANSFER.value,
+                    status=AuctionStatus.PENDING.value,
+                )
+                self.db.add(auction_queue)
 
-            # Add to auction queue
-            auction_queue = AuctionQueue(
-                gully_id=gully_id,
-                player_id=player.id,
-                seller_participant_id=participant_id,
-                auction_type=AuctionType.TRANSFER.value,
-                status=AuctionStatus.PENDING.value,
-            )
-            self.db.add(auction_queue)
-
-            released_players.append(
-                {
-                    "player_id": player.id,
-                    "player_name": player.name,
-                    "team": player.team,
-                    "player_type": player.player_type,
-                    "base_price": (
-                        float(player.base_price) if player.base_price else 0.0
-                    ),
-                }
-            )
+                released_players.append(
+                    {
+                        "player_id": player.id,
+                        "player_name": player.name,
+                        "team": player.team,
+                        "player_type": player.player_type,
+                        "base_price": (
+                            float(player.base_price) if player.base_price else 0.0
+                        ),
+                    }
+                )
 
         # Find all LOCKED players and update their status to OWNED
+        # (This happens even if no players were released)
         stmt = select(ParticipantPlayer).where(
             and_(
                 ParticipantPlayer.gully_participant_id == participant_id,

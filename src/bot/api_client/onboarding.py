@@ -415,6 +415,27 @@ class OnboardingApiClient(BaseApiClient):
         """
         return await self.get_participants()
 
+    async def get_participant_stats(
+        self, participant_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get participant stats (budget and player count) for a specific participant.
+
+        Args:
+            participant_id: The participant ID
+
+        Returns:
+            Dict with budget and player_count if found, None otherwise
+        """
+        participant = await self.get_participant_by_id(participant_id)
+        if not participant:
+            return None
+
+        return {
+            "budget": participant.get("budget", 120.0),
+            "player_count": participant.get("player_count", 0),
+        }
+
 
 # Convenience functions for the bot
 

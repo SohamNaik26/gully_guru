@@ -7,20 +7,22 @@ FROM ipl_balanced_rounds;
 -- SELECT * FROM ipl_matches_schedule ORDER BY match_number;
 
 SELECT * FROM gullies;
-SELECT * FROM gully_participants;
-
-
-SELECT * FROM draft_selections
-LEFT JOIN players ON draft_selections.player_id = players.id
-WHERE gully_participant_id = 16;
-
-
-SELECT * FROM participant_players
-WHERE gully_participant_id = 18;
+SELECT * FROM gully_participants
+WHERE gully_id = 7;
 
 
 
--- WHERE gully_participant_id = 16;
+SELECT 
+    g.team_name,
+    120 - SUM(p.purchase_price) AS remaining_budget,
+    MIN(g.budget) AS min_budget
+    
+FROM participant_players p
+LEFT JOIN gully_participants g
+ON p.gully_participant_id = g.id
 
 
-SELECT * FROM ipl_balanced_rounds;
+
+WHERE g.gully_id = 7 AND p.status = 'owned'
+
+GROUP BY 1

@@ -51,12 +51,14 @@ class ParticipantUpdate(BaseModel):
 
 class ParticipantResponse(BaseModel):
     id: int
-    user_id: int
     gully_id: int
+    user_id: int
     role: str
     team_name: str
+    budget: float
+    player_count: int
     created_at: datetime
     updated_at: datetime
     
     class Config:
-        from_attributes = True  # For ORM mode
+        orm_mode = True

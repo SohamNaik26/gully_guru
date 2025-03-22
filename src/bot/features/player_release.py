@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 # Conversation states
 SELECTING_PLAYERS_TO_RELEASE = 1
-RELEASE_WINDOW_MINUTES = 5
+RELEASE_WINDOW_MINUTES = 1
 
 # Module identifier constant
 MODULE_ID = "release"  # Short but descriptive
@@ -508,8 +508,16 @@ async def handle_release_submission(
 
         await update.callback_query.edit_message_text(message)
 
-        # Mark as submitted in gully-specific context
+        # Mark as submitted in gully-specific context - USE EXISTING METHOD
         ctx_manager.set_release_submitted(context, True, active_gully_id)
+
+        # Also store in a separate structure that tracks by participant_id
+        if "participant_releases" not in context.bot_data:
+            context.bot_data["participant_releases"] = {}
+        if active_gully_id not in context.bot_data["participant_releases"]:
+            context.bot_data["participant_releases"][active_gully_id] = set()
+        # Add this participant to the set of participants who have submitted
+        context.bot_data["participant_releases"][active_gully_id].add(participant_id)
 
         # Send empty list to API to update player statuses
         try:
@@ -653,7 +661,6 @@ async def handle_release_submission(
                     "player_id": pid,
                     "player_name": f"Player {pid}",
                     "team": "Unknown",
-                    "base_price": 0,
                 }
                 for pid in valid_selected_ids
             ]
@@ -664,14 +671,21 @@ async def handle_release_submission(
         for player in released_players:
             player_name = player.get("player_name", "Unknown Player")
             team = player.get("team", "Unknown Team")
-            base_price = player.get("base_price", 0)
-            message += f"🏏 {player_name} ({team}) - {base_price} Cr\n"
+            message += f"🏏 {player_name} ({team})\n"
 
         # Send confirmation to user
         await update.callback_query.edit_message_text(message)
 
-        # Mark as submitted in gully-specific context
+        # Mark as submitted in gully-specific context - USE EXISTING METHOD
         ctx_manager.set_release_submitted(context, True, active_gully_id)
+
+        # Also store in a separate structure that tracks by participant_id
+        if "participant_releases" not in context.bot_data:
+            context.bot_data["participant_releases"] = {}
+        if active_gully_id not in context.bot_data["participant_releases"]:
+            context.bot_data["participant_releases"][active_gully_id] = set()
+        # Add this participant to the set of participants who have submitted
+        context.bot_data["participant_releases"][active_gully_id].add(participant_id)
 
         # Clear selected player IDs in gully-specific context
         ctx_manager.set_selected_release_player_ids(context, [], active_gully_id)
@@ -780,6 +794,9 @@ async def close_release_window(
             text="🔒 Release window closed. No further releases allowed.",
         )
 
+        # Process participants who didn't submit any releases
+        await process_remaining_participants(context, gully_id)
+
         await context.bot.send_message(
             chat_id=chat_id,
             text="🚀 Auction Queue finalized. The auction will now begin with available players in the queue.",
@@ -874,31 +891,87 @@ async def process_remaining_participants(
         client = await get_initialized_onboarding_client()
         participants = await client.get_participants(gully_id)
 
+        if not participants:
+            logger.warning(f"No participants found for gully {gully_id}")
+            return
+
         # Get auction client for making release API calls
         auction_client = await get_initialized_auction_client()
 
-        # Track participants who haven't submitted releases
+        # Get the set of participants who have already submitted
+        submitted_participants = context.bot_data.get("participant_releases", {}).get(
+            gully_id, set()
+        )
+        logger.info(
+            f"Found {len(submitted_participants)} participants who already submitted releases"
+        )
+
+        # Get group chat ID for announcements
+        group_chat_id = None
+        try:
+            gully = await client.get_gully(gully_id)
+            if gully and gully.get("telegram_group_id"):
+                group_chat_id = gully.get("telegram_group_id")
+        except Exception as e:
+            logger.error(f"Failed to get group chat ID: {e}")
+
+        # Process each participant who hasn't submitted
+        processed_count = 0
+        error_count = 0
+
         for participant in participants:
             participant_id = participant.get("id")
-            has_submitted = ctx_manager.is_release_submitted(
-                context, gully_id, participant_id
+            team_name = participant.get("team_name", "Unknown Team")
+
+            # Skip participants who have already submitted
+            if participant_id in submitted_participants or not participant_id:
+                continue
+
+            logger.info(
+                f"Auto-keeping all players for {team_name} (participant {participant_id})"
             )
 
-            if not has_submitted and participant_id:
-                logger.info(
-                    f"Participant {participant_id} hasn't submitted releases, calling API with empty release"
-                )
+            # Add a small delay between API calls to avoid overwhelming the server
+            if processed_count > 0:
+                await asyncio.sleep(0.5)  # 500ms delay between participants
 
-                # Call release_players with empty list to just update statuses
-                try:
-                    result = await auction_client.release_players(participant_id, [])
-                    logger.info(
-                        f"Auto-process result for participant {participant_id}: {result}"
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"Failed to auto-process participant {participant_id}: {e}"
-                    )
+            # --- USING THE SAME FLOW AS "KEEP ALL PLAYERS" BUTTON ---
+            try:
+                # 1. Call API with empty list (keep all players)
+                result = await auction_client.release_players(participant_id, [])
+                logger.info(
+                    f"Auto-keep all success for {team_name} (participant {participant_id}): {result}"
+                )
+                processed_count += 1
+
+                # 2. Mark as processed in our tracking structure
+                if "participant_releases" not in context.bot_data:
+                    context.bot_data["participant_releases"] = {}
+                if gully_id not in context.bot_data["participant_releases"]:
+                    context.bot_data["participant_releases"][gully_id] = set()
+                context.bot_data["participant_releases"][gully_id].add(participant_id)
+
+                # 3. Send message to group chat (just like in the keep_all flow)
+                if group_chat_id:
+                    group_message = f"📌 {team_name} has automatically kept all their uncontested players."
+                    try:
+                        await context.bot.send_message(
+                            chat_id=group_chat_id, text=group_message
+                        )
+                        logger.info(f"Sent auto-keep message for {team_name} to group")
+                    except Exception as msg_error:
+                        logger.error(f"Failed to send group message: {msg_error}")
+
+            except Exception as e:
+                error_count += 1
+                logger.error(
+                    f"Failed to auto-keep players for {team_name} (participant {participant_id}): {e}"
+                )
+                # We'll continue to the next participant rather than stopping
+
+        logger.info(
+            f"Auto-keep process complete. Processed: {processed_count}, Errors: {error_count}"
+        )
 
     except Exception as e:
         logger.error(f"Error processing remaining participants: {e}")
