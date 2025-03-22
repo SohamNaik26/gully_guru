@@ -14,11 +14,7 @@ SELECT
 FROM participant_players p
 LEFT JOIN gully_participants g
 ON p.gully_participant_id = g.id
-
-
-
 WHERE g.gully_id = 7 AND p.status = 'owned'
-
 GROUP BY 1
 
 

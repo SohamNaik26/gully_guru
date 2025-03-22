@@ -763,15 +763,17 @@ class AuctionService:
                     player_id=player_id,
                     gully_participant_id=winning_participant_id,
                     status=UserPlayerStatus.OWNED.value,
-                    purchase_price=bid_amount,  # Important: Set the purchase price
+                    purchase_price=round(
+                        bid_amount, 2
+                    ),  # Important: Set the purchase price
                 )
                 session.add(participant_player)
             else:
                 # Update the existing record
                 participant_player.status = UserPlayerStatus.OWNED.value
-                participant_player.purchase_price = (
-                    bid_amount  # Important: Update the purchase price
-                )
+                participant_player.purchase_price = round(
+                    bid_amount, 2
+                )  # Important: Update the purchase price
 
             # 3. Update auction queue item status to completed
             stmt = select(AuctionQueue).where(
@@ -789,6 +791,14 @@ class AuctionService:
                 )
 
             auction_item.status = AuctionStatus.COMPLETED.value
+
+            # Update participant's budget
+            stmt = (
+                update(GullyParticipant)
+                .where(GullyParticipant.id == winning_participant_id)
+                .values(budget=GullyParticipant.budget - Decimal(str(bid_amount)))
+            )
+            await session.execute(stmt)
 
             # Commit changes
             await session.commit()

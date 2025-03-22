@@ -748,7 +748,7 @@ async def scheduled_finalize_auction(context, chat_id, gully_id, delay):
             return
 
         # Extract necessary data from auction state - CRITICAL FIX
-        base_price = float(auction_data.get("base_price", 0))
+        base_price = round(float(auction_data.get("base_price", 0)), 2)
         player_data = auction_data.get("current_player", {})
         player_name = player_data.get("name", "Unknown Player")
 
@@ -773,10 +773,12 @@ async def scheduled_finalize_auction(context, chat_id, gully_id, delay):
         # First bid is same as base price, then each additional bid adds BID_INCREMENT
         if global_bid_count == 1:
             # First bid is same as base price
-            total_amount = base_price
+            total_amount = round(base_price, 2)
         else:
             # After first bid, add one increment per additional bid
-            total_amount = base_price + ((global_bid_count - 1) * BID_INCREMENT)
+            total_amount = round(
+                base_price + ((global_bid_count - 1) * BID_INCREMENT), 2
+            )
 
         # Round to 2 decimal places instead of 1
         total_amount = round(total_amount, 2)
