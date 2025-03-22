@@ -82,8 +82,8 @@ def ensure_auction_context(context, gully_id):
             "bids": [],  # List to track all bids
             "all_participants": [],
             "auction_active": False,
-            "has_base_bid": False,  # Flag to track if base bid has been made
-            "bid_count": 0,
+            "has_base_bid": False,
+            "bid_count": 0,  # Global bid counter for the gully
             "skipped_users": [],
             "base_price": 0,
             "last_bidder": None,
@@ -450,7 +450,7 @@ async def next_player_command(
                         api_participant.get("players_owned", 0)
                     )
 
-        # Initialize auction data
+        # Initialize auction data FIRST
         base_price = float(player_data.get("base_price", 0))
         auction_data = ensure_auction_context(context, gully_id)
         auction_data.update(
@@ -459,7 +459,7 @@ async def next_player_command(
                 "auction_queue_id": player_data.get("auction_queue_id"),
                 "all_participants": participants,
                 "bids": [],
-                "auction_active": True,
+                "auction_active": True,  # Set this true BEFORE sending messages
                 "has_base_bid": False,
                 "base_price": base_price,
                 "last_bidder": None,
@@ -467,23 +467,25 @@ async def next_player_command(
                 "skipped_users": [],
             }
         )
+        # Save the auction data to context FIRST
         set_auction_data(context, gully_id, auction_data)
+        logger.info(
+            f"Auction initialized and ACTIVE for player {player_data.get('name')}"
+        )
 
         # Extract player details for display
         player_name = player_data.get("name", "Unknown Player")
         player_team = player_data.get("team", "Unknown Team")
         player_type = player_data.get("player_type", "Unknown Type")
 
-        # Send private messages to participants
+        # THEN send private messages
         await send_private_messages_to_participants(
             context, gully_id, participants, participant_user_map, player_data
         )
 
-        # Create bidding keyboard
+        # THEN send group message with bidding UI
         keyboard = [["Bid", "Skip"]]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-
-        # Send group message
         await update.message.reply_text(
             f"🏏 <b>{player_name}</b> ({player_team})\n"
             f"Type: {player_type}\n"
@@ -493,7 +495,7 @@ async def next_player_command(
             reply_markup=reply_markup,
         )
 
-        # Start bidding timer
+        # FINALLY start the timer
         timer = asyncio.create_task(
             scheduled_finalize_auction(context, chat_id, gully_id, BID_TIMEOUT_SECONDS)
         )
@@ -521,13 +523,65 @@ async def handle_bid_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
     message_text = update.message.text.strip().lower()
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
+
+    # CRITICAL FIX: Get gully_id from chat_id instead of context
     gully_id = ctx_manager.get_active_gully_id(context)
+
+    # CRITICAL FIX: If gully_id is None, try to find it based on chat_id
+    if gully_id is None:
+        logger.warning(
+            f"No active gully found in context, looking up by chat ID {chat_id}"
+        )
+        # Look in bot_data for a gully with this chat ID
+        for g_id, g_data in context.bot_data.get("gullies", {}).items():
+            if g_data.get("telegram_group_id") == chat_id:
+                gully_id = g_id
+                # Store it back as active
+                ctx_manager.set_active_gully_id(context, gully_id)
+                logger.info(f"Recovered gully_id {gully_id} from chat_id {chat_id}")
+                break
+
+        # If still None after lookup attempt, try direct API call
+        if gully_id is None:
+            try:
+                logger.info(f"Attempting API lookup for gully by chat_id {chat_id}")
+                onboarding_client = await get_initialized_onboarding_client()
+                gully_data = await onboarding_client.get_gully_by_telegram_group_id(
+                    chat_id
+                )
+                if gully_data:
+                    gully_id = gully_data["id"]
+                    ctx_manager.update_gully_data(context, gully_id, gully_data)
+                    ctx_manager.set_active_gully_id(context, gully_id)
+                    logger.info(f"Recovered gully_id {gully_id} from API")
+            except Exception as e:
+                logger.error(f"Error recovering gully_id via API: {e}")
+
+    logger.info(f"Processing bid with gully_id: {gully_id}")
 
     # Get current auction data
     auction_data = get_auction_data(context, gully_id)
-    if not auction_data or not auction_data.get("auction_active"):
+    if not auction_data:
+        logger.warning(
+            f"NO AUCTION DATA found for gully {gully_id} - attempting recovery"
+        )
+        # Try to recover auction data
+        gully_data = context.bot_data.get("gullies", {}).get(gully_id, {})
+        if "auction" in gully_data:
+            auction_data = gully_data["auction"]
+            logger.info(f"Recovered auction data from gully_data")
+        else:
+            # Create new auction data as last resort
+            auction_data = ensure_auction_context(context, gully_id)
+
+    # Second check after recovery attempt
+    if not auction_data or not auction_data.get("auction_active", False):
         logger.warning(f"User {user_id} tried to bid but no active auction found")
         return BIDDING_STATE
+
+    logger.info(
+        f"Active auction found for gully {gully_id}, processing {message_text} command"
+    )
 
     # Get participants
     participants = auction_data.get("all_participants", [])
@@ -568,44 +622,39 @@ async def handle_bid_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return BIDDING_STATE
 
         # Find participant for this user
-        participant = None
-        for p in participants:
-            if p.get("user_id") == user_id:
-                participant = p
-                break
+        participant = get_participant_for_user(
+            participants, user_id, participant_user_map
+        )
 
-        # If not found via direct lookup, try the mapping
-        if not participant:
-            # Create reverse mapping
-            reverse_map = {v: k for k, v in participant_user_map.items()}
-            if user_id in reverse_map:
-                participant_id = reverse_map[user_id]
-                for p in participants:
-                    if p.get("participant_id") == participant_id:
-                        participant = p
-                        break
-
-        # If still not found, log but continue with minimal info
+        # If not found, use minimal info
         if not participant:
             logger.warning(
                 f"No participant found for user {user_id}, using minimal info"
             )
             participant = {"team_name": "Unknown Team", "participant_id": None}
 
-        # ULTRA SIMPLIFIED LOGIC - Just increment count and update last bidder
-        bid_count = auction_data.get("bid_count", 0) + 1
-        auction_data["bid_count"] = bid_count
+        # Increment global bid counter
+        global_bid_count = auction_data.get("bid_count", 0) + 1
+        auction_data["bid_count"] = global_bid_count
 
-        # IMPORTANT: Always update last bidder with complete information
-        auction_data["last_bidder"] = {
+        # Track the bid details
+        bid_info = {
             "user_id": user_id,
             "participant_id": participant.get("participant_id"),
             "team_name": participant.get("team_name", "Unknown Team"),
+            "timestamp": datetime.now().isoformat(),
+            "bid_number": global_bid_count,  # Add the global bid number to this bid
         }
 
-        # Log the bid with clear info
+        # Add to bids list
+        auction_data["bids"].append(bid_info)
+
+        # Update last bidder - this person will get the player if timer expires now
+        auction_data["last_bidder"] = bid_info
+
+        # Log clear bid information with global counter
         logger.info(
-            f"User {user_id} ({participant.get('team_name')}) placed bid #{bid_count} - SET AS LAST BIDDER"
+            f"GLOBAL BID #{global_bid_count}: User {user_id} ({bid_info['team_name']})"
         )
 
         # Save auction data BEFORE extending timer - CRITICAL
@@ -613,8 +662,6 @@ async def handle_bid_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         # Reset the timer
         await extend_auction_timer(context, chat_id, gully_id)
-
-        # NO private confirmation message
 
         return BIDDING_STATE
 
@@ -626,6 +673,16 @@ async def extend_auction_timer(context, chat_id, gully_id):
     """Extend or restart the auction timer after a bid."""
     # Clear existing timer
     clear_auction_timer(context)
+
+    # !!! CRITICAL: Verify auction is still active before creating new timer
+    auction_data = get_auction_data(context, gully_id)
+    if not auction_data or not auction_data.get("auction_active"):
+        logger.error(f"Auction data MISSING after clearing timer for gully {gully_id}!")
+        # Attempt recovery by setting it active again
+        auction_data = ensure_auction_context(context, gully_id)
+        auction_data["auction_active"] = True
+        set_auction_data(context, gully_id, auction_data)
+        logger.info(f"Recovered auction data for gully {gully_id}")
 
     # Schedule new timer
     timer = asyncio.create_task(
@@ -648,15 +705,36 @@ async def scheduled_finalize_auction(context, chat_id, gully_id, delay):
             return
 
         # Check if any bids were placed
-        bid_count = auction_data.get("bid_count", 0)
-        logger.info(f"Finalizing auction with {bid_count} bids")
+        global_bid_count = auction_data.get("bid_count", 0)
+        logger.info(f"Finalizing auction with {global_bid_count} bids")
 
-        if bid_count == 0:
+        if global_bid_count == 0:
             # No bids - skip player
             await finalize_auction_with_skip(context, chat_id, gully_id)
             return
 
-        # Get last bidder info - this should be the winner
+        # Get the global bid count
+        global_bid_count = auction_data.get("bid_count", 0)
+
+        if global_bid_count == 0:
+            # No bids - skip player
+            await finalize_auction_with_skip(context, chat_id, gully_id)
+            return
+
+        # Extract necessary data from auction state - CRITICAL FIX
+        base_price = float(auction_data.get("base_price", 0))
+        player_data = auction_data.get("current_player", {})
+        player_name = player_data.get("name", "Unknown Player")
+
+        # Log all bids for debugging
+        logger.info(f"AUCTION ENDED with {global_bid_count} total global bids")
+        all_bids = auction_data.get("bids", [])
+        for i, bid in enumerate(all_bids):
+            logger.info(
+                f"BID #{bid.get('bid_number')}: {bid.get('team_name')} at {bid.get('timestamp')}"
+            )
+
+        # Get last bidder - person who placed the last bid
         last_bidder = auction_data.get("last_bidder")
         if not last_bidder:
             logger.error(
@@ -665,27 +743,39 @@ async def scheduled_finalize_auction(context, chat_id, gully_id, delay):
             await finalize_auction_with_skip(context, chat_id, gully_id)
             return
 
-        # Extract info
-        player_data = auction_data.get("current_player", {})
-        player_name = player_data.get("name", "Unknown Player")
-        base_price = float(auction_data.get("base_price", 0))
+        # Calculate final amount with FIRST BID SPECIAL RULE
+        # First bid is base price + (2 * BID_INCREMENT), then each additional bid adds BID_INCREMENT
+        if global_bid_count == 1:
+            # First bid is treated specially
+            total_amount = base_price + (2 * BID_INCREMENT)
+        else:
+            # After first bid, add one increment per additional bid (plus the 2 from first bid)
+            total_amount = (
+                base_price
+                + (2 * BID_INCREMENT)
+                + ((global_bid_count - 1) * BID_INCREMENT)
+            )
 
-        # Calculate final bid amount
-        total_amount = base_price
-        if bid_count > 1:
-            total_amount += (bid_count - 1) * BID_INCREMENT
         total_amount = round(total_amount, 1)
+
+        # Log calculation details
+        logger.info(
+            f"PRICE CALCULATION: {base_price} (base) + {2 * BID_INCREMENT} (first bid) + "
+            f"{(global_bid_count - 1) * BID_INCREMENT if global_bid_count > 1 else 0} (additional bids) = {total_amount} CR"
+        )
 
         # Get bidder details
         team_name = last_bidder.get("team_name", "Unknown Team")
         participant_id = last_bidder.get("participant_id")
         user_id = last_bidder.get("user_id")
 
-        # Log all the details for debugging
+        # Log all winner details for debugging
         logger.info(
             f"WINNER DETAILS: User {user_id}, Team {team_name}, Participant ID {participant_id}"
         )
-        logger.info(f"BID DETAILS: Count {bid_count}, Final Amount {total_amount} CR")
+        logger.info(
+            f"BID DETAILS: Total global bids {global_bid_count}, Final Amount {total_amount} CR"
+        )
 
         # Announce winner in group chat
         try:
@@ -852,6 +942,19 @@ def get_handlers():
         ],
         name="auction_conversation",
         persistent=False,
+        allow_reentry=True,  # Allow multiple entries
+        per_chat=True,  # Track conversation per chat
+        per_user=False,  # Don't track per user - critical to allow multiple users
+        per_message=False,  # Don't track per message
     )
 
-    return [auction_conv_handler]
+    # CRITICAL: Add a backup global handler for bids
+    # This handler will catch ALL bid messages regardless of conversation state
+    global_bid_handler = MessageHandler(
+        filters.Regex(r"^[Bb]id$") & filters.ChatType.GROUPS, handle_bid_message
+    )
+
+    return [
+        global_bid_handler,
+        auction_conv_handler,
+    ]  # Order matters! Put global handler first

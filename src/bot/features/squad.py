@@ -10,14 +10,12 @@ from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    ReplyKeyboardRemove,
 )
 from telegram.ext import (
     ContextTypes,
     ConversationHandler,
     CommandHandler,
     CallbackQueryHandler,
-    filters,
 )
 
 # Use the centralized client initialization
@@ -41,6 +39,19 @@ SELECTING_PLAYERS = 1
 SQUAD_SIZE = 18
 PLAYERS_PER_PAGE = 10  # Show 10 players per page
 PAGE_KEY = "player_page"  # Key for storing current page in context
+TEAM_FILTER_KEY = "team_filter"  # Key for storing current team filter
+IPL_TEAMS = [
+    "CSK",
+    "DC",
+    "GT",
+    "KKR",
+    "LSG",
+    "MI",
+    "PBKS",
+    "RCB",
+    "RR",
+    "SRH",
+]  # All IPL teams
 
 
 def create_callback_data(action: str, data: Dict[str, Any] = None) -> str:
@@ -58,40 +69,97 @@ def parse_callback_data(callback_data: str) -> Dict[str, Any]:
 
 
 async def get_player_inline_keyboard(
-    players: List[Dict[str, Any]], selected_ids: List[int], page: int = 0
+    players: List[Dict[str, Any]],
+    selected_ids: List[int],
+    page: int = 0,
+    team_filter: str = None,
+    edit_mode: bool = False,
 ) -> InlineKeyboardMarkup:
     """Create an inline keyboard with player buttons and pagination."""
     keyboard = []
 
-    # Calculate total pages
-    total_players = len(players)
+    # Apply team filter if active
+    if team_filter:
+        filtered_players = [p for p in players if p.get("team") == team_filter]
+    else:
+        filtered_players = players
+
+    # Calculate total pages based on filtered players
+    total_players = len(filtered_players)
     total_pages = (total_players + PLAYERS_PER_PAGE - 1) // PLAYERS_PER_PAGE
+
+    # Reset page if out of bounds for filtered list
+    if page >= total_pages and total_pages > 0:
+        page = total_pages - 1
 
     # Get players for current page
     start_idx = page * PLAYERS_PER_PAGE
     end_idx = min(start_idx + PLAYERS_PER_PAGE, total_players)
-    page_players = players[start_idx:end_idx]
+    page_players = filtered_players[start_idx:end_idx]
 
     # Add player buttons (one per row)
     for player in page_players:
-        is_selected = player["id"] in selected_ids
+        # IMPORTANT FIX: Get player ID safely, checking for both formats
+        player_id = player.get("player_id", player.get("id"))
+        is_selected = player_id in selected_ids
+
         status = "✅" if is_selected else ""
         name = player["name"]
         team = player["team"]
         price = player.get("base_price", 0)
+        sold_price = player.get("sold_price", 0)
 
-        button_text = f"🏏 {name} - {team} - {price} Cr {status}"
-        callback_data = create_callback_data("toggle", {"id": player["id"]})
+        button_text = f"{status} {name} | {team} | {price} Cr | {sold_price} Cr"
+        # IMPORTANT FIX: Use the extracted player_id for the callback data
+        callback_data = create_callback_data("toggle", {"id": player_id})
 
         keyboard.append(
             [InlineKeyboardButton(button_text, callback_data=callback_data)]
         )
 
+    # Add filter by team row
+    filter_row = []
+
+    # Always add "All Teams" option
+    filter_text = "🔍 All" if not team_filter else "All"
+    filter_row.append(
+        InlineKeyboardButton(
+            filter_text,
+            callback_data=create_callback_data("filter_team", {"team": "all"}),
+        )
+    )
+
+    # Add 4-5 teams per row (to fit in Telegram UI)
+    # First row of teams
+    for team in IPL_TEAMS[:5]:
+        filter_text = f"🔍 {team}" if team_filter == team else team
+        filter_row.append(
+            InlineKeyboardButton(
+                filter_text,
+                callback_data=create_callback_data("filter_team", {"team": team}),
+            )
+        )
+
+    keyboard.append(filter_row)
+
+    # Second row of teams
+    filter_row2 = []
+    for team in IPL_TEAMS[5:]:
+        filter_text = f"🔍 {team}" if team_filter == team else team
+        filter_row2.append(
+            InlineKeyboardButton(
+                filter_text,
+                callback_data=create_callback_data("filter_team", {"team": team}),
+            )
+        )
+
+    keyboard.append(filter_row2)
+
     # Add navigation row
     nav_row = []
 
     # Add page indicator in the middle
-    page_text = f"Page {page+1}/{total_pages}"
+    page_text = f"Page {page+1}/{total_pages if total_pages > 0 else 1}"
 
     if page > 0:
         nav_row.append(
@@ -111,6 +179,16 @@ async def get_player_inline_keyboard(
 
     if nav_row:
         keyboard.append(nav_row)
+
+    # Add edit button only if not in edit mode
+    if not edit_mode:
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    "✏️ Edit Squad", callback_data=create_callback_data("edit")
+                )
+            ]
+        )
 
     # Add submit button
     keyboard.append(
@@ -232,6 +310,9 @@ async def squad_command(
             f"Loading available players for {gully_name}..."
         )
 
+        # Add this line to show player selection immediately
+        await show_player_selection(update, context)
+
         return SELECTING_PLAYERS
 
     except Exception as e:
@@ -249,16 +330,36 @@ async def show_player_selection(
     """Show the player selection interface with pagination using inline keyboard."""
     logger.info("show_player_selection called")
 
+    # IMPORTANT: Get active gully ID FIRST before using it
+    active_gully_id = ctx_manager.get_active_gully_id(context)
+
+    # Check if we have a valid active gully
+    if not active_gully_id:
+        logger.error("No active gully ID found in context")
+        message = (
+            "⚠️ No active gully selected. Please use /join to select a gully first."
+        )
+
+        if isinstance(update, Update) and update.callback_query:
+            await update.callback_query.edit_message_text(message)
+        else:
+            await update.message.reply_text(message)
+        return ConversationHandler.END
+
     # Get current page from context or default to 0
     current_page = context.user_data.get(PAGE_KEY, 0)
     logger.info(f"Current page: {current_page}")
 
-    # Get active gully ID
-    active_gully_id = ctx_manager.get_active_gully_id(context)
+    # Get team filter (after we have active_gully_id)
+    team_filter = context.user_data.get(TEAM_FILTER_KEY)
+    if team_filter:
+        logger.info(f"Applying team filter: {team_filter}")
+
+    # Now check edit mode with the active_gully_id
+    edit_mode = context.user_data.get(f"edit_mode_{active_gully_id}", False)
+    logger.info(f"Edit mode: {edit_mode} for gully {active_gully_id}")
 
     # Get all available players
-    # Note: We store this in user_data rather than gully-specific context
-    # because player data is common across all gullies and can be reused
     all_players = context.user_data.get(f"all_players_{active_gully_id}")
     if not all_players:
         squad_client = await get_initialized_squad_client()
@@ -281,23 +382,77 @@ async def show_player_selection(
             await update.message.reply_text(message)
         return ConversationHandler.END
 
-    # Get selected player IDs from gully-specific context
-    selected_player_ids = ctx_manager.get_selected_player_ids(context, active_gully_id)
-    logger.info(f"Currently selected: {len(selected_player_ids)} players")
+    # IMPORTANT: Use different selection source based on edit mode
+    if edit_mode:
+        # In edit mode, use the context selection
+        selected_player_ids = ctx_manager.get_selected_player_ids(
+            context, active_gully_id
+        )
+        logger.info(
+            f"Using CONTEXT selection (edit mode): {len(selected_player_ids)} players"
+        )
+    else:
+        # In view mode, use the DB selection
+        squad_client = await get_initialized_squad_client()
+        participant_id = ctx_manager.get_participant_id(context, active_gully_id)
+        squad_data = await squad_client.get_draft_squad(participant_id)
+        draft_players = squad_data.get("players", [])
+        selected_player_ids = [player["player_id"] for player in draft_players]
+        ctx_manager.set_selected_player_ids(
+            context, selected_player_ids, active_gully_id
+        )
+        logger.info(
+            f"Using DB selection (view mode): {len(selected_player_ids)} players"
+        )
+    # Pass edit_mode to the keyboard generation function
+    reply_markup = await get_player_inline_keyboard(
+        all_players,
+        selected_player_ids,
+        page=current_page,
+        team_filter=team_filter,
+        edit_mode=edit_mode,  # Pass the edit mode flag
+    )
 
-    # Create a dictionary of player details by ID for quick lookup
-    player_dict = {player["id"]: player for player in all_players}
+    # STEP 3: Now normalize the player IDs
+    all_player_ids = []
+    for player in all_players:
+        # Get the right ID field depending on data structure
+        player_id = player.get("player_id", player["id"])
+        all_player_ids.append(player_id)
+        # Ensure the player object has a consistent ID field
+        player["player_id"] = player_id
+
+    # Then create the dictionary
+    player_dict = {player["player_id"]: player for player in all_players}
 
     # Get details of selected players
     selected_players = []
+    missing_player_ids = []
+
+    # First try to use the player_dict for details
     for player_id in selected_player_ids:
         if player_id in player_dict:
             selected_players.append(player_dict[player_id])
+        else:
+            missing_player_ids.append(player_id)
 
-    # Create inline keyboard with players for the current page
-    reply_markup = await get_player_inline_keyboard(
-        all_players, selected_player_ids, page=current_page
-    )
+    # If we have missing players and we have draft player details, use those
+    if missing_player_ids and f"draft_players_{active_gully_id}" in context.user_data:
+        draft_player_dict = context.user_data[f"draft_players_{active_gully_id}"]
+
+        for player_id in missing_player_ids:
+            if player_id in draft_player_dict:
+                selected_players.append(draft_player_dict[player_id])
+                logger.info(
+                    f"Added missing player {player_id} from draft players cache"
+                )
+
+    # If we still have missing players, try to fetch them directly
+    if len(selected_players) < len(selected_player_ids):
+        logger.warning(
+            f"Missing {len(selected_player_ids) - len(selected_players)} players in selection display"
+        )
+        # Could add API call here to fetch specific player details if needed
 
     # Build message text with current squad details
     message_text = (
@@ -309,33 +464,60 @@ async def show_player_selection(
     if selected_players:
         message_text += "Your current squad:\n"
         for i, player in enumerate(selected_players, 1):
-            message_text += f"{i}. {player['name']} ({player['team']}) - {player.get('base_price', 0)} Cr\n"
-        message_text += "\n"
+            message_text += f"{i}. {player['name']} ({player['team']}) - {player.get('base_price', 0)} Cr - {player.get('sold_price', 0)} Cr\n"
+
+    # Add team filter info to message text if filter is active
+    if team_filter:
+        message_text += f"\nCurrently showing: {team_filter} players only"
 
     message_text += (
-        f"Tap a player to select/deselect, use navigation buttons to browse players, "
+        f"\n Tap a player to select/deselect, use navigation buttons to browse players,"
         f"then tap '✅ Submit Squad' when done."
     )
 
     # Check if message is too long (Telegram has a 4096 character limit)
     if len(message_text) > 4000:
-        # Truncate the squad list if needed
-        message_text = (
+        # Split into two messages - first will contain the squad list
+        squad_list_message = "Your current squad:\n"
+        for i, player in enumerate(selected_players, 1):
+            squad_list_message += f"{i}. {player['name']} ({player['team']}) - {player.get('base_price', 0)} Cr - {player.get('sold_price', 0)} Cr\n"
+
+        # Second message will contain instructions and buttons
+        instructions_message = (
             f"Select your squad (exactly {SQUAD_SIZE} players required).\n\n"
             f"Currently selected: {len(selected_player_ids)}/{SQUAD_SIZE} players.\n\n"
-            f"(Squad list too long to display completely)\n\n"
             f"Tap a player to select/deselect, use navigation buttons to browse players, "
             f"then tap '✅ Submit Squad' when done."
         )
 
-    if isinstance(update, Update) and update.callback_query:
-        logger.info("Showing player selection from callback query")
-        await update.callback_query.edit_message_text(
-            text=message_text, reply_markup=reply_markup
-        )
+        if isinstance(update, Update) and update.callback_query:
+            logger.info("Showing split player selection from callback query")
+            # Send squad list first without markup
+            await update.callback_query.message.reply_text(text=squad_list_message)
+            # Then send instructions with markup
+            await update.callback_query.edit_message_text(
+                text=instructions_message, reply_markup=reply_markup
+            )
+        else:
+            logger.info("Showing split player selection from direct command")
+            # Send squad list first without markup
+            await update.message.reply_text(text=squad_list_message)
+            # Then send instructions with markup
+            await update.message.reply_text(
+                text=instructions_message, reply_markup=reply_markup
+            )
     else:
-        logger.info("Showing player selection from direct command")
-        await update.message.reply_text(text=message_text, reply_markup=reply_markup)
+        # Message is short enough, send as a single message
+        if isinstance(update, Update) and update.callback_query:
+            logger.info("Showing player selection from callback query")
+            await update.callback_query.edit_message_text(
+                text=message_text, reply_markup=reply_markup
+            )
+        else:
+            logger.info("Showing player selection from direct command")
+            await update.message.reply_text(
+                text=message_text, reply_markup=reply_markup
+            )
 
     return SELECTING_PLAYERS
 
@@ -368,12 +550,39 @@ async def handle_squad_callback_query(
         # Get active gully ID
         active_gully_id = ctx_manager.get_active_gully_id(context)
 
+        # Add a check for active gully ID
+        if not active_gully_id:
+            logger.error("No active gully ID found in callback context")
+            await query.answer(
+                "Please select a gully first using /join command", show_alert=True
+            )
+            return ConversationHandler.END
+
         # Handle different actions
         if action == "toggle":
             # Toggle player selection
             player_id = data.get("id")
             if player_id is not None:
                 logger.info(f"Toggling player with ID: {player_id}")
+
+                # Get current selected player IDs
+                selected_player_ids = ctx_manager.get_selected_player_ids(
+                    context, active_gully_id
+                )
+
+                # Check if this would be adding or removing a player
+                is_selected = player_id in selected_player_ids
+
+                # If adding a player, check if we've reached the maximum
+                if not is_selected and len(selected_player_ids) >= SQUAD_SIZE:
+                    logger.warning(
+                        f"Attempted to select more than {SQUAD_SIZE} players"
+                    )
+                    await query.answer(
+                        f"⚠️ You can only select up to {SQUAD_SIZE} players. Please remove a player before adding another.",
+                        show_alert=True,
+                    )
+                    return SELECTING_PLAYERS
 
                 # Toggle player in gully-specific context
                 ctx_manager.toggle_selected_player_id(
@@ -382,6 +591,45 @@ async def handle_squad_callback_query(
 
                 # Show updated selection
                 await show_player_selection(update, context)
+
+        elif action == "select_gully":
+            # Get the gully ID from the callback data
+            gully_id = data.get("id")
+            if gully_id is not None:
+                # Set the active gully ID in context
+                ctx_manager.set_active_gully_id(context, gully_id)
+                logger.info(f"Selected gully ID: {gully_id}")
+
+                # Get user ID
+                telegram_user_id = update.effective_user.id
+                client = await get_initialized_onboarding_client()
+                db_user = await client.get_user_by_telegram_id(telegram_user_id)
+                user_id = db_user["id"]
+
+                # Get participant info for this gully
+                participant = await client.get_participant_by_user_and_gully(
+                    user_id=user_id, gully_id=gully_id
+                )
+
+                if participant:
+                    participant_id = participant["id"]
+                    team_name = participant.get("team_name", "Your Team")
+
+                    # Store in context
+                    ctx_manager.set_participant_id(context, participant_id, gully_id)
+                    ctx_manager.set_team_name(context, team_name, gully_id)
+
+                    # Now show the player selection interface
+                    await show_player_selection(update, context)
+                else:
+                    await query.edit_message_text(
+                        "You are not a participant in this gully."
+                    )
+            else:
+                logger.error("No gully ID found in callback data")
+                await query.edit_message_text(
+                    "Error selecting gully. Please try again."
+                )
 
         elif action == "prev":
             # Go to previous page
@@ -406,7 +654,47 @@ async def handle_squad_callback_query(
 
         elif action == "edit":
             # Handle edit squad
+            # Set edit mode flag
+            context.user_data[f"edit_mode_{active_gully_id}"] = True
+            logger.info(f"Entering edit mode for gully {active_gully_id}")
+
+            # Load current squad to start editing from
+            squad_client = await get_initialized_squad_client()
+            participant_id = ctx_manager.get_participant_id(context, active_gully_id)
+            squad_data = await squad_client.get_draft_squad(participant_id)
+            draft_players = squad_data.get("players", [])
+            selected_player_ids = [player["player_id"] for player in draft_players]
+
+            # Initialize context with current DB selection
+            ctx_manager.set_selected_player_ids(
+                context, selected_player_ids, active_gully_id
+            )
+
+            # Show edit mode message
+            await query.answer(
+                "Edit mode activated. Make your changes then submit.", show_alert=True
+            )
             await handle_edit_squad(update, context)
+
+        elif action == "filter_team":
+            # Handle team filtering
+            team = data.get("team")
+            if team:
+                # Reset page to 0 when changing filters
+                context.user_data[PAGE_KEY] = 0
+
+                if team == "all":
+                    # Clear the filter
+                    if TEAM_FILTER_KEY in context.user_data:
+                        del context.user_data[TEAM_FILTER_KEY]
+                    logger.info("Cleared team filter")
+                else:
+                    # Set the filter
+                    context.user_data[TEAM_FILTER_KEY] = team
+                    logger.info(f"Set team filter to: {team}")
+
+                # Show updated selection with filter applied
+                await show_player_selection(update, context)
 
         else:
             logger.warning(f"Unknown action: {action}")
@@ -438,16 +726,30 @@ async def handle_edit_squad(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     # Reset page to 0 when starting edit
     context.user_data[PAGE_KEY] = 0
 
-    # Clear the selected player IDs in gully-specific context
-    ctx_manager.set_selected_player_ids(context, [], active_gully_id)
-    logger.info("Cleared selected players for fresh squad selection")
+    # Set edit mode flag
+    context.user_data[f"edit_mode_{active_gully_id}"] = True
+    logger.info(f"Entering edit mode for gully {active_gully_id}")
+
+    # Load current squad to start editing from
+    squad_client = await get_initialized_squad_client()
+    participant_id = ctx_manager.get_participant_id(context, active_gully_id)
+    squad_data = await squad_client.get_draft_squad(participant_id)
+    draft_players = squad_data.get("players", [])
+    selected_player_ids = [player["player_id"] for player in draft_players]
+
+    # Initialize context with current DB selection
+    ctx_manager.set_selected_player_ids(context, selected_player_ids, active_gully_id)
+    logger.info(
+        f"Initialized selection with {len(selected_player_ids)} players from DB"
+    )
 
     # Show a message to the user
     await query.answer(
-        "Starting fresh squad selection. Please select 18 players.", show_alert=True
+        "Edit mode activated. Toggle players to change your squad, then submit when done.",
+        show_alert=True,
     )
 
-    # Show player selection with empty selection
+    # Show player selection with current squad selected
     return await show_player_selection(update, context)
 
 
@@ -499,6 +801,12 @@ async def handle_squad_submission(
     logger.info(f"Submitting squad for participant {participant_id}")
     squad_client = await get_initialized_squad_client()
     result = await squad_client.update_draft_squad(participant_id, selected_player_ids)
+
+    if result.get("success"):
+        # Clear edit mode
+        if f"edit_mode_{active_gully_id}" in context.user_data:
+            del context.user_data[f"edit_mode_{active_gully_id}"]
+            logger.info(f"Exiting edit mode for gully {active_gully_id}")
 
     if not result.get("success"):
         error_msg = result.get("error", "Unknown error")
