@@ -7,9 +7,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
 from enum import Enum
 
-from src.api.schemas.player import PlayerType, PlayerResponse
-from src.api.schemas.participant import ParticipantResponse
-from src.db.models.models import AuctionStatus, AuctionType
+from src.api.schemas.player import PlayerType
 
 
 class AuctionStatusEnum(str, Enum):

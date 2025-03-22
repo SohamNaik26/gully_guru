@@ -30,17 +30,10 @@ from src.api.schemas.auction import (
     ContestPlayerResponse,
     UncontestedPlayerResponse,
     ParticipantInfo,
-    ResolveContestedPlayerResponse,
     AuctionStatusEnum,
     AuctionQueueResponse,
-    NextPlayerResponse,
-    ResolveContestedPlayerRequest,
-    RevertAuctionRequest,
-    RevertAuctionResponse,
-    SkipPlayerRequest,
-    SkipPlayerResponse,
 )
-from src.api.schemas.player import PlayerType
+
 from src.api.schemas.common import SuccessResponse
 
 # Configure logging
@@ -612,6 +605,9 @@ class AuctionService:
                         "player_type": player.player_type,
                         "base_price": (
                             float(player.base_price) if player.base_price else 0.0
+                        ),
+                        "sold_price": (
+                            float(player.sold_price) if player.sold_price else 0.0
                         ),
                     }
 

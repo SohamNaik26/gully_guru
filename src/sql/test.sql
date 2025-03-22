@@ -1,10 +1,4 @@
-SELECT 
-    *,
-    start_date_utc::timestamp + INTERVAL '5.5 hours' AS start_date_ist,
-    end_date_utc::timestamp + INTERVAL '5.5 hours' AS end_date_ist
-FROM ipl_balanced_rounds;
 
--- SELECT * FROM ipl_matches_schedule ORDER BY match_number;
 
 SELECT * FROM gullies;
 SELECT * FROM gully_participants
@@ -26,3 +20,10 @@ ON p.gully_participant_id = g.id
 WHERE g.gully_id = 7 AND p.status = 'owned'
 
 GROUP BY 1
+
+
+SELECT 
+    *
+FROM participant_players p
+LEFT JOIN players pl ON pl.id = p.player_id
+WHERE p.gully_participant_id = 16;

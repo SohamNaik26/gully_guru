@@ -23,12 +23,8 @@ from src.api.schemas.fantasy import (
     SuccessResponse,
 )
 from src.api.services.auction import AuctionService
-from src.api.factories.fantasy import (
-    AuctionStartResponseFactory,
-    ContestPlayerResponseFactory,
-)
 from src.api.factories.auction import AuctionResponseFactory
-from src.api.exceptions import handle_exceptions, NotFoundException, ValidationException
+from src.api.exceptions import handle_exceptions, NotFoundException
 
 # Configure logging
 logger = logging.getLogger(__name__)

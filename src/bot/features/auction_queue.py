@@ -652,22 +652,9 @@ async def handle_bid_message(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # Update last bidder - this person will get the player if timer expires now
         auction_data["last_bidder"] = bid_info
 
-        # Calculate current price after this bid (new formula)
-        base_price = float(auction_data.get("base_price", 0))
-        global_bid_count = auction_data.get("bid_count", 0)
-
-        if global_bid_count == 1:
-            # First bid is just the base price (no increment)
-            current_amount = base_price
-        else:
-            # After first bid, each bid adds one increment
-            current_amount = base_price + ((global_bid_count - 1) * BID_INCREMENT)
-
-        current_amount = round(current_amount, 1)
-
-        # Log clear bid information with global counter and current price
+        # Log clear bid information with global counter
         logger.info(
-            f"GLOBAL BID #{global_bid_count}: User {user_id} ({bid_info['team_name']}) - Current price: {current_amount} CR"
+            f"GLOBAL BID #{global_bid_count}: User {user_id} ({bid_info['team_name']})"
         )
 
         # Save auction data BEFORE extending timer - CRITICAL
@@ -756,20 +743,25 @@ async def scheduled_finalize_auction(context, chat_id, gully_id, delay):
             await finalize_auction_with_skip(context, chat_id, gully_id)
             return
 
-        # Calculate final amount with NEW RULE - first bid is just base price
+        # Calculate final amount with FIRST BID SPECIAL RULE
+        # First bid is base price + (2 * BID_INCREMENT), then each additional bid adds BID_INCREMENT
         if global_bid_count == 1:
-            # First bid is just the base price (no increment)
-            total_amount = base_price
+            # First bid is treated specially
+            total_amount = base_price + (2 * BID_INCREMENT)
         else:
-            # After first bid, each bid adds one increment
-            total_amount = base_price + ((global_bid_count - 1) * BID_INCREMENT)
+            # After first bid, add one increment per additional bid (plus the 2 from first bid)
+            total_amount = (
+                base_price
+                + (2 * BID_INCREMENT)
+                + ((global_bid_count - 1) * BID_INCREMENT)
+            )
 
         total_amount = round(total_amount, 1)
 
-        # Log calculation details with updated formula
+        # Log calculation details
         logger.info(
-            f"PRICE CALCULATION: {base_price} (base) + "
-            f"{(global_bid_count - 1) * BID_INCREMENT if global_bid_count > 1 else 0} (increments) = {total_amount} CR"
+            f"PRICE CALCULATION: {base_price} (base) + {2 * BID_INCREMENT} (first bid) + "
+            f"{(global_bid_count - 1) * BID_INCREMENT if global_bid_count > 1 else 0} (additional bids) = {total_amount} CR"
         )
 
         # Get bidder details
@@ -809,25 +801,6 @@ async def scheduled_finalize_auction(context, chat_id, gully_id, delay):
                 logger.info(
                     f"Successfully resolved auction: {participant_id} wins {player_data.get('player_id')}"
                 )
-
-                # UPDATE LOCAL PARTICIPANT DATA
-                # Find the winning participant in the local data and update their budget
-                participants = auction_data.get("all_participants", [])
-                for p in participants:
-                    if p.get("participant_id") == participant_id:
-                        # Update budget (subtract amount paid)
-                        old_budget = p.get("budget", 0)
-                        p["budget"] = round(old_budget - total_amount, 1)
-                        # Update player count
-                        p["players_owned"] = p.get("players_owned", 0) + 1
-                        logger.info(
-                            f"Updated local data for {p.get('team_name')}: Budget {old_budget} → {p['budget']}, Players: {p['players_owned']}"
-                        )
-                        break
-
-                # Save updated participant data back to context
-                auction_data["all_participants"] = participants
-                set_auction_data(context, gully_id, auction_data)
             else:
                 logger.error(f"API error: {result.get('message')}")
         except Exception as e:
