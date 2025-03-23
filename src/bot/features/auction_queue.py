@@ -5,13 +5,11 @@ Handles the auction process for players, including bidding and skipping.
 
 import logging
 import asyncio
-import json
 from datetime import datetime
-from typing import Dict, Any, Optional, List, Set
 from telegram import (
     Update,
-    ReplyKeyboardMarkup,
-    ReplyKeyboardRemove,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
 )
 from telegram.ext import (
     ContextTypes,
@@ -21,6 +19,8 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+import re
+import unicodedata
 
 # Use the centralized client initialization
 from src.bot.api_client.init import (
@@ -47,6 +47,48 @@ BIDDING_STATE = 1
 BID_TIMEOUT_SECONDS = 15  # Auction timer (15 seconds)
 AUCTION_TIMER_KEY = "auction_timer"  # Timer for auction finalization
 BID_INCREMENT = 0.5  # Fixed increment of 0.5 CR
+
+# Global state tracker for quick access
+ACTIVE_AUCTIONS = {}  # gully_id -> {current_amount, last_bidder, etc}
+
+# 1. Add constants for different timeout values
+NO_BID_TIMEOUT = 15  # Default timeout (15 seconds)
+LOW_BID_TIMEOUT = 30  # Timeout for auctions with 1-9 bids
+HIGH_BID_TIMEOUT = 40  # Timeout for auctions with 10+ bids
+
+
+# Function to quickly access current auction amount
+def get_current_bid_amount(gully_id):
+    """Get current bid amount without accessing full auction data."""
+    if gully_id in ACTIVE_AUCTIONS:
+        return ACTIVE_AUCTIONS[gully_id].get("current_amount", 0)
+
+    # Fall back to full auction data if needed
+    auction_data = get_auction_data(None, gully_id)
+    if not auction_data:
+        return 0
+
+    bid_count = auction_data.get("bid_count", 0)
+    base_price = auction_data.get("base_price", 0)
+
+    if bid_count == 0:
+        return base_price
+    else:
+        return round(base_price + ((bid_count - 1) * BID_INCREMENT), 2)
+
+
+# Function to quickly get last bidder
+def get_last_bidder(gully_id):
+    """Get last bidder info without accessing full auction data."""
+    if gully_id in ACTIVE_AUCTIONS:
+        return ACTIVE_AUCTIONS[gully_id].get("last_bidder")
+
+    # Fall back to full auction data
+    auction_data = get_auction_data(None, gully_id)
+    if not auction_data:
+        return None
+
+    return auction_data.get("last_bidder")
 
 
 # ===== API AND CONTEXT MANAGEMENT FUNCTIONS =====
@@ -93,14 +135,50 @@ def ensure_auction_context(context, gully_id):
 
 
 def get_auction_data(context, gully_id=None):
-    """Get auction data from context for a specific gully."""
+    """Get auction data from context for a specific gully with improved handling."""
+    # If no gully_id provided, try to get from chat_data first
     if gully_id is None:
-        gully_id = ctx_manager.get_active_gully_id(context)
-        if gully_id is None:
-            return None
+        gully_id = context.chat_data.get("active_gully_id")
+        if gully_id:
+            logger.info(f"Found gully_id {gully_id} in chat_data")
 
-    gully_data = context.bot_data.get("gullies", {}).get(gully_id, {})
-    return gully_data.get("auction")
+        # If not found in chat_data, try context manager
+        if not gully_id:
+            gully_id = ctx_manager.get_active_gully_id(context)
+            if gully_id:
+                logger.info(f"Found gully_id {gully_id} from context manager")
+            else:
+                logger.error("No active gully_id found")
+                return None
+
+    # CRITICAL FIX: Convert string gully_id to int if needed
+    if isinstance(gully_id, str) and gully_id.isdigit():
+        gully_id = int(gully_id)
+
+    # Try both string and int versions of gully_id to be safe
+    gully_data = context.bot_data.get("gullies", {}).get(gully_id, None)
+    if gully_data is None and isinstance(gully_id, int):
+        # Try string version as fallback
+        gully_data = context.bot_data.get("gullies", {}).get(str(gully_id), {})
+    elif gully_data is None and isinstance(gully_id, str):
+        # Try int version as fallback
+        try:
+            gully_data = context.bot_data.get("gullies", {}).get(int(gully_id), {})
+        except ValueError:
+            pass
+
+    if not gully_data:
+        logger.error(f"No gully data found for gully {gully_id}")
+        return None
+
+    auction_data = gully_data.get("auction")
+
+    if not auction_data:
+        logger.error(f"No auction data found for gully {gully_id}")
+    elif not auction_data.get("auction_active"):
+        logger.info(f"Auction for gully {gully_id} is not active")
+
+    return auction_data
 
 
 def set_auction_data(context, gully_id, auction_data):
@@ -346,8 +424,7 @@ async def next_player_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
     """
-    Get the next player for auction.
-    This command initializes participants, fetches the next player, and starts bidding.
+    Get the next player for auction with detailed team information.
     """
     logger.info(
         f"Queue: /next_player command called by user {update.effective_user.id}"
@@ -467,41 +544,96 @@ async def next_player_command(
                 "skipped_users": [],
             }
         )
+
         # Save the auction data to context FIRST
         set_auction_data(context, gully_id, auction_data)
-        logger.info(
-            f"Auction initialized and ACTIVE for player {player_data.get('name')}"
-        )
 
-        # Extract player details for display
+        # IMPORTANT: Initialize global state tracker
+        ACTIVE_AUCTIONS[gully_id] = {
+            "active": True,
+            "current_amount": base_price,
+            "player_name": player_data.get("name", "Unknown Player"),
+            "bid_count": 0,
+            "last_bidder": None,
+            "skipped_users": [],
+        }
+
+        # Format the player info
         player_name = player_data.get("name", "Unknown Player")
         player_team = player_data.get("team", "Unknown Team")
         player_type = player_data.get("player_type", "Unknown Type")
         sold_price = player_data.get("sold_price", 0)
 
-        # THEN send private messages
-        await send_private_messages_to_participants(
-            context, gully_id, participants, participant_user_map, player_data
-        )
-
-        # THEN send group message with bidding UI
-        keyboard = [["Bid", "Skip"]]
-        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-        await update.message.reply_text(
+        # Create the message with detailed team information
+        message_text = (
             f"🏏 <b>{player_name}</b> ({player_team})\n"
             f"Type: {player_type}\n"
             f"Base: {base_price} CR\n"
             f"Sold Price 2025: {sold_price} CR\n\n"
-            f"<b>BIDDING OPEN</b> - Press Bid or Skip",
-            parse_mode="HTML",
-            reply_markup=reply_markup,
         )
 
-        # FINALLY start the timer
+        # Add team budget information section
+        message_text += "<b>TEAM BUDGETS:</b>\n"
+        participants_sorted = sorted(
+            participants, key=lambda p: p.get("team_name", "Unknown")
+        )
+
+        for p in participants_sorted:
+            team_name = p.get("team_name", "Unknown Team")
+            budget = p.get("budget", 0)
+            message_text += f"• {team_name}: {budget} CR\n"
+
+        message_text += "\n<b>BIDDING OPEN</b> - Base price: {base_price} CR"
+
+        # Create inline keyboard
+        inline_keyboard = [
+            [
+                InlineKeyboardButton("🏏 BID 🏏", callback_data=f"bid_{gully_id}"),
+                InlineKeyboardButton("⏭️ SKIP ⏭️", callback_data=f"skip_{gully_id}"),
+            ]
+        ]
+
+        # Send announcement with inline keyboard
+        try:
+            announcement_message = await update.message.reply_text(
+                message_text,
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard),
+            )
+
+            # Store the announcement message ID and message object for updating
+            auction_data["announcement_message_id"] = announcement_message.message_id
+            auction_data["last_bid_amount"] = base_price
+            auction_data["last_bidder_name"] = "None"
+            set_auction_data(context, gully_id, auction_data)
+
+            # Try to pin the message, but handle permission errors gracefully
+            try:
+                await context.bot.pin_chat_message(
+                    chat_id=chat_id,
+                    message_id=announcement_message.message_id,
+                    disable_notification=True,
+                )
+                logger.info(
+                    f"Pinned auction announcement message {announcement_message.message_id}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to pin message: {e}")
+                logger.info("Continuing without pinning - this is not critical")
+
+        except Exception as e:
+            logger.error(f"Error sending auction announcement: {e}")
+            await update.message.reply_text("Error starting auction. Please try again.")
+            return ConversationHandler.END
+
+        # Start the timer
         timer = asyncio.create_task(
-            scheduled_finalize_auction(context, chat_id, gully_id, BID_TIMEOUT_SECONDS)
+            scheduled_finalize_auction(context, chat_id, gully_id, NO_BID_TIMEOUT)
         )
         context.chat_data[AUCTION_TIMER_KEY] = timer
+
+        # Store active_gully_id in chat_data
+        context.chat_data["active_gully_id"] = gully_id
 
         return BIDDING_STATE
 
@@ -514,308 +646,379 @@ async def next_player_command(
         return ConversationHandler.END
 
 
-async def handle_bid_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """
-    Ultra-simplified bid handling:
-    - Just tracks last bidder
-    - Increments bid count
-    - NO private messages
-    - NO validation except for skip check
-    """
-    message_text = update.message.text.strip().lower()
+def validate_auction_state(auction_data, user_id):
+    """Validate auction state before processing bid"""
+    if not auction_data:
+        return False, "No active auction"
+    if not auction_data.get("auction_active"):
+        return False, "Auction is not active"
+    if user_id in auction_data.get("skipped_users", []):
+        return False, "User has already skipped"
+    return True, ""
+
+
+# Modify handle_auction_message to log absolutely everything and be robust
+async def handle_auction_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Process ALL types of messages for bidding."""
+    try:
+        # Log the raw update at the very beginning
+        logger.info(f"RAW UPDATE received: type={type(update)}")
+
+        # Get user ID if available
+        user_id = getattr(update.effective_user, "id", "Unknown")
+
+        # Check if this is a message
+        if not update.message:
+            logger.info(f"Update from user {user_id} has no message")
+            return
+
+        # Check if message has text
+        if not update.message.text:
+            logger.info(f"Message from user {user_id} has no text")
+            return
+
+        # Get message text
+        message_text = update.message.text.strip()
+        chat_id = update.effective_chat.id
+
+        # Log ALL message details for debugging
+        logger.info(f"MESSAGE: '{message_text}' from user {user_id} in chat {chat_id}")
+
+        # Check for any form of "BID" - extremely flexible matching
+        contains_bid = "BID" in message_text.upper()
+        if contains_bid:
+            logger.info(f"BID detected in message from user {user_id}")
+
+            # Get gully_id from chat_data
+            gully_id = context.chat_data.get("active_gully_id")
+            if not gully_id:
+                logger.error(f"No active_gully_id in chat_data for chat {chat_id}")
+                return
+
+            logger.info(f"Found gully_id {gully_id} in chat_data")
+
+            # Check auction state
+            auction_data = get_auction_data(context, gully_id)
+            if not auction_data:
+                logger.error(f"No auction data found for gully {gully_id}")
+                return
+
+            if not auction_data.get("auction_active"):
+                logger.error(f"Auction not active for gully {gully_id}")
+                return
+
+            # Process the bid
+            logger.info(f"Processing bid for user {user_id}")
+            await process_bid(update, context, gully_id)
+    except Exception as e:
+        # Catch ALL exceptions to ensure handler keeps working
+        logger.error(f"Error in message handler: {e}")
+        logger.exception("Detailed error traceback:")
+
+
+# Streamlined bid processing - COMPLETE REPLACEMENT
+async def process_bid(update: Update, context: ContextTypes.DEFAULT_TYPE, gully_id):
+    """Process bid and ensure it's saved to auction state."""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
-    # CRITICAL FIX: Get gully_id from chat_id instead of context
-    gully_id = ctx_manager.get_active_gully_id(context)
+    try:
+        logger.info(f"PROCESS_BID - START for user {user_id}")
 
-    # CRITICAL FIX: If gully_id is None, try to find it based on chat_id
-    if gully_id is None:
-        logger.warning(
-            f"No active gully found in context, looking up by chat ID {chat_id}"
-        )
-        # Look in bot_data for a gully with this chat ID
-        for g_id, g_data in context.bot_data.get("gullies", {}).items():
-            if g_data.get("telegram_group_id") == chat_id:
-                gully_id = g_id
-                # Store it back as active
-                ctx_manager.set_active_gully_id(context, gully_id)
-                logger.info(f"Recovered gully_id {gully_id} from chat_id {chat_id}")
-                break
+        # Get auction data
+        auction_data = get_auction_data(context, gully_id)
+        if not auction_data:
+            logger.error(f"No auction data found for gully {gully_id}")
+            return
 
-        # If still None after lookup attempt, try direct API call
-        if gully_id is None:
-            try:
-                logger.info(f"Attempting API lookup for gully by chat_id {chat_id}")
-                onboarding_client = await get_initialized_onboarding_client()
-                gully_data = await onboarding_client.get_gully_by_telegram_group_id(
-                    chat_id
-                )
-                if gully_data:
-                    gully_id = gully_data["id"]
-                    ctx_manager.update_gully_data(context, gully_id, gully_data)
-                    ctx_manager.set_active_gully_id(context, gully_id)
-                    logger.info(f"Recovered gully_id {gully_id} from API")
-            except Exception as e:
-                logger.error(f"Error recovering gully_id via API: {e}")
+        if not auction_data.get("auction_active"):
+            logger.error(f"Auction not active for gully {gully_id}")
+            return
 
-    logger.info(f"Processing bid with gully_id: {gully_id}")
-
-    # Get current auction data
-    auction_data = get_auction_data(context, gully_id)
-    if not auction_data:
-        logger.warning(
-            f"NO AUCTION DATA found for gully {gully_id} - attempting recovery"
-        )
-        # Try to recover auction data
-        gully_data = context.bot_data.get("gullies", {}).get(gully_id, {})
-        if "auction" in gully_data:
-            auction_data = gully_data["auction"]
-            logger.info(f"Recovered auction data from gully_data")
-        else:
-            # Create new auction data as last resort
-            auction_data = ensure_auction_context(context, gully_id)
-
-    # Second check after recovery attempt
-    if not auction_data or not auction_data.get("auction_active", False):
-        logger.warning(f"User {user_id} tried to bid but no active auction found")
-        return BIDDING_STATE
-
-    logger.info(
-        f"Active auction found for gully {gully_id}, processing {message_text} command"
-    )
-
-    # Get participants
-    participants = auction_data.get("all_participants", [])
-    participant_user_map = ctx_manager.ensure_bot_gully_data(context, gully_id).get(
-        "participant_user_map", {}
-    )
-
-    # Handle "skip" message
-    if message_text == "skip":
-        skipped_users = auction_data.get("skipped_users", [])
-
-        # Check if already skipped
-        if user_id in skipped_users:
-            logger.info(f"User {user_id} already skipped this player")
-            return BIDDING_STATE
-
-        # Add to skipped users
-        skipped_users.append(user_id)
-        auction_data["skipped_users"] = skipped_users
-        set_auction_data(context, gully_id, auction_data)
-
-        # NO private message for skip
-
-        # Check if all participants have skipped
-        if len(skipped_users) >= len(participants):
-            logger.info("All participants have skipped this player")
-            clear_auction_timer(context)
-            await finalize_auction_with_skip(context, chat_id, gully_id)
-
-        return BIDDING_STATE
-
-    # Handle "bid" message
-    if message_text == "bid":
-        # Check if already skipped
+        # Check if user has already skipped
         if user_id in auction_data.get("skipped_users", []):
-            # No message for rejected bid
-            logger.info(f"User {user_id} tried to bid after skipping - rejected")
-            return BIDDING_STATE
+            logger.info(f"User {user_id} already skipped - rejecting bid")
+            return
 
-        # Find participant for this user
+        # Find participant info
+        participants = auction_data.get("all_participants", [])
+        participant_user_map = ctx_manager.ensure_bot_gully_data(context, gully_id).get(
+            "participant_user_map", {}
+        )
+
         participant = get_participant_for_user(
             participants, user_id, participant_user_map
         )
-
-        # If not found, use minimal info
         if not participant:
-            logger.warning(
-                f"No participant found for user {user_id}, using minimal info"
-            )
+            logger.warning(f"No participant found for user {user_id}, using default")
             participant = {"team_name": "Unknown Team", "participant_id": None}
 
-        # Increment global bid counter
-        global_bid_count = auction_data.get("bid_count", 0) + 1
-        auction_data["bid_count"] = global_bid_count
+        # CRITICAL: Update bid count - THIS IS THE PART THAT'S FAILING
+        current_bid_count = auction_data.get("bid_count", 0)
+        new_bid_count = current_bid_count + 1
 
-        # Track the bid details
+        logger.info(f"Updating bid count from {current_bid_count} to {new_bid_count}")
+
+        # Calculate amount
+        base_price = float(auction_data.get("base_price", 0))
+        if new_bid_count == 1:
+            current_amount = base_price
+        else:
+            current_amount = base_price + ((new_bid_count - 1) * BID_INCREMENT)
+        current_amount = round(current_amount, 2)
+
+        # Create bid info
         bid_info = {
             "user_id": user_id,
             "participant_id": participant.get("participant_id"),
             "team_name": participant.get("team_name", "Unknown Team"),
             "timestamp": datetime.now().isoformat(),
-            "bid_number": global_bid_count,  # Add the global bid number to this bid
+            "bid_number": new_bid_count,
+            "amount": current_amount,
         }
 
-        # Add to bids list
+        # Update auction data - CRITICAL PART
+        auction_data["bid_count"] = new_bid_count
         auction_data["bids"].append(bid_info)
-
-        # Update last bidder - this person will get the player if timer expires now
         auction_data["last_bidder"] = bid_info
 
-        # Calculate current bid amount
-        base_price = float(auction_data.get("base_price", 0))
-        if global_bid_count == 1:
-            # First bid is same as base price
-            current_amount = base_price
-        else:
-            # After first bid, add one increment per additional bid
-            current_amount = base_price + ((global_bid_count - 1) * BID_INCREMENT)
+        # CRITICAL: Save auction data BEFORE doing anything else
+        set_auction_data(context, gully_id, auction_data)
+        logger.info(f"✅ SAVED auction data with bid_count={new_bid_count}")
 
-        # Round to 2 decimal places instead of 1
-        current_amount = round(current_amount, 2)
-
-        # Log clear bid information with global counter
-        logger.info(
-            f"GLOBAL BID #{global_bid_count}: User {user_id} ({bid_info['team_name']}) - Amount: {current_amount} CR"
-        )
-
-        # Send message to group about the bid
+        # Get player name for message
         player_name = auction_data.get("current_player", {}).get(
             "name", "Unknown Player"
         )
-        try:
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"🏏 {bid_info['team_name']} bids {current_amount} CR for {player_name}!",
-            )
-        except Exception as e:
-            logger.error(f"Error sending bid notification to group: {e}")
 
-        # Save auction data BEFORE extending timer - CRITICAL
-        set_auction_data(context, gully_id, auction_data)
+        # Send confirmation
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"🏏 {bid_info['team_name']} bids {current_amount} CR for {player_name}!",
+        )
 
-        # Reset the timer
+        # Extend timer
         await extend_auction_timer(context, chat_id, gully_id)
 
-        return BIDDING_STATE
+        logger.info(f"PROCESS_BID - COMPLETE for user {user_id}")
 
-    # Ignore other messages
-    return BIDDING_STATE
+    except Exception as e:
+        logger.error(f"Error in process_bid: {e}")
+        logger.exception("Detailed error traceback:")
 
 
-async def extend_auction_timer(context, chat_id, gully_id):
-    """Extend or restart the auction timer after a bid."""
-    # Clear existing timer
-    clear_auction_timer(context)
+# Streamlined skip processing
+async def process_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, gully_id):
+    """Process skip with minimal state updates."""
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
 
-    # !!! CRITICAL: Verify auction is still active before creating new timer
+    # Get auction data
     auction_data = get_auction_data(context, gully_id)
     if not auction_data or not auction_data.get("auction_active"):
-        logger.error(f"Auction data MISSING after clearing timer for gully {gully_id}!")
-        # Attempt recovery by setting it active again
-        auction_data = ensure_auction_context(context, gully_id)
-        auction_data["auction_active"] = True
-        set_auction_data(context, gully_id, auction_data)
-        logger.info(f"Recovered auction data for gully {gully_id}")
+        return
 
-    # Schedule new timer
-    timer = asyncio.create_task(
-        scheduled_finalize_auction(context, chat_id, gully_id, BID_TIMEOUT_SECONDS)
-    )
-    context.chat_data[AUCTION_TIMER_KEY] = timer
-    logger.info(f"Extended auction timer for {BID_TIMEOUT_SECONDS} seconds")
+    # Check if already skipped
+    skipped_users = auction_data.get("skipped_users", [])
+    if user_id in skipped_users:
+        logger.info(f"User {user_id} already skipped this player")
+        return
+
+    # Add to skipped users list
+    skipped_users.append(user_id)
+    auction_data["skipped_users"] = skipped_users
+
+    # Update global state
+    if gully_id in ACTIVE_AUCTIONS:
+        ACTIVE_AUCTIONS[gully_id]["skipped_users"] = skipped_users
+
+    # Save state
+    set_auction_data(context, gully_id, auction_data)
+
+    # Check if all participants have skipped
+    participants = auction_data.get("all_participants", [])
+    if len(skipped_users) >= len(participants):
+        logger.info("All participants have skipped this player")
+        clear_auction_timer(context)
+        await finalize_auction_with_skip(context, chat_id, gully_id)
+
+
+def record_bid(auction_data, user_id, participant, bid_amount):
+    """Safely record a bid with validation"""
+    try:
+        bid_info = {
+            "user_id": user_id,
+            "participant_id": participant.get("participant_id"),
+            "team_name": participant.get("team_name", "Unknown Team"),
+            "timestamp": datetime.now().isoformat(),
+            "bid_number": auction_data.get("bid_count", 0) + 1,
+            "amount": bid_amount,
+        }
+
+        auction_data["bids"].append(bid_info)
+        auction_data["last_bidder"] = bid_info
+        auction_data["bid_count"] = bid_info["bid_number"]
+
+        logger.info(
+            f"Recorded bid #{bid_info['bid_number']}: {bid_info['team_name']} - {bid_amount} CR"
+        )
+        return True
+
+    except Exception as e:
+        logger.error(f"Error recording bid: {e}")
+        return False
+
+
+# 2. Update the extend_auction_timer function to use adaptive timeouts
+async def extend_auction_timer(context, chat_id, gully_id):
+    """Extend or restart the auction timer with improved error handling."""
+    try:
+        logger.info(f"Extending auction timer for gully {gully_id}")
+
+        # Clear existing timer safely
+        if AUCTION_TIMER_KEY in context.chat_data:
+            old_timer = context.chat_data[AUCTION_TIMER_KEY]
+            try:
+                old_timer.cancel()
+                logger.info("Cancelled existing timer")
+            except Exception as timer_e:
+                logger.error(f"Error cancelling timer: {timer_e}")
+            context.chat_data.pop(AUCTION_TIMER_KEY, None)
+
+        # Verify auction is still active with safe gets
+        auction_data = get_auction_data(context, gully_id)
+        if not auction_data:
+            logger.error(f"Cannot extend timer - no auction data for gully {gully_id}")
+            return
+
+        if not auction_data.get("auction_active"):
+            logger.error(
+                f"Cannot extend timer - auction not active for gully {gully_id}"
+            )
+            return
+
+        # Set timeout based on bid count with safe gets
+        bid_count = auction_data.get("bid_count", 0)
+
+        # Set adaptive timeouts
+        if bid_count == 0:
+            timeout = 15  # No bids - 15 seconds
+        elif bid_count < 10:
+            timeout = 30  # 1-9 bids - 30 seconds
+        else:
+            timeout = 40  # 10+ bids - 40 seconds
+
+        logger.info(f"Setting timer for {timeout} seconds ({bid_count} bids)")
+
+        # Create new timer
+        timer = asyncio.create_task(
+            scheduled_finalize_auction(context, chat_id, gully_id, timeout)
+        )
+        context.chat_data[AUCTION_TIMER_KEY] = timer
+
+    except Exception as e:
+        logger.error(f"Error in extend_auction_timer: {e}")
+        logger.exception("Timer extension error details:")
 
 
 async def scheduled_finalize_auction(context, chat_id, gully_id, delay):
-    """Timer callback to finalize auction after timeout with simplified logic."""
+    """Timer callback to finalize auction after timeout, updating the pinned message."""
     try:
-        # Wait for delay period
+        logger.info(f"Starting auction timer for {delay} seconds")
         await asyncio.sleep(delay)
 
-        # IMPORTANT: Get fresh auction data after timeout
+        # Check if auction is still active
         auction_data = get_auction_data(context, gully_id)
         if not auction_data or not auction_data.get("auction_active"):
-            logger.info("No active auction to finalize")
+            logger.info("Auction already finished when timer expired")
             return
 
-        # Check if any bids were placed
-        global_bid_count = auction_data.get("bid_count", 0)
-        logger.info(f"Finalizing auction with {global_bid_count} bids")
+        # Get bid info
+        bid_count = auction_data.get("bid_count", 0)
+        announcement_message_id = auction_data.get("announcement_message_id")
 
-        if global_bid_count == 0:
-            # No bids - skip player
+        # Process based on whether there are bids
+        if bid_count == 0:
+            # Update message to show skipped status
+            player_data = auction_data.get("current_player", {})
+            player_name = player_data.get("name", "Unknown Player")
+
+            try:
+                # Update the original message to show skip
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=announcement_message_id,
+                    text=f"⏭️ <b>{player_name} has been SKIPPED</b>\nNo bids were received.",
+                    parse_mode="HTML",
+                    reply_markup=None,  # Remove the buttons
+                )
+
+                # Unpin the message
+                try:
+                    await context.bot.unpin_chat_message(
+                        chat_id=chat_id, message_id=announcement_message_id
+                    )
+                    logger.info(
+                        f"Unpinned auction announcement message {announcement_message_id}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to unpin message: {e}")
+                    logger.info("Continuing without unpinning - this is not critical")
+
+            except Exception as e:
+                logger.error(f"Error updating message on skip: {e}")
+
             await finalize_auction_with_skip(context, chat_id, gully_id)
             return
 
-        # Get the global bid count
-        global_bid_count = auction_data.get("bid_count", 0)
-
-        if global_bid_count == 0:
-            # No bids - skip player
+        # There are bids - process the winner
+        last_bidder = auction_data.get("last_bidder")
+        if not last_bidder:
+            logger.error("No last bidder found but bids exist")
             await finalize_auction_with_skip(context, chat_id, gully_id)
             return
 
-        # Extract necessary data from auction state - CRITICAL FIX
-        base_price = round(float(auction_data.get("base_price", 0)), 2)
+        # Calculate final amount
+        base_price = float(auction_data.get("base_price", 0))
+        if bid_count == 1:
+            total_amount = base_price
+        else:
+            total_amount = base_price + ((bid_count - 1) * BID_INCREMENT)
+        total_amount = round(total_amount, 2)
+
+        # Get details
+        team_name = last_bidder.get("team_name", "Unknown Team")
+        participant_id = last_bidder.get("participant_id")
         player_data = auction_data.get("current_player", {})
         player_name = player_data.get("name", "Unknown Player")
 
-        # Log all bids for debugging
-        logger.info(f"AUCTION ENDED with {global_bid_count} total global bids")
-        all_bids = auction_data.get("bids", [])
-        for i, bid in enumerate(all_bids):
-            logger.info(
-                f"BID #{bid.get('bid_number')}: {bid.get('team_name')} at {bid.get('timestamp')}"
-            )
-
-        # Get last bidder - person who placed the last bid
-        last_bidder = auction_data.get("last_bidder")
-        if not last_bidder:
-            logger.error(
-                "No last bidder found but bids exist - this should never happen"
-            )
-            await finalize_auction_with_skip(context, chat_id, gully_id)
-            return
-
-        # Calculate final amount with FIRST BID SPECIAL RULE
-        # First bid is same as base price, then each additional bid adds BID_INCREMENT
-        if global_bid_count == 1:
-            # First bid is same as base price
-            total_amount = round(base_price, 2)
-        else:
-            # After first bid, add one increment per additional bid
-            total_amount = round(
-                base_price + ((global_bid_count - 1) * BID_INCREMENT), 2
-            )
-
-        # Round to 2 decimal places instead of 1
-        total_amount = round(total_amount, 2)
-
-        # Log calculation details
-        if global_bid_count == 1:
-            logger.info(
-                f"PRICE CALCULATION: {base_price} (base price) = {total_amount} CR"
-            )
-        else:
-            logger.info(
-                f"PRICE CALCULATION: {base_price} (base) + "
-                f"{(global_bid_count - 1) * BID_INCREMENT} (additional bids) = {total_amount} CR"
-            )
-
-        # Get bidder details
-        team_name = last_bidder.get("team_name", "Unknown Team")
-        participant_id = last_bidder.get("participant_id")
-        user_id = last_bidder.get("user_id")
-
-        # Log all winner details for debugging
-        logger.info(
-            f"WINNER DETAILS: User {user_id}, Team {team_name}, Participant ID {participant_id}"
-        )
-        logger.info(
-            f"BID DETAILS: Total global bids {global_bid_count}, Final Amount {total_amount} CR"
-        )
-
-        # Announce winner in group chat
+        # Update the announcement message with winner info
         try:
-            await context.bot.send_message(
+            await context.bot.edit_message_text(
                 chat_id=chat_id,
-                text=f"🎉 {team_name} wins {player_name} for {total_amount} CR",
-                reply_markup=ReplyKeyboardRemove(),
+                message_id=announcement_message_id,
+                text=f"🎉 <b>{player_name} SOLD!</b>\n"
+                f"Winner: {team_name}\n"
+                f"Final Price: {total_amount} CR\n"
+                f"Total Bids: {bid_count}",
+                parse_mode="HTML",
+                reply_markup=None,  # Remove the buttons
             )
+
+            # Unpin the message
+            try:
+                await context.bot.unpin_chat_message(
+                    chat_id=chat_id, message_id=announcement_message_id
+                )
+                logger.info(
+                    f"Unpinned auction announcement message {announcement_message_id}"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to unpin message: {e}")
+                logger.info("Continuing without unpinning - this is not critical")
+
         except Exception as e:
-            logger.error(f"Error sending winner message: {e}")
+            logger.error(f"Error updating message with winner: {e}")
 
         # Call API to resolve with winning bid
         try:
@@ -827,11 +1030,7 @@ async def scheduled_finalize_auction(context, chat_id, gully_id, delay):
                 bid_amount=total_amount,
             )
 
-            if result.get("success"):
-                logger.info(
-                    f"Successfully resolved auction: {participant_id} wins {player_data.get('player_id')}"
-                )
-            else:
+            if not result.get("success"):
                 logger.error(f"API error: {result.get('message')}")
         except Exception as e:
             logger.error(f"Error resolving auction: {e}")
@@ -840,30 +1039,19 @@ async def scheduled_finalize_auction(context, chat_id, gully_id, delay):
         auction_data["auction_active"] = False
         set_auction_data(context, gully_id, auction_data)
 
+        # Clear global state
+        if gully_id in ACTIVE_AUCTIONS:
+            ACTIVE_AUCTIONS[gully_id]["active"] = False
+
     except asyncio.CancelledError:
         logger.info("Auction timer was cancelled")
     except Exception as e:
         logger.error(f"Error in finalize timer: {e}")
         logger.exception("Detailed error traceback:")
 
-        # Always clean up auction state even on error
-        try:
-            auction_data = get_auction_data(context, gully_id)
-            if auction_data:
-                auction_data["auction_active"] = False
-                set_auction_data(context, gully_id, auction_data)
-
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="Auction ended due to technical issues.",
-                reply_markup=ReplyKeyboardRemove(),
-            )
-        except Exception as cleanup_e:
-            logger.error(f"Error during cleanup: {cleanup_e}")
-
 
 async def finalize_auction_with_skip(context, chat_id, gully_id):
-    """Skip the current player and finalize the auction."""
+    """Skip the current player and update the original message."""
     # Get auction data
     auction_data = get_auction_data(context, gully_id)
     if not auction_data:
@@ -872,6 +1060,7 @@ async def finalize_auction_with_skip(context, chat_id, gully_id):
     player_data = auction_data.get("current_player", {})
     player_name = player_data.get("name", "Unknown Player")
     auction_queue_id = auction_data.get("auction_queue_id")
+    announcement_message_id = auction_data.get("announcement_message_id")
 
     # Call API to skip player
     try:
@@ -880,20 +1069,43 @@ async def finalize_auction_with_skip(context, chat_id, gully_id):
             gully_id=gully_id, auction_queue_id=auction_queue_id
         )
 
-        if skip_result.get("success"):
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"⏭️ {player_name} has been skipped",
-                reply_markup=ReplyKeyboardRemove(),
-            )
-        else:
+        if not skip_result.get("success"):
             logger.error(f"Error skipping player: {skip_result.get('message')}")
     except Exception as e:
         logger.error(f"Error in skip API call: {e}")
 
+    # Update the original message
+    try:
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=announcement_message_id,
+            text=f"⏭️ <b>{player_name} has been SKIPPED</b>\nNo bids were received.",
+            parse_mode="HTML",
+            reply_markup=None,  # Remove the buttons
+        )
+
+        # Unpin the message
+        try:
+            await context.bot.unpin_chat_message(
+                chat_id=chat_id, message_id=announcement_message_id
+            )
+            logger.info(
+                f"Unpinned auction announcement message {announcement_message_id}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to unpin message: {e}")
+            logger.info("Continuing without unpinning - this is not critical")
+
+    except Exception as e:
+        logger.error(f"Error updating message on skip: {e}")
+
     # Clear auction state
     auction_data["auction_active"] = False
     set_auction_data(context, gully_id, auction_data)
+
+    # Clear global state
+    if gully_id in ACTIVE_AUCTIONS:
+        ACTIVE_AUCTIONS[gully_id]["active"] = False
 
 
 async def manual_finalize_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -951,40 +1163,397 @@ async def send_message_with_retry(
 
 def get_handlers():
     """Get all handlers for auction queue features."""
-    logger.info("Registering simplified auction queue handlers")
+    logger.info("Registering auction handlers with inline keyboard support")
 
     # Command handlers
     next_player_handler = CommandHandler("next_player", next_player_command)
     finalize_handler = CommandHandler("finalize", manual_finalize_command)
 
-    # Conversation handler for bidding state
-    auction_conv_handler = ConversationHandler(
-        entry_points=[next_player_handler],
-        states={
-            BIDDING_STATE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_bid_message),
-                finalize_handler,
-            ]
-        },
-        fallbacks=[
-            CommandHandler("cancel", lambda u, c: ConversationHandler.END),
-            next_player_handler,
-        ],
-        name="auction_conversation",
-        persistent=False,
-        allow_reentry=True,  # Allow multiple entries
-        per_chat=True,  # Track conversation per chat
-        per_user=False,  # Don't track per user - critical to allow multiple users
-        per_message=False,  # Don't track per message
+    # NEW: Add callback handler for inline buttons
+    auction_button_handler = CallbackQueryHandler(
+        handle_auction_button, pattern=r"^(bid|skip)_\d+$"
     )
 
-    # CRITICAL: Add a backup global handler for bids
-    # This handler will catch ALL bid messages regardless of conversation state
-    global_bid_handler = MessageHandler(
-        filters.Regex(r"^[Bb]id$") & filters.ChatType.GROUPS, handle_bid_message
+    # Keeping the message handler for backward compatibility
+    bid_message_handler = MessageHandler(
+        filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS,
+        handle_auction_message,
     )
 
     return [
-        global_bid_handler,
-        auction_conv_handler,
-    ]  # Order matters! Put global handler first
+        auction_button_handler,  # Process inline button presses FIRST
+        next_player_handler,
+        finalize_handler,
+        bid_message_handler,  # Keep for backward compatibility
+    ]
+
+
+async def handle_auction_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle button presses from the inline keyboard."""
+    query = update.callback_query
+    await query.answer()  # Acknowledge the button press to Telegram
+
+    # Extract data
+    callback_data = query.data
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+
+    logger.info(f"INLINE BUTTON PRESS: {callback_data} from user {user_id}")
+
+    # Parse callback data
+    try:
+        action, gully_id_str = callback_data.split("_")
+        # CRITICAL FIX: Convert gully_id to integer
+        gully_id = int(gully_id_str)
+
+        logger.info(f"Parsed callback data: action={action}, gully_id={gully_id}")
+
+        # Validate gully_id
+        if not gully_id:
+            logger.error(f"Invalid gully_id in callback data: {callback_data}")
+            return
+
+        # CRITICAL FIX: Ensure gully_id is in chat_data for future reference
+        context.chat_data["active_gully_id"] = gully_id
+
+        # Check auction state
+        auction_data = get_auction_data(context, gully_id)
+        if not auction_data:
+            logger.error(f"No auction data found for gully {gully_id}")
+            await query.edit_message_reply_markup(reply_markup=None)  # Remove buttons
+            return
+
+        if not auction_data.get("auction_active"):
+            logger.error(f"Auction not active for gully {gully_id}")
+            await query.edit_message_reply_markup(reply_markup=None)  # Remove buttons
+            return
+
+        if action == "bid":
+            logger.info(f"BID button pressed by user {user_id}")
+            await process_bid_from_callback(update, context, gully_id)
+        elif action == "skip":
+            logger.info(f"SKIP button pressed by user {user_id}")
+            await process_skip_from_callback(update, context, gully_id)
+    except Exception as e:
+        logger.error(f"Error processing callback: {e}")
+        logger.exception("Detailed error traceback:")
+
+
+async def process_bid_from_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, gully_id
+):
+    """Process bid with detailed team and bid information."""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+
+    try:
+        logger.info(f"PROCESS_BID_CALLBACK - START for user {user_id}")
+
+        # Convert gully_id to integer if needed
+        if isinstance(gully_id, str):
+            gully_id = int(gully_id)
+
+        # Get auction data
+        auction_data = get_auction_data(context, gully_id)
+        if not auction_data:
+            logger.error(f"No auction data found for gully {gully_id}")
+            return
+
+        if not auction_data.get("auction_active"):
+            logger.error(f"Auction not active for gully {gully_id}")
+            return
+
+        # Check if user has already skipped
+        if user_id in auction_data.get("skipped_users", []):
+            logger.info(f"User {user_id} already skipped - rejecting bid")
+            await query.answer("You've already skipped this player")
+            return
+
+        # Find participant info
+        participants = auction_data.get("all_participants", [])
+        participant_user_map = ctx_manager.ensure_bot_gully_data(context, gully_id).get(
+            "participant_user_map", {}
+        )
+
+        participant = get_participant_for_user(
+            participants, user_id, participant_user_map
+        )
+        if not participant:
+            logger.warning(f"No participant found for user {user_id}, using default")
+            participant = {"team_name": "Unknown Team", "participant_id": None}
+
+        team_name = participant.get("team_name", "Unknown Team")
+
+        # Update bid count
+        current_bid_count = auction_data.get("bid_count", 0)
+        new_bid_count = current_bid_count + 1
+
+        logger.info(f"Updating bid count from {current_bid_count} to {new_bid_count}")
+
+        # Calculate amount
+        base_price = float(auction_data.get("base_price", 0))
+        if new_bid_count == 1:
+            current_amount = base_price
+        else:
+            current_amount = base_price + ((new_bid_count - 1) * BID_INCREMENT)
+        current_amount = round(current_amount, 2)
+
+        # Create bid info
+        bid_info = {
+            "user_id": user_id,
+            "participant_id": participant.get("participant_id"),
+            "team_name": team_name,
+            "timestamp": datetime.now().isoformat(),
+            "bid_number": new_bid_count,
+            "amount": current_amount,
+        }
+
+        # Update auction data
+        auction_data["bid_count"] = new_bid_count
+        auction_data["bids"].append(bid_info)
+        auction_data["last_bidder"] = bid_info
+        auction_data["last_bid_amount"] = current_amount
+        auction_data["last_bidder_name"] = team_name
+
+        # Save auction data
+        set_auction_data(context, gully_id, auction_data)
+        logger.info(f"✅ SAVED auction data with bid_count={new_bid_count}")
+
+        # Get player info
+        player_name = auction_data.get("current_player", {}).get(
+            "name", "Unknown Player"
+        )
+        player_team = auction_data.get("current_player", {}).get("team", "Unknown Team")
+        player_type = auction_data.get("current_player", {}).get(
+            "player_type", "Unknown Type"
+        )
+        sold_price = auction_data.get("current_player", {}).get("sold_price", 0)
+        announcement_message_id = auction_data.get("announcement_message_id")
+
+        # Prepare updated message with team budgets, skipped teams and bid history
+        message_text = (
+            f"🏏 <b>{player_name}</b> ({player_team})\n"
+            f"Type: {player_type}\n"
+            f"Base: {base_price} CR\n"
+            f"Sold Price 2025: {sold_price} CR\n\n"
+        )
+
+        # Add current bid info
+        message_text += (
+            f"<b>CURRENT BID:</b> {current_amount} CR by {team_name}\n"
+            f"Total Bids: {new_bid_count}\n\n"
+        )
+
+        # Add team budget information
+        message_text += "<b>TEAM BUDGETS:</b>\n"
+        participants_sorted = sorted(
+            participants, key=lambda p: p.get("team_name", "Unknown")
+        )
+
+        for p in participants_sorted:
+            p_team_name = p.get("team_name", "Unknown Team")
+            budget = p.get("budget", 0)
+            # Highlight the current bidder
+            if p_team_name == team_name:
+                message_text += f"• <b>{p_team_name}:</b> {budget} CR ⭐\n"
+            else:
+                message_text += f"• {p_team_name}: {budget} CR\n"
+
+        # Add skipped teams
+        skipped_users = auction_data.get("skipped_users", [])
+        if skipped_users:
+            message_text += "\n<b>SKIPPED TEAMS:</b>\n"
+            for skip_user_id in skipped_users:
+                skip_participant = get_participant_for_user(
+                    participants, skip_user_id, participant_user_map
+                )
+                if skip_participant:
+                    skip_team_name = skip_participant.get("team_name", "Unknown Team")
+                    message_text += f"• {skip_team_name}\n"
+
+        # Create updated inline keyboard
+        inline_keyboard = [
+            [
+                InlineKeyboardButton("🏏 BID 🏏", callback_data=f"bid_{gully_id}"),
+                InlineKeyboardButton("⏭️ SKIP ⏭️", callback_data=f"skip_{gully_id}"),
+            ]
+        ]
+
+        # Update the original message
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=announcement_message_id,
+            text=message_text,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard),
+        )
+
+        # Extend timer
+        await extend_auction_timer(context, chat_id, gully_id)
+
+        # Provide feedback
+        await query.answer(f"Your bid of {current_amount} CR has been placed!")
+
+        logger.info(f"PROCESS_BID_CALLBACK - COMPLETE for user {user_id}")
+
+    except Exception as e:
+        logger.error(f"Error in process_bid_from_callback: {e}")
+        logger.exception("Detailed error traceback:")
+
+        # Provide error feedback
+        await query.answer("Error processing bid. Please try again.")
+
+
+async def process_skip_from_callback(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, gully_id
+):
+    """Process skip with updated team information."""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+
+    try:
+        logger.info(f"PROCESS_SKIP_CALLBACK - START for user {user_id}")
+
+        # Get auction data
+        if isinstance(gully_id, str):
+            gully_id = int(gully_id)
+
+        auction_data = get_auction_data(context, gully_id)
+        if not auction_data or not auction_data.get("auction_active"):
+            logger.error(f"No active auction found for gully {gully_id}")
+            await query.answer("No active auction found")
+            return
+
+        # Check if already skipped
+        skipped_users = auction_data.get("skipped_users", [])
+        if user_id in skipped_users:
+            logger.info(f"User {user_id} already skipped this player")
+            await query.answer("You've already skipped this player")
+            return
+
+        # Find participant info
+        participants = auction_data.get("all_participants", [])
+        participant_user_map = ctx_manager.ensure_bot_gully_data(context, gully_id).get(
+            "participant_user_map", {}
+        )
+
+        participant = get_participant_for_user(
+            participants, user_id, participant_user_map
+        )
+        team_name = (
+            participant.get("team_name", "Unknown Team")
+            if participant
+            else "Unknown Team"
+        )
+
+        # Add to skipped users
+        skipped_users.append(user_id)
+        auction_data["skipped_users"] = skipped_users
+
+        # Save state
+        set_auction_data(context, gully_id, auction_data)
+        logger.info(
+            f"User {user_id} ({team_name}) skipped - total skips: {len(skipped_users)}"
+        )
+
+        # Get player info for updated message
+        player_data = auction_data.get("current_player", {})
+        player_name = player_data.get("name", "Unknown Player")
+        player_team = player_data.get("team", "Unknown Team")
+        player_type = player_data.get("player_type", "Unknown Type")
+        base_price = auction_data.get("base_price", 0)
+        sold_price = player_data.get("sold_price", 0)
+        announcement_message_id = auction_data.get("announcement_message_id")
+
+        # Current bid info
+        last_bid_amount = auction_data.get("last_bid_amount", base_price)
+        last_bidder_name = auction_data.get("last_bidder_name", "None")
+        bid_count = auction_data.get("bid_count", 0)
+
+        # Prepare updated message with team budgets, skipped teams and bid history
+        message_text = (
+            f"🏏 <b>{player_name}</b> ({player_team})\n"
+            f"Type: {player_type}\n"
+            f"Base: {base_price} CR\n"
+            f"Sold Price 2025: {sold_price} CR\n\n"
+        )
+
+        # Add current bid info if there are bids
+        if bid_count > 0:
+            message_text += (
+                f"<b>CURRENT BID:</b> {last_bid_amount} CR by {last_bidder_name}\n"
+                f"Total Bids: {bid_count}\n\n"
+            )
+        else:
+            message_text += "<b>NO BIDS YET</b>\n\n"
+
+        # Add team budget information
+        message_text += "<b>TEAM BUDGETS:</b>\n"
+        participants_sorted = sorted(
+            participants, key=lambda p: p.get("team_name", "Unknown")
+        )
+
+        for p in participants_sorted:
+            p_team_name = p.get("team_name", "Unknown Team")
+            budget = p.get("budget", 0)
+            # Bold the current high bidder if there is one
+            if bid_count > 0 and p_team_name == last_bidder_name:
+                message_text += f"• <b>{p_team_name}:</b> {budget} CR ⭐\n"
+            else:
+                message_text += f"• {p_team_name}: {budget} CR\n"
+
+        # Add updated skipped teams
+        message_text += "\n<b>SKIPPED TEAMS:</b>\n"
+        for skip_user_id in skipped_users:
+            skip_participant = get_participant_for_user(
+                participants, skip_user_id, participant_user_map
+            )
+            if skip_participant:
+                skip_team_name = skip_participant.get("team_name", "Unknown Team")
+                message_text += f"• {skip_team_name}\n"
+
+        # Update inline keyboard
+        inline_keyboard = [
+            [
+                InlineKeyboardButton("🏏 BID 🏏", callback_data=f"bid_{gully_id}"),
+                InlineKeyboardButton("⏭️ SKIP ⏭️", callback_data=f"skip_{gully_id}"),
+            ]
+        ]
+
+        # Update original message
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=announcement_message_id,
+            text=message_text,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard),
+        )
+
+        # Provide feedback
+        await query.answer(f"You ({team_name}) have skipped this player")
+
+        # Check if all participants have skipped
+        if len(skipped_users) >= len(participants):
+            logger.info("All participants have skipped this player")
+            clear_auction_timer(context)
+            await finalize_auction_with_skip(context, chat_id, gully_id)
+
+        logger.info(f"PROCESS_SKIP_CALLBACK - COMPLETE for user {user_id}")
+
+    except Exception as e:
+        logger.error(f"Error in process_skip_from_callback: {e}")
+        logger.exception("Detailed error traceback:")
+        await query.answer("Error processing skip. Please try again.")
+
+        # Provide feedback
+        await query.answer(f"You ({team_name}) have skipped this player")
+
+        # Check if all participants have skipped
+        if len(skipped_users) >= len(participants):
+            logger.info("All participants have skipped this player")
+            clear_auction_timer(context)
+            await finalize_auction_with_skip(context, chat_id, gully_id)
+
+        logger.info(f"PROCESS_SKIP_CALLBACK - COMPLETE for user {user_id}")

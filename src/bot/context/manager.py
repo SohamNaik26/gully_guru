@@ -122,9 +122,21 @@ def set_active_gully_id(context, gully_id):
     logger.info(f"Setting active_gully_id: {gully_id}")
 
 
-def get_active_gully_id(context):
-    """Get active gully ID for this user."""
-    return context.user_data.get("active_gully_id")
+def get_active_gully_id(context, chat_id=None):
+    """
+    Get active gully ID for a chat.
+    If chat_id is provided, look for that specific chat.
+    Otherwise, try to get from message chat_id.
+    """
+    if chat_id:
+        # If chat_id is provided, use that to find the gully
+        all_gullies = context.bot_data.get("gullies", {})
+        for g_id, gully_data in all_gullies.items():
+            if gully_data.get("telegram_group_id") == chat_id:
+                return g_id
+    
+    # Otherwise use the active_gully_id from chat_data if available
+    return context.chat_data.get("active_gully_id")
 
 
 # Participant management

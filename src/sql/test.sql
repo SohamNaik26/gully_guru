@@ -7,7 +7,7 @@ SELECT * FROM gullies;
 
 
 SELECT * FROM gully_participants
-WHERE gully_id = 8;
+WHERE gully_id = 7;
 
 
 
