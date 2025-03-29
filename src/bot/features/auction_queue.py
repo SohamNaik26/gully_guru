@@ -43,52 +43,14 @@ MODULE_ID = "que"
 # Conversation states
 BIDDING_STATE = 1
 
-# Constants
-BID_TIMEOUT_SECONDS = 15  # Auction timer (15 seconds)
+
 AUCTION_TIMER_KEY = "auction_timer"  # Timer for auction finalization
 BID_INCREMENT = 0.5  # Fixed increment of 0.5 CR
-
-# Global state tracker for quick access
-ACTIVE_AUCTIONS = {}  # gully_id -> {current_amount, last_bidder, etc}
 
 # 1. Add constants for different timeout values
 NO_BID_TIMEOUT = 15  # Default timeout (15 seconds)
 LOW_BID_TIMEOUT = 30  # Timeout for auctions with 1-9 bids
 HIGH_BID_TIMEOUT = 40  # Timeout for auctions with 10+ bids
-
-
-# Function to quickly access current auction amount
-def get_current_bid_amount(gully_id):
-    """Get current bid amount without accessing full auction data."""
-    if gully_id in ACTIVE_AUCTIONS:
-        return ACTIVE_AUCTIONS[gully_id].get("current_amount", 0)
-
-    # Fall back to full auction data if needed
-    auction_data = get_auction_data(None, gully_id)
-    if not auction_data:
-        return 0
-
-    bid_count = auction_data.get("bid_count", 0)
-    base_price = auction_data.get("base_price", 0)
-
-    if bid_count == 0:
-        return base_price
-    else:
-        return round(base_price + ((bid_count - 1) * BID_INCREMENT), 2)
-
-
-# Function to quickly get last bidder
-def get_last_bidder(gully_id):
-    """Get last bidder info without accessing full auction data."""
-    if gully_id in ACTIVE_AUCTIONS:
-        return ACTIVE_AUCTIONS[gully_id].get("last_bidder")
-
-    # Fall back to full auction data
-    auction_data = get_auction_data(None, gully_id)
-    if not auction_data:
-        return None
-
-    return auction_data.get("last_bidder")
 
 
 # ===== API AND CONTEXT MANAGEMENT FUNCTIONS =====
@@ -424,7 +386,7 @@ async def next_player_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> int:
     """
-    Get the next player for auction with detailed team information.
+    Get the next player for auction with detailed team information including squad size.
     """
     logger.info(
         f"Queue: /next_player command called by user {update.effective_user.id}"
@@ -548,16 +510,6 @@ async def next_player_command(
         # Save the auction data to context FIRST
         set_auction_data(context, gully_id, auction_data)
 
-        # IMPORTANT: Initialize global state tracker
-        ACTIVE_AUCTIONS[gully_id] = {
-            "active": True,
-            "current_amount": base_price,
-            "player_name": player_data.get("name", "Unknown Player"),
-            "bid_count": 0,
-            "last_bidder": None,
-            "skipped_users": [],
-        }
-
         # Format the player info
         player_name = player_data.get("name", "Unknown Player")
         player_team = player_data.get("team", "Unknown Team")
@@ -572,7 +524,7 @@ async def next_player_command(
             f"Sold Price 2025: {sold_price} CR\n\n"
         )
 
-        # Add team budget information section
+        # Add team budget information section WITH PLAYER COUNT
         message_text += "<b>TEAM BUDGETS:</b>\n"
         participants_sorted = sorted(
             participants, key=lambda p: p.get("team_name", "Unknown")
@@ -581,7 +533,8 @@ async def next_player_command(
         for p in participants_sorted:
             team_name = p.get("team_name", "Unknown Team")
             budget = p.get("budget", 0)
-            message_text += f"• {team_name}: {budget} CR\n"
+            players_owned = p.get("players_owned", 0)  # Get players owned
+            message_text += f"• {team_name}: {budget} CR (Squad: {players_owned}/18)\n"
 
         message_text += "\n<b>BIDDING OPEN</b> - Base price: {base_price} CR"
 
@@ -828,10 +781,6 @@ async def process_skip(update: Update, context: ContextTypes.DEFAULT_TYPE, gully
     skipped_users.append(user_id)
     auction_data["skipped_users"] = skipped_users
 
-    # Update global state
-    if gully_id in ACTIVE_AUCTIONS:
-        ACTIVE_AUCTIONS[gully_id]["skipped_users"] = skipped_users
-
     # Save state
     set_auction_data(context, gully_id, auction_data)
 
@@ -922,7 +871,7 @@ async def extend_auction_timer(context, chat_id, gully_id):
 
 
 async def scheduled_finalize_auction(context, chat_id, gully_id, delay):
-    """Timer callback to finalize auction after timeout, updating the pinned message."""
+    """Timer callback to finalize auction after timeout."""
     try:
         logger.info(f"Starting auction timer for {delay} seconds")
         await asyncio.sleep(delay)
@@ -1039,10 +988,6 @@ async def scheduled_finalize_auction(context, chat_id, gully_id, delay):
         auction_data["auction_active"] = False
         set_auction_data(context, gully_id, auction_data)
 
-        # Clear global state
-        if gully_id in ACTIVE_AUCTIONS:
-            ACTIVE_AUCTIONS[gully_id]["active"] = False
-
     except asyncio.CancelledError:
         logger.info("Auction timer was cancelled")
     except Exception as e:
@@ -1103,10 +1048,6 @@ async def finalize_auction_with_skip(context, chat_id, gully_id):
     auction_data["auction_active"] = False
     set_auction_data(context, gully_id, auction_data)
 
-    # Clear global state
-    if gully_id in ACTIVE_AUCTIONS:
-        ACTIVE_AUCTIONS[gully_id]["active"] = False
-
 
 async def manual_finalize_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Manually finalize the current auction."""
@@ -1162,29 +1103,26 @@ async def send_message_with_retry(
 
 
 def get_handlers():
-    """Get all handlers for auction queue features."""
-    logger.info("Registering auction handlers with inline keyboard support")
+    """Get all handlers for auction queue features with inline keyboard."""
+    logger.info("Registering auction handlers with inline keyboard")
 
     # Command handlers
     next_player_handler = CommandHandler("next_player", next_player_command)
     finalize_handler = CommandHandler("finalize", manual_finalize_command)
 
-    # NEW: Add callback handler for inline buttons
+    # Callback handler for inline keyboard buttons
     auction_button_handler = CallbackQueryHandler(
         handle_auction_button, pattern=r"^(bid|skip)_\d+$"
     )
 
-    # Keeping the message handler for backward compatibility
-    bid_message_handler = MessageHandler(
-        filters.TEXT & ~filters.COMMAND & filters.ChatType.GROUPS,
-        handle_auction_message,
-    )
+    # REMOVED: No longer needed as we use inline keyboard callbacks
+    # bid_message_handler = MessageHandler(...)
+    # debug_handler = MessageHandler(...)
 
     return [
-        auction_button_handler,  # Process inline button presses FIRST
-        next_player_handler,
-        finalize_handler,
-        bid_message_handler,  # Keep for backward compatibility
+        auction_button_handler,  # Process inline button presses
+        next_player_handler,  # Handle /next_player command
+        finalize_handler,  # Handle /finalize command
     ]
 
 
@@ -1196,7 +1134,6 @@ async def handle_auction_button(update: Update, context: ContextTypes.DEFAULT_TY
     # Extract data
     callback_data = query.data
     user_id = update.effective_user.id
-    chat_id = update.effective_chat.id
 
     logger.info(f"INLINE BUTTON PRESS: {callback_data} from user {user_id}")
 
@@ -1242,7 +1179,7 @@ async def handle_auction_button(update: Update, context: ContextTypes.DEFAULT_TY
 async def process_bid_from_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE, gully_id
 ):
-    """Process bid with detailed team and bid information."""
+    """Process bid with detailed team and bid information including squad size."""
     query = update.callback_query
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
@@ -1345,7 +1282,7 @@ async def process_bid_from_callback(
             f"Total Bids: {new_bid_count}\n\n"
         )
 
-        # Add team budget information
+        # Add team budget information WITH PLAYER COUNT
         message_text += "<b>TEAM BUDGETS:</b>\n"
         participants_sorted = sorted(
             participants, key=lambda p: p.get("team_name", "Unknown")
@@ -1354,11 +1291,15 @@ async def process_bid_from_callback(
         for p in participants_sorted:
             p_team_name = p.get("team_name", "Unknown Team")
             budget = p.get("budget", 0)
+            players_owned = p.get("players_owned", 0)  # Get players owned
+
             # Highlight the current bidder
             if p_team_name == team_name:
-                message_text += f"• <b>{p_team_name}:</b> {budget} CR ⭐\n"
+                message_text += f"• <b>{p_team_name}:</b> {budget} CR (Squad: {players_owned}/18) ⭐\n"
             else:
-                message_text += f"• {p_team_name}: {budget} CR\n"
+                message_text += (
+                    f"• {p_team_name}: {budget} CR (Squad: {players_owned}/18)\n"
+                )
 
         # Add skipped teams
         skipped_users = auction_data.get("skipped_users", [])
@@ -1408,7 +1349,7 @@ async def process_bid_from_callback(
 async def process_skip_from_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE, gully_id
 ):
-    """Process skip with updated team information."""
+    """Process skip with updated team information including squad size."""
     query = update.callback_query
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
@@ -1489,7 +1430,7 @@ async def process_skip_from_callback(
         else:
             message_text += "<b>NO BIDS YET</b>\n\n"
 
-        # Add team budget information
+        # Add team budget information WITH PLAYER COUNT
         message_text += "<b>TEAM BUDGETS:</b>\n"
         participants_sorted = sorted(
             participants, key=lambda p: p.get("team_name", "Unknown")
@@ -1498,11 +1439,15 @@ async def process_skip_from_callback(
         for p in participants_sorted:
             p_team_name = p.get("team_name", "Unknown Team")
             budget = p.get("budget", 0)
+            players_owned = p.get("players_owned", 0)  # Get players owned
+
             # Bold the current high bidder if there is one
             if bid_count > 0 and p_team_name == last_bidder_name:
-                message_text += f"• <b>{p_team_name}:</b> {budget} CR ⭐\n"
+                message_text += f"• <b>{p_team_name}:</b> {budget} CR (Squad: {players_owned}/18) ⭐\n"
             else:
-                message_text += f"• {p_team_name}: {budget} CR\n"
+                message_text += (
+                    f"• {p_team_name}: {budget} CR (Squad: {players_owned}/18)\n"
+                )
 
         # Add updated skipped teams
         message_text += "\n<b>SKIPPED TEAMS:</b>\n"

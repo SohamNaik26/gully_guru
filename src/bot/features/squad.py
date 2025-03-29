@@ -202,6 +202,26 @@ async def get_player_inline_keyboard(
     return InlineKeyboardMarkup(keyboard)
 
 
+def get_active_gully_id(context):
+    """Get active gully ID with improved fallback approach."""
+    # Try chat_data first
+    gully_id = context.chat_data.get("active_gully_id")
+    if gully_id:
+        logger.info(f"Found gully_id {gully_id} in chat_data")
+        return gully_id
+
+    # If not found in chat_data, try context manager
+    gully_id = ctx_manager.get_active_gully_id(context)
+    if gully_id:
+        logger.info(f"Found gully_id {gully_id} from context manager")
+        # Backfill to chat_data for future use
+        context.chat_data["active_gully_id"] = gully_id
+        return gully_id
+
+    logger.error("No active gully_id found")
+    return None
+
+
 async def squad_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> Optional[int]:
@@ -236,7 +256,7 @@ async def squad_command(
         user_id = db_user["id"]
 
         # Get user's active gully from context
-        active_gully_id = ctx_manager.get_active_gully_id(context)
+        active_gully_id = get_active_gully_id(context)
 
         # If no active gully set, get available gullies and prompt to select one
         if not active_gully_id:
@@ -330,15 +350,62 @@ async def show_player_selection(
     """Show the player selection interface with pagination using inline keyboard."""
     logger.info("show_player_selection called")
 
-    # IMPORTANT: Get active gully ID FIRST before using it
-    active_gully_id = ctx_manager.get_active_gully_id(context)
+    # IMPORTANT: Get active gully ID with fallback mechanism
+    active_gully_id = get_active_gully_id(context)
+
+    # RECOVERY MECHANISM: If no active gully ID, try to recover it
+    if not active_gully_id:
+        logger.error("No active gully ID found, attempting recovery")
+
+        # Try to recover from squad selection flow
+        if update.callback_query and update.callback_query.data:
+            try:
+                # Try to extract gully ID from the callback data
+                callback_data = json.loads(update.callback_query.data)
+                if callback_data.get("a") == "select_gully" and "id" in callback_data:
+                    recovered_gully_id = callback_data.get("id")
+                    logger.info(
+                        f"Recovered gully ID {recovered_gully_id} from callback data"
+                    )
+
+                    # Save it in both places
+                    ctx_manager.set_active_gully_id(context, recovered_gully_id)
+                    context.chat_data["active_gully_id"] = recovered_gully_id
+
+                    # Use the recovered ID
+                    active_gully_id = recovered_gully_id
+            except Exception as e:
+                logger.error(f"Recovery attempt failed: {e}")
+
+        # If still no active gully, check if user only has one gully
+        if not active_gully_id and update.effective_user:
+            try:
+                logger.info("Attempting to recover by checking user's gullies")
+                client = await get_initialized_onboarding_client()
+                db_user = await client.get_user_by_telegram_id(update.effective_user.id)
+
+                if db_user:
+                    user_id = db_user["id"]
+                    user_gullies = await client.get_user_gullies(user_id)
+
+                    if len(user_gullies) == 1:
+                        # User only has one gully, use that
+                        recovered_gully_id = user_gullies[0]["id"]
+                        logger.info(f"Recovered single gully ID: {recovered_gully_id}")
+
+                        # Save it in both places
+                        ctx_manager.set_active_gully_id(context, recovered_gully_id)
+                        context.chat_data["active_gully_id"] = recovered_gully_id
+
+                        # Use the recovered ID
+                        active_gully_id = recovered_gully_id
+            except Exception as e:
+                logger.error(f"Secondary recovery attempt failed: {e}")
 
     # Check if we have a valid active gully
     if not active_gully_id:
-        logger.error("No active gully ID found in context")
-        message = (
-            "⚠️ No active gully selected. Please use /join to select a gully first."
-        )
+        logger.error("No active gully ID found in context and recovery failed")
+        message = "⚠️ No active gully selected. Please use /squad command to start over and select a gully."
 
         if isinstance(update, Update) and update.callback_query:
             await update.callback_query.edit_message_text(message)
@@ -547,19 +614,30 @@ async def handle_squad_callback_query(
         # Answer the callback query to stop the loading indicator
         await query.answer()
 
-        # Get active gully ID
-        active_gully_id = ctx_manager.get_active_gully_id(context)
+        # CRITICAL FIX: Only check for active gully if we're not in the process of selecting one
+        if action != "select_gully":
+            # Get active gully ID
+            active_gully_id = get_active_gully_id(context)
 
-        # Add a check for active gully ID
-        if not active_gully_id:
-            logger.error("No active gully ID found in callback context")
-            await query.answer(
-                "Please select a gully first using /join command", show_alert=True
-            )
-            return ConversationHandler.END
+            # Add a check for active gully ID
+            if not active_gully_id:
+                logger.error("No active gully ID found in callback context")
+                await query.answer(
+                    "Please select a gully first using /join command", show_alert=True
+                )
+                return ConversationHandler.END
 
         # Handle different actions
         if action == "toggle":
+            # Get active gully ID since we need it for this action
+            active_gully_id = get_active_gully_id(context)
+            if not active_gully_id:
+                logger.error("No active gully ID found for toggle action")
+                await query.answer(
+                    "Please select a gully first using /join command", show_alert=True
+                )
+                return ConversationHandler.END
+
             # Toggle player selection
             player_id = data.get("id")
             if player_id is not None:
@@ -596,19 +674,40 @@ async def handle_squad_callback_query(
             # Get the gully ID from the callback data
             gully_id = data.get("id")
             if gully_id is not None:
-                # Set the active gully ID in context
+                # IMPORTANT: Convert gully_id to integer if it's a string
+                if isinstance(gully_id, str) and gully_id.isdigit():
+                    gully_id = int(gully_id)
+
+                # Set the active gully ID in BOTH contexts
                 ctx_manager.set_active_gully_id(context, gully_id)
-                logger.info(f"Selected gully ID: {gully_id}")
+                # CRITICAL: Also store in chat_data for redundancy
+                context.chat_data["active_gully_id"] = gully_id
+                logger.info(f"Selected gully ID: {gully_id}, stored in both contexts")
+
+                # Immediately log verification
+                active_ctx = ctx_manager.get_active_gully_id(context)
+                active_chat = context.chat_data.get("active_gully_id")
+                logger.info(
+                    f"Verification - ctx: {active_ctx}, chat_data: {active_chat}"
+                )
+
+                # Verify the gully ID was properly set
+                active_gully_id = get_active_gully_id(context)
+                if not active_gully_id:
+                    logger.error(f"Failed to set active_gully_id in both contexts")
+                    await query.answer(
+                        "Error selecting gully. Please try again.", show_alert=True
+                    )
+                    return SELECTING_PLAYERS
 
                 # Get user ID
                 telegram_user_id = update.effective_user.id
                 client = await get_initialized_onboarding_client()
                 db_user = await client.get_user_by_telegram_id(telegram_user_id)
-                user_id = db_user["id"]
 
                 # Get participant info for this gully
                 participant = await client.get_participant_by_user_and_gully(
-                    user_id=user_id, gully_id=gully_id
+                    user_id=db_user["id"], gully_id=gully_id
                 )
 
                 if participant:
@@ -712,8 +811,8 @@ async def handle_edit_squad(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     query = update.callback_query
     await query.answer()
 
-    # Get active gully ID
-    active_gully_id = ctx_manager.get_active_gully_id(context)
+    # Get active gully ID with improved fallback
+    active_gully_id = get_active_gully_id(context)
 
     if not active_gully_id:
         logger.error("Active gully ID not found in context")
@@ -759,8 +858,8 @@ async def handle_squad_submission(
     """Handle squad submission."""
     logger.info("handle_squad_submission called")
 
-    # Get active gully ID
-    active_gully_id = ctx_manager.get_active_gully_id(context)
+    # Get active gully ID with improved fallback
+    active_gully_id = get_active_gully_id(context)
 
     # Get selected player IDs from gully-specific context
     selected_player_ids = ctx_manager.get_selected_player_ids(context, active_gully_id)
