@@ -152,6 +152,7 @@ class User(TimeStampedModel, table=True):
     telegram_id: int = Field(unique=True, index=True, sa_type=BigInteger)
     username: str = Field(index=True)
     full_name: str
+    email: Optional[str] = Field(default=None, unique=True, index=True)
 
     # Relationships will be defined after all classes are defined
 

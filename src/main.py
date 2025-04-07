@@ -1,6 +1,28 @@
+import os
+import sys
 import uvicorn
 import logging
-from src.app import app  # Changed back to absolute import for running from root
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Set default environment variables for development if not present
+if not os.environ.get("TELEGRAM_BOT_TOKEN"):
+    print("⚠️ Warning: TELEGRAM_BOT_TOKEN not set, using dummy value for development")
+    os.environ["TELEGRAM_BOT_TOKEN"] = "dummy_token_for_development"
+
+if not os.environ.get("DATABASE_URL"):
+    print("⚠️ Warning: DATABASE_URL not set, using local PostgreSQL for development")
+    os.environ["DATABASE_URL"] = "postgresql://postgres:postgres@localhost:5432/fantasy_cricket"
+
+# Check current working directory and update import path
+if os.path.basename(os.getcwd()) == "src":
+    # Running from src directory
+    from app import app
+else:
+    # Running from project root
+    from src.app import app
 
 # Configure logging
 logging.basicConfig(

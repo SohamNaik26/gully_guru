@@ -19,12 +19,13 @@ class UserBase(BaseModel):
     telegram_id: int = Field(..., description="Telegram user ID")
     username: str = Field(..., description="Telegram username")
     full_name: str = Field(..., description="User's full name")
+    email: Optional[str] = Field(None, description="User's email address")
 
 
 class UserCreate(UserBase):
     """Schema for creating a new user."""
 
-    pass
+    email: str = Field(..., description="User's email address")
 
 
 class UserResponse(UserBase):

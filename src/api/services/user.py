@@ -55,6 +55,19 @@ class UserService(BaseService):
             )
             return await self.get_user(existing_user.id)
 
+        # Check if user with email already exists (if email is provided)
+        if "email" in user_data and user_data["email"]:
+            email_stmt = select(User).where(User.email == user_data["email"])
+            email_result = await self.db.execute(email_stmt)
+            existing_email_user = email_result.scalars().first()
+            
+            if existing_email_user:
+                # Return existing user instead of raising an error
+                logger.info(
+                    f"User with email {user_data['email']} already exists, returning existing user"
+                )
+                return await self.get_user(existing_email_user.id)
+
         # Create new user
         user = User(**user_data)
         self.db.add(user)
@@ -67,6 +80,7 @@ class UserService(BaseService):
             "telegram_id": user.telegram_id,
             "username": user.username,
             "full_name": user.full_name,
+            "email": user.email,
             "created_at": user.created_at,
             "updated_at": user.updated_at,
         }
@@ -93,6 +107,7 @@ class UserService(BaseService):
             "telegram_id": user.telegram_id,
             "username": user.username,
             "full_name": user.full_name,
+            "email": user.email,
             "created_at": user.created_at,
             "updated_at": user.updated_at,
         }
@@ -124,6 +139,7 @@ class UserService(BaseService):
             "telegram_id": user.telegram_id,
             "username": user.username,
             "full_name": user.full_name,
+            "email": user.email,
             "created_at": user.created_at,
             "updated_at": user.updated_at,
         }
@@ -162,6 +178,7 @@ class UserService(BaseService):
                 "telegram_id": user.telegram_id,
                 "username": user.username,
                 "full_name": user.full_name,
+                "email": user.email,
                 "created_at": user.created_at,
                 "updated_at": user.updated_at,
             }
@@ -203,6 +220,7 @@ class UserService(BaseService):
                 "telegram_id": user.telegram_id,
                 "username": user.username,
                 "full_name": user.full_name,
+                "email": user.email,
                 "created_at": user.created_at,
                 "updated_at": user.updated_at,
             }
@@ -246,6 +264,7 @@ class UserService(BaseService):
             "telegram_id": user.telegram_id,
             "username": user.username,
             "full_name": user.full_name,
+            "email": user.email,
             "created_at": user.created_at,
             "updated_at": user.updated_at,
         }
@@ -369,6 +388,7 @@ class UserService(BaseService):
                 "telegram_id": user.telegram_id,
                 "username": user.username,
                 "full_name": user.full_name,
+                "email": user.email,
                 "created_at": user.created_at,
                 "updated_at": user.updated_at,
             }
@@ -403,9 +423,80 @@ class UserService(BaseService):
                 "telegram_id": user.telegram_id,
                 "username": user.username,
                 "full_name": user.full_name,
+                "email": user.email,
                 "created_at": user.created_at,
                 "updated_at": user.updated_at,
             }
             user_dicts.append(user_dict)
 
         return user_dicts
+
+    async def get_user_by_email(
+        self, email: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get a user by email.
+
+        Args:
+            email: Email of the user to retrieve
+
+        Returns:
+            Dictionary with user data or None if not found
+        """
+        stmt = select(User).where(User.email == email)
+        result = await self.db.execute(stmt)
+        user = result.scalars().first()
+
+        if not user:
+            return None
+
+        # Convert SQLModel to dict
+        user_dict = {
+            "id": user.id,
+            "telegram_id": user.telegram_id,
+            "username": user.username,
+            "full_name": user.full_name,
+            "email": user.email,
+            "created_at": user.created_at,
+            "updated_at": user.updated_at,
+        }
+
+        return user_dict
+
+    async def get_users_by_email(
+        self, email: str, limit: int = None, offset: int = None
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """
+        Get users filtered by email.
+
+        Args:
+            email: Email to filter by
+            limit: DEPRECATED - Kept for backward compatibility
+            offset: DEPRECATED - Kept for backward compatibility
+
+        Returns:
+            Tuple of (list of user dictionaries, total count) for backward compatibility
+        """
+        # Build query with email filter
+        query = select(User).where(User.email == email)
+
+        # Execute query
+        result = await self.db.execute(query)
+        users = result.scalars().all()
+
+        # Convert SQLModels to dicts
+        user_dicts = []
+        for user in users:
+            user_dict = {
+                "id": user.id,
+                "telegram_id": user.telegram_id,
+                "username": user.username,
+                "full_name": user.full_name,
+                "email": user.email,
+                "created_at": user.created_at,
+                "updated_at": user.updated_at,
+            }
+            user_dicts.append(user_dict)
+
+        # Return tuple of (user_dicts, total) for backward compatibility
+        return user_dicts, len(user_dicts)

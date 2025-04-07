@@ -1,0 +1,349 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
+
+    /* Cricket green primary */
+    --primary: 142 76% 36%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Vibrant card */
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    /* Clean popover */
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    /* Cricket ball red */
+    --secondary: 354 85% 44%;
+    --secondary-foreground: 210 40% 98%;
+
+    /* Subtle pitch beige */
+    --muted: 45 33% 97%;
+    --muted-foreground: 215 25% 27%;
+
+    /* Stadium blue */
+    --accent: 199 89% 48%;
+    --accent-foreground: 210 40% 98%;
+
+    /* Warning red */
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+
+    /* Subtle borders */
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 142 76% 36%;
+
+    --radius: 0.75rem;
+  }
+
+  .dark {
+    --background: 222 47% 11%;
+    --foreground: 210 40% 98%;
+
+    /* Dark mode cricket green */
+    --primary: 142 76% 45%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Dark card */
+    --card: 222 47% 13%;
+    --card-foreground: 210 40% 98%;
+
+    /* Dark popover */
+    --popover: 222 47% 13%;
+    --popover-foreground: 210 40% 98%;
+
+    /* Dark cricket ball red */
+    --secondary: 354 85% 54%;
+    --secondary-foreground: 210 40% 98%;
+
+    /* Dark pitch color */
+    --muted: 45 20% 25%;
+    --muted-foreground: 45 15% 75%;
+
+    /* Dark stadium blue */
+    --accent: 199 89% 58%;
+    --accent-foreground: 210 40% 98%;
+
+    /* Dark warning red */
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+
+    /* Dark borders */
+    --border: 215 25% 27%;
+    --input: 215 25% 27%;
+    --ring: 142 76% 45%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    background-image: radial-gradient(
+        circle at top left,
+        rgba(var(--primary), 0.15),
+        transparent 25%
+      ),
+      radial-gradient(
+        circle at top right,
+        rgba(var(--secondary), 0.15),
+        transparent 25%
+      );
+  }
+}
+
+/* Gradient effects */
+.gradient-border {
+  background: linear-gradient(
+    135deg,
+    hsl(var(--primary)) 0%,
+    hsl(var(--accent)) 50%,
+    hsl(var(--secondary)) 100%
+  );
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.glass-effect {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.9) 0%,
+    rgba(255, 255, 255, 0.7) 100%
+  );
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(var(--primary), 0.2);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+}
+
+.dark .glass-effect {
+  background: linear-gradient(
+    135deg,
+    rgba(0, 0, 0, 0.8) 0%,
+    rgba(0, 0, 0, 0.6) 100%
+  );
+  border: 1px solid rgba(var(--primary), 0.2);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.hover-card {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.hover-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 24px rgba(var(--primary), 0.15),
+    0 0 0 2px rgba(var(--primary), 0.1);
+}
+
+/* Button effects */
+.button-gradient {
+  background: linear-gradient(
+    135deg,
+    hsl(var(--primary)) 0%,
+    hsl(142 76% 42%) 100%
+  );
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(var(--primary), 0.1);
+}
+
+.button-gradient:hover {
+  background: linear-gradient(
+    135deg,
+    hsl(142 76% 42%) 0%,
+    hsl(var(--primary)) 100%
+  );
+  opacity: 0.95;
+}
+
+/* Card effects */
+.card-gradient {
+  background: linear-gradient(
+    135deg,
+    rgba(var(--card), 0.9) 0%,
+    rgba(var(--card), 0.7) 100%
+  );
+  border: 1px solid rgba(var(--primary), 0.1);
+}
+
+/* Custom animations */
+@keyframes float {
+  0% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+  100% {
+    transform: translateY(0px);
+  }
+}
+
+.float-animation {
+  animation: float 3s ease-in-out infinite;
+}
+
+/* Glowing effect */
+.glow {
+  position: relative;
+}
+
+.glow::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  background: linear-gradient(
+    135deg,
+    hsl(var(--primary)) 0%,
+    hsl(var(--secondary)) 50%,
+    hsl(var(--accent)) 100%
+  );
+  filter: blur(8px);
+  z-index: -1;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.glow:hover::after {
+  opacity: 0.5;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(var(--background), 0.5);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(hsl(var(--primary)), hsl(var(--secondary)));
+  border-radius: 5px;
+  border: 2px solid rgba(var(--background), 0.5);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(hsl(var(--secondary)), hsl(var(--accent)));
+}
+
+/* Add after the existing animations */
+
+@keyframes blob {
+  0% {
+    transform: translate(0px, 0px) scale(1);
+  }
+  33% {
+    transform: translate(30px, -50px) scale(1.1);
+  }
+  66% {
+    transform: translate(-20px, 20px) scale(0.9);
+  }
+  100% {
+    transform: translate(0px, 0px) scale(1);
+  }
+}
+
+.animate-blob {
+  animation: blob 12s infinite cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.animation-delay-2000 {
+  animation-delay: 2s;
+}
+
+.animation-delay-4000 {
+  animation-delay: 4s;
+}
+
+/* Add these utility classes */
+.bg-gradient-radial {
+  background-image: radial-gradient(
+    circle at center,
+    rgba(var(--primary), 0.15) 0%,
+    rgba(var(--primary), 0.1) 25%,
+    transparent 50%
+  );
+}
+
+.bg-gradient-conic {
+  background-image: conic-gradient(
+    from 0deg at 50% 50%,
+    rgba(var(--primary), 0.15) 0deg,
+    rgba(var(--secondary), 0.15) 120deg,
+    rgba(var(--accent), 0.15) 240deg,
+    rgba(var(--primary), 0.15) 360deg
+  );
+}
+
+/* Enhanced card effects */
+.card-shine {
+  position: relative;
+  overflow: hidden;
+}
+
+.card-shine::before {
+  content: "";
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: linear-gradient(
+    115deg,
+    transparent 0%,
+    transparent 40%,
+    rgba(var(--primary), 0.1) 45%,
+    rgba(var(--primary), 0.1) 55%,
+    transparent 70%,
+    transparent 100%
+  );
+  transform: rotate(-45deg);
+  animation: shine 3s infinite;
+}
+
+@keyframes shine {
+  0% {
+    transform: translateX(-200%) rotate(-45deg);
+  }
+  100% {
+    transform: translateX(100%) rotate(-45deg);
+  }
+}
+
+/* Update blob colors in layout */
+.blob-primary {
+  background: radial-gradient(
+    circle at center,
+    rgba(var(--primary), 0.3),
+    rgba(var(--primary), 0) 70%
+  );
+}
+
+.blob-secondary {
+  background: radial-gradient(
+    circle at center,
+    rgba(var(--secondary), 0.3),
+    rgba(var(--secondary), 0) 70%
+  );
+}
+
+.blob-accent {
+  background: radial-gradient(
+    circle at center,
+    rgba(var(--accent), 0.3),
+    rgba(var(--accent), 0) 70%
+  );
+}

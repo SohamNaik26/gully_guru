@@ -46,14 +46,16 @@ async def create_user(user: UserCreate, db: AsyncSession = Depends(get_db)):
 @router.get("/", response_model=List[UserResponse])
 @handle_exceptions
 async def get_users(
-    telegram_id: Optional[int] = Query(None, description="Filter by Telegram ID"),
+    telegram_id: Optional[str] = Query(None, description="Filter by Telegram ID"),
+    email: Optional[str] = Query(None, description="Filter by email"),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Get a list of users with optional filtering.
 
     Args:
-        telegram_id: Optional filter by Telegram ID
+        telegram_id: Optional filter by Telegram ID (can be an integer or string)
+        email: Optional filter by email
         db: Database session
 
     Returns:
@@ -61,11 +63,21 @@ async def get_users(
     """
     user_service = UserService(db)
 
-    # Prioritize telegram_id filtering for bot integration
+    # Prioritize specific filters for user lookup
     if telegram_id is not None:
-        # Still unpack the tuple but no need to pass pagination parameters
-        user_dicts, _ = await user_service.get_users_by_telegram_id(
-            telegram_id=telegram_id
+        try:
+            # Try to convert to integer for backwards compatibility
+            telegram_id_int = int(telegram_id)
+            user_dicts, _ = await user_service.get_users_by_telegram_id(
+                telegram_id=telegram_id_int
+            )
+        except (ValueError, TypeError):
+            # If conversion fails, return empty list as no users will match
+            user_dicts = []
+    elif email is not None:
+        # Get users by email
+        user_dicts, _ = await user_service.get_users_by_email(
+            email=email
         )
     else:
         # Still unpack the tuple but no need to pass pagination parameters

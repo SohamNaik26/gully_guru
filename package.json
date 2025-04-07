@@ -1,0 +1,21 @@
+{
+  "name": "gullyguru",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "python run_backend.py",
+    "build": "cd frontend && npm run build",
+    "start": "concurrently \"npm run start:frontend\" \"npm run start:backend\"",
+    "start:frontend": "cd frontend && npm run start",
+    "start:backend": "python run_backend.py --prod",
+    "install:all": "npm install && cd frontend && npm install",
+    "test": "concurrently \"cd frontend && npm run test\" \"pytest\"",
+    "lint": "cd frontend && npm run lint",
+    "clean": "rm -rf frontend/.next frontend/out frontend/node_modules node_modules"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

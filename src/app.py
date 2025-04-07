@@ -1,13 +1,24 @@
 import logging
+import os
+import sys
 from fastapi import FastAPI, Depends
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from src.db.init import init_db
-from src.db.session import get_session
-from src.db.models import User
-from src.api.routes import api_router  # Import the API router
+# Detect if we're running from src directory or root
+if os.path.basename(os.getcwd()) == "src":
+    # Running from src directory - use relative imports
+    from db.init import init_db
+    from db.session import get_session
+    from db.models import User
+    from api.routes import api_router
+else:
+    # Running from root directory - use absolute imports
+    from src.db.init import init_db
+    from src.db.session import get_session
+    from src.db.models import User
+    from src.api.routes import api_router
 
 logger = logging.getLogger(__name__)
 
